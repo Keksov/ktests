@@ -1,0 +1,96 @@
+#!/bin/bash
+# common.sh - Shared setup code for <MODULE_NAME> tests
+#
+# This template provides the standard setup for test suites using the
+# KK testing framework. Copy this file to your tests/ directory and
+# customize the module-specific initialization.
+#
+# The framework handles:
+#   - Test counter management
+#   - Color output and logging
+#   - Temporary directory management
+#   - CLI argument parsing
+#   - Test execution modes (sequential/threaded)
+#   - Automatic cleanup on exit
+
+# Get script directory - the directory containing this file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Path to the module being tested (one directory up from tests/)
+MODULE_DIR="$SCRIPT_DIR/.."
+
+# ============================================================================
+# Load Testing Framework
+# ============================================================================
+
+# Source the main testing framework
+# This loads all framework components: core, assertions, fixtures, runner
+KKTESTS_DIR="$(dirname "$MODULE_DIR")/kktests"
+source "$KKTESTS_DIR/lib/kk-test.sh" || {
+    echo "ERROR: Failed to load testing framework from $KKTESTS_DIR/lib/kk-test.sh" >&2
+    exit 1
+}
+
+# ============================================================================
+# Module-Specific Configuration
+# ============================================================================
+
+# TODO: Customize these values for your module
+
+# Path to the module's main script (if needed)
+# MODULE_SCRIPT="$MODULE_DIR/<MODULE_NAME>.sh"
+
+# Module name for logging
+MODULE_NAME="<MODULE_NAME>"
+
+# Initialize test environment
+kk_test_init "$MODULE_NAME" "$SCRIPT_DIR"
+
+# ============================================================================
+# Module Sourcing (Optional)
+# ============================================================================
+
+# Uncomment and customize if your tests need to source the module under test:
+#
+# if [[ -f "$MODULE_SCRIPT" ]]; then
+#     source "$MODULE_SCRIPT"
+# else
+#     kk_test_error "Module script not found: $MODULE_SCRIPT"
+#     exit 1
+# fi
+
+# ============================================================================
+# Additional Framework Initialization (Optional)
+# ============================================================================
+
+# Parse command-line arguments
+# This will set: VERBOSITY, TEST_SELECTION, MODE, WORKERS
+kk_runner_parse_args "$@"
+
+# Example: Enable debug mode conditionally
+# [[ "$VERBOSITY" == "info" ]] && kk_config_set "debug" "true"
+
+# ============================================================================
+# Custom Cleanup Handlers (Optional)
+# ============================================================================
+
+# Register custom cleanup functions that should run after tests
+# Example:
+#
+# cleanup_my_resources() {
+#     # Cleanup code here
+#     rm -f /tmp/my_test_resource
+# }
+# kk_fixture_cleanup_register "cleanup_my_resources"
+
+# ============================================================================
+# Test Utilities (Optional)
+# ============================================================================
+
+# Add custom test helper functions here
+# Example:
+#
+# assert_module_loaded() {
+#     kk_assert_true "$(declare -F Module.new)" "Module should be loaded"
+# }
+
