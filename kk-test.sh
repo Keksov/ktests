@@ -59,6 +59,9 @@ kk_test_init() {
     local test_name="${1:-default}"
     local script_dir="${2:-.}"
     
+    # Set file name for error reporting (from caller's context)
+    KK_TEST_FILE="$(basename "${BASH_SOURCE[1]}")"
+    
     # Initialize fixtures
     kk_fixture_setup "$test_name" "$script_dir"
     

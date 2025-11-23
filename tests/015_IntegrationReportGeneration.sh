@@ -6,8 +6,6 @@
 source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
 
 # Set file name for error reporting
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
-
 kk_test_init "ReportGeneration" "$(dirname "$0")"
 
 # Test result summary display function exists

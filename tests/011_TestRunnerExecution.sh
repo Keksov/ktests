@@ -3,7 +3,6 @@
 
 source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
 
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "TestRunnerExecution" "$(dirname "$0")"
 
 INTEGRATION_TMPDIR=$(kk_fixture_tmpdir)
@@ -13,7 +12,6 @@ kk_test_start "Create sample test file"
 cat > "$INTEGRATION_TMPDIR/001_SampleTest.sh" << 'EOF'
 #!/bin/bash
 source "$(cd "$(dirname "$0")/../../.." && pwd)/kktests/kk-test.sh"
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "SampleTest" "$(dirname "$0")"
 kk_test_start "Sample test assertion"
 kk_assert_equals "test" "test" "Test equality"

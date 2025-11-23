@@ -3,7 +3,6 @@
 
 source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
 
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "AssertionsArrayChecks" "$(dirname "$0")"
 
 # Test kk_assert_array_length with correct length

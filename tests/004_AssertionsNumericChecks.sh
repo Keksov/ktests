@@ -3,7 +3,6 @@
 
 source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
 
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "AssertionsNumericChecks" "$(dirname "$0")"
 
 # Test kk_assert_num_equals with equal numbers

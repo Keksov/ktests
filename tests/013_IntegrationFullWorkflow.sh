@@ -3,7 +3,6 @@
 
 source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
 
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "IntegrationFullWorkflow" "$(dirname "$0")"
 
 TMPDIR=$(kk_fixture_tmpdir)
@@ -14,7 +13,6 @@ kk_test_start "Create integration test file"
 cat > "$INTEGRATION_DIR/001_FullIntegration.sh" << 'EOF'
 #!/bin/bash
 source "$(cd "$(dirname "$0")/../../.." && pwd)/kktests/kk-test.sh"
-KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
 kk_test_init "FullIntegration" "$(dirname "$0")"
 
 tmpdir=$(kk_fixture_tmpdir)
