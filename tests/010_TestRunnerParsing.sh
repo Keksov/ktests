@@ -34,3 +34,5 @@ if [[ "$WORKERS" == "4" ]]; then
 else
     kk_test_fail "--workers=4 not parsed correctly"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

@@ -135,3 +135,5 @@ if [[ -z "$retrieved" ]]; then
 else
     kk_test_fail "kk_config_get returned '$retrieved' for missing key"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

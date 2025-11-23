@@ -28,10 +28,9 @@ kk_assert_equals() {
     local desc="${3:-Value comparison}"
     
     if [[ "$expected" == "$actual" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected: '$expected', got: '$actual')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected: '$expected', got: '$actual')" >&2
         return 1
     fi
 }
@@ -44,10 +43,9 @@ kk_assert_not_equals() {
     local desc="${3:-Value inequality check}"
     
     if [[ "$not_expected" != "$actual" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (value should not be '$actual')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (value should not be '$actual')" >&2
         return 1
     fi
 }
@@ -59,10 +57,9 @@ kk_assert_true() {
     local desc="${2:-Truth assertion}"
     
     if [[ -n "$value" && "$value" != "0" && "$value" != "false" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected true-like value, got: '$value')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected true-like value, got: '$value')" >&2
         return 1
     fi
 }
@@ -74,10 +71,9 @@ kk_assert_false() {
     local desc="${2:-False assertion}"
     
     if [[ -z "$value" || "$value" == "0" || "$value" == "false" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected false-like value, got: '$value')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected false-like value, got: '$value')" >&2
         return 1
     fi
 }
@@ -94,10 +90,9 @@ kk_assert_contains() {
     local desc="${3:-String contains check}"
     
     if [[ "$haystack" == *"$needle"* ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected to find '$needle' in '$haystack')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected to find '$needle' in '$haystack')" >&2
         return 1
     fi
 }
@@ -110,10 +105,9 @@ kk_assert_not_contains() {
     local desc="${3:-String does not contain check}"
     
     if [[ "$haystack" != *"$needle"* ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (should not find '$needle' in '$haystack')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (should not find '$needle' in '$haystack')" >&2
         return 1
     fi
 }
@@ -126,10 +120,9 @@ kk_assert_matches() {
     local desc="${3:-Regex match check}"
     
     if [[ "$string" =~ $pattern ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected '$string' to match pattern '$pattern')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected '$string' to match pattern '$pattern')" >&2
         return 1
     fi
 }
@@ -142,10 +135,9 @@ kk_assert_not_matches() {
     local desc="${3:-Regex non-match check}"
     
     if [[ ! "$string" =~ $pattern ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected '$string' to NOT match pattern '$pattern')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected '$string' to NOT match pattern '$pattern')" >&2
         return 1
     fi
 }
@@ -162,10 +154,9 @@ kk_assert_num_equals() {
     local desc="${3:-Numeric equality}"
     
     if (( expected == actual )); then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected: $expected, got: $actual)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected: $expected, got: $actual)" >&2
         return 1
     fi
 }
@@ -178,10 +169,9 @@ kk_assert_num_gt() {
     local desc="${3:-Numeric greater than}"
     
     if (( actual > expected )); then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected $actual > $expected)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected $actual > $expected)" >&2
         return 1
     fi
 }
@@ -194,10 +184,9 @@ kk_assert_num_lt() {
     local desc="${3:-Numeric less than}"
     
     if (( actual < max )); then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected $actual < $max)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected $actual < $max)" >&2
         return 1
     fi
 }
@@ -213,10 +202,9 @@ kk_assert_file_exists() {
     local desc="${2:-File exists check}"
     
     if [[ -f "$filepath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (file not found: '$filepath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (file not found: '$filepath')" >&2
         return 1
     fi
 }
@@ -228,10 +216,9 @@ kk_assert_file_not_exists() {
     local desc="${2:-File does not exist check}"
     
     if [[ ! -f "$filepath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (file should not exist: '$filepath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (file should not exist: '$filepath')" >&2
         return 1
     fi
 }
@@ -243,10 +230,9 @@ kk_assert_dir_exists() {
     local desc="${2:-Directory exists check}"
     
     if [[ -d "$dirpath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (directory not found: '$dirpath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (directory not found: '$dirpath')" >&2
         return 1
     fi
 }
@@ -258,10 +244,9 @@ kk_assert_dir_not_exists() {
     local desc="${2:-Directory does not exist check}"
     
     if [[ ! -d "$dirpath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (directory should not exist: '$dirpath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (directory should not exist: '$dirpath')" >&2
         return 1
     fi
 }
@@ -273,10 +258,9 @@ kk_assert_file_readable() {
     local desc="${2:-File readable check}"
     
     if [[ -r "$filepath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (file not readable: '$filepath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (file not readable: '$filepath')" >&2
         return 1
     fi
 }
@@ -288,10 +272,9 @@ kk_assert_file_writable() {
     local desc="${2:-File writable check}"
     
     if [[ -w "$filepath" ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (file not writable: '$filepath')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (file not writable: '$filepath')" >&2
         return 1
     fi
 }
@@ -307,11 +290,10 @@ kk_assert_success() {
     local desc="${2:-Command success check}"
     
     if eval "$cmd" >/dev/null 2>&1; then
-        kk_test_pass "$desc"
         return 0
     else
         local exit_code=$?
-        kk_test_fail "$desc (command failed with exit code $exit_code)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (command failed with exit code $exit_code)" >&2
         return 1
     fi
 }
@@ -323,10 +305,9 @@ kk_assert_failure() {
     local desc="${2:-Command failure check}"
     
     if ! eval "$cmd" >/dev/null 2>&1; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (command should have failed)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (command should have failed)" >&2
         return 1
     fi
 }
@@ -343,10 +324,9 @@ kk_assert_output_contains() {
     local desc="${3:-Output contains check}"
     
     if [[ "$output" == *"$needle"* ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected to find '$needle' in output)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected to find '$needle' in output)" >&2
         kk_test_debug "Output was: $output"
         return 1
     fi
@@ -360,10 +340,9 @@ kk_assert_output_not_contains() {
     local desc="${3:-Output does not contain check}"
     
     if [[ "$output" != *"$needle"* ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (should not find '$needle' in output)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (should not find '$needle' in output)" >&2
         kk_test_debug "Output was: $output"
         return 1
     fi
@@ -377,10 +356,9 @@ kk_assert_output_matches() {
     local desc="${3:-Output matches pattern}"
     
     if [[ "$output" =~ $pattern ]]; then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (output does not match pattern '$pattern')"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (output does not match pattern '$pattern')" >&2
         kk_test_debug "Output was: $output"
         return 1
     fi
@@ -400,10 +378,9 @@ kk_assert_array_length() {
     local actual_len="${#arr[@]}"
     
     if (( actual_len == expected_len )); then
-        kk_test_pass "$desc"
         return 0
     else
-        kk_test_fail "$desc (expected length $expected_len, got $actual_len)"
+        echo -e "${RED}[ASSERTION FAILED]${NC} $desc (expected length $expected_len, got $actual_len)" >&2
         return 1
     fi
 }
@@ -417,12 +394,11 @@ kk_assert_array_contains() {
     
     for item in "${arr[@]}"; do
         if [[ "$item" == "$needle" ]]; then
-            kk_test_pass "$desc"
             return 0
         fi
     done
     
-    kk_test_fail "$desc (value '$needle' not found in array)"
+    echo -e "${RED}[ASSERTION FAILED]${NC} $desc (value '$needle' not found in array)" >&2
     return 1
 }
 

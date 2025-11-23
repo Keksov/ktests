@@ -149,3 +149,5 @@ fi
 kk_config_set "verbosity" "error"
 kk_config_set "debug" "false"
 kk_config_set "color" "true"
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

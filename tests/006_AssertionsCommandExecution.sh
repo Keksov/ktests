@@ -8,16 +8,18 @@ kk_test_init "AssertionsCommandExecution" "$(dirname "$0")"
 
 # Test kk_assert_success with successful command
 kk_test_start "kk_assert_success with successful command"
-if kk_assert_success "true" "Successful command" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_success detects successful command"
+if kk_assert_success "true" "Successful command"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_success failed with successful command"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_success fails with failed command
 kk_test_start "kk_assert_success fails with failed command"
-if ! kk_assert_success "false" "Failed command" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_success detects failed command"
+if ! kk_assert_success "false" "Failed command"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_success should have failed with failed command"
+    kk_test_fail "Assertion should have failed"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

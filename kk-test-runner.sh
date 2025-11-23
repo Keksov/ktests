@@ -396,6 +396,10 @@ kk_runner_execute_tests() {
         return 1
     fi
     
+    # Reset counters before execution
+    kk_test_reset_counts
+    FAILED_TEST_FILES=()
+    
     # Find test files
     local test_files=()
     while IFS= read -r file; do

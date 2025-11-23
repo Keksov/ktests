@@ -23,3 +23,5 @@ if [[ -f "$tmpfile" ]]; then
 else
     kk_test_fail "Temp file not created"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

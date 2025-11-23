@@ -253,3 +253,5 @@ if [[ -n "$KK_TEST_FRAMEWORK_VERSION" && -n "$TESTS_TOTAL" ]]; then
 else
     kk_test_fail "Framework verification failed"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

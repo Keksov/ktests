@@ -11,32 +11,34 @@ TMPDIR=$(kk_fixture_tmpdir)
 # Test kk_assert_file_exists with existing file
 kk_test_start "kk_assert_file_exists with existing file"
 test_file=$(kk_fixture_tmpfile "test")
-if kk_assert_file_exists "$test_file" "File exists" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_file_exists detects existing file"
+if kk_assert_file_exists "$test_file" "File exists"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_file_exists failed with existing file"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_file_exists fails with missing file
 kk_test_start "kk_assert_file_exists fails with missing file"
-if ! kk_assert_file_exists "/nonexistent/path/file.txt" "Missing file" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_file_exists detects missing file"
+if ! kk_assert_file_exists "/nonexistent/path/file.txt" "Missing file"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_file_exists should have failed with missing file"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_dir_exists with existing directory
 kk_test_start "kk_assert_dir_exists with existing directory"
-if kk_assert_dir_exists "$TMPDIR" "Directory exists" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_dir_exists detects existing directory"
+if kk_assert_dir_exists "$TMPDIR" "Directory exists"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_dir_exists failed with existing directory"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_dir_exists fails with missing directory
 kk_test_start "kk_assert_dir_exists fails with missing directory"
-if ! kk_assert_dir_exists "/nonexistent/path" "Missing directory" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_dir_exists detects missing directory"
+if ! kk_assert_dir_exists "/nonexistent/path" "Missing directory"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_dir_exists should have failed with missing directory"
+    kk_test_fail "Assertion should have failed"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

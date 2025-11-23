@@ -69,15 +69,23 @@ kk_config_set "verbosity" "error"
 kk_test_start "Multiple assertions accumulate counters"
 initial_total=$TESTS_TOTAL
 initial_passed=$TESTS_PASSED
+success_count=0
 for i in {1..5}; do
-    kk_assert_equals "test" "test" "Test $i" > /dev/null 2>&1
+    if kk_assert_equals "test" "test" "Test $i" > /dev/null 2>&1; then
+        ((success_count++))
+        kk_test_pass "Assertion $i passed" > /dev/null 2>&1
+    else
+        kk_test_fail "Assertion $i failed" > /dev/null 2>&1
+    fi
 done
 # Check if assertions incremented counters
 # kk_test_start increments TESTS_TOTAL by 1
-# kk_assert_equals increments TESTS_PASSED by 1 for each successful assertion
-# So TESTS_PASSED should increase by 5
+# kk_test_pass increments TESTS_PASSED by 1 for each successful assertion
+# So TESTS_PASSED should increase by 5 (plus 1 for the initial kk_test_start)
 if (( TESTS_PASSED >= initial_passed + 5 )); then
     kk_test_pass "Multiple assertions increment counters"
 else
     kk_test_fail "Counter increment failed (initial_passed: $initial_passed, current_passed: $TESTS_PASSED, expected: $((initial_passed + 5)))"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

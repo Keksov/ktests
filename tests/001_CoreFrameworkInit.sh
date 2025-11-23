@@ -63,3 +63,5 @@ if [[ "$VERBOSITY" == "error" || "$VERBOSITY" == "info" ]]; then
 else
     kk_test_fail "Default verbosity is '$VERBOSITY', expected 'error' or 'info'"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED

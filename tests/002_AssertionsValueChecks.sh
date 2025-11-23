@@ -8,80 +8,82 @@ kk_test_init "AssertionsValueChecks" "$(dirname "$0")"
 
 # Test kk_assert_equals with equal values
 kk_test_start "kk_assert_equals with equal values"
-if kk_assert_equals "test" "test" "Equal values" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_equals detects equal values"
+if kk_assert_equals "test" "test" "Equal values"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_equals failed with equal values"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_equals with unequal values should fail
 kk_test_start "kk_assert_equals with unequal values should fail"
-if ! kk_assert_equals "test1" "test2" "Unequal values" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_equals detects unequal values"
+if ! kk_assert_equals "test1" "test2" "Unequal values"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_equals should have failed with unequal values"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_not_equals with different values
 kk_test_start "kk_assert_not_equals with different values"
-if kk_assert_not_equals "test1" "test2" "Different values" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_not_equals detects different values"
+if kk_assert_not_equals "test1" "test2" "Different values"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_not_equals failed with different values"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_not_equals with same values should fail
 kk_test_start "kk_assert_not_equals with same values should fail"
-if ! kk_assert_not_equals "test" "test" "Same values" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_not_equals detects identical values"
+if ! kk_assert_not_equals "test" "test" "Same values"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_not_equals should have failed with identical values"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_true with non-empty string
 kk_test_start "kk_assert_true with non-empty string"
-if kk_assert_true "non-empty" "Non-empty test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_true accepts non-empty values"
+if kk_assert_true "non-empty" "Non-empty test"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_true failed with non-empty value"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_true with empty string should fail
 kk_test_start "kk_assert_true with empty string should fail"
-if ! kk_assert_true "" "Empty string test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_true rejects empty values"
+if ! kk_assert_true "" "Empty string test"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_true should have failed with empty value"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_true with string 'false' should fail
 kk_test_start "kk_assert_true with string 'false' should fail"
-if ! kk_assert_true "false" "False string test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_true rejects 'false' string"
+if ! kk_assert_true "false" "False string test"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_true should have failed with 'false'"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_false with empty string
 kk_test_start "kk_assert_false with empty string"
-if kk_assert_false "" "Empty string test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_false accepts empty values"
+if kk_assert_false "" "Empty string test"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_false failed with empty value"
+    kk_test_fail "Assertion failed"
 fi
 
 # Test kk_assert_false with non-empty string should fail
 kk_test_start "kk_assert_false with non-empty string should fail"
-if ! kk_assert_false "non-empty" "Non-empty test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_false rejects non-empty values"
+if ! kk_assert_false "non-empty" "Non-empty test"; then
+    kk_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "kk_assert_false should have failed with non-empty"
+    kk_test_fail "Assertion should have failed"
 fi
 
 # Test kk_assert_false with zero string
 kk_test_start "kk_assert_false with zero string"
-if kk_assert_false "0" "Zero test" >/dev/null 2>&1; then
-    kk_test_pass "kk_assert_false accepts zero value"
+if kk_assert_false "0" "Zero test"; then
+    kk_test_pass "Assertion passed"
 else
-    kk_test_fail "kk_assert_false failed with zero"
+    kk_test_fail "Assertion failed"
 fi
+
+echo __COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED
