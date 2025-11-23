@@ -134,7 +134,12 @@ kk_test_pass() {
 # Mark a test as failed
 # Usage: kk_test_fail "Test description"
 kk_test_fail() {
-    echo -e "${RED}[FAIL]${NC} $*"
+    local message="$*"
+    if [[ -n "${KK_TEST_FILE:-}" ]]; then
+        echo -e "${RED}[FAIL]${NC} $message (${KK_TEST_FILE})"
+    else
+        echo -e "${RED}[FAIL]${NC} $message"
+    fi
     ((TESTS_FAILED++))
 }
 

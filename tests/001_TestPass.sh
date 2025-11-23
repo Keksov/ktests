@@ -3,6 +3,8 @@
 
 source /c/projects/kkbot/lib/kktests/kk-test.sh
 
+KK_TEST_FILE="$(basename "${BASH_SOURCE[0]}")"
+
 kk_test_start "Test 1 - should pass"
 kk_test_pass "Test 1"
 
