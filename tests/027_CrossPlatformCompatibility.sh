@@ -112,8 +112,8 @@ fi
 
 # Test temporary directory behavior
 kk_test_start "Temporary directory behavior"
-temp1=$(kk_fixture_tmpdir)
-temp2=$(kk_fixture_tmpdir)
+temp1=$(kk_fixture_tmpdir_create "isolation_test_1")
+temp2=$(kk_fixture_tmpdir_create "isolation_test_2")
 # Check if temp directories are different and accessible
 if [[ "$temp1" != "$temp2" && -d "$temp1" && -d "$temp2" ]]; then
     kk_test_pass "Temporary directory isolation works"
@@ -202,7 +202,7 @@ fi
 # Test network and connectivity
 kk_test_start "Network connectivity test"
 # Test basic network operations (non-blocking)
-if kk_assert_success "ping -c 1 -W 1 127.0.0.1" "Local network test" 2>/dev/null || kk_assert_success "ping -n 1 -w 1 127.0.0.1" "Local network test (Windows)" 2>/dev/null; then
+if (ping -c 1 -W 1 127.0.0.1 2>/dev/null || ping -n 1 -w 1 127.0.0.1 2>/dev/null); then
     kk_test_pass "Network connectivity available"
 else
     kk_test_pass "Network connectivity test skipped"
