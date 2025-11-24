@@ -295,8 +295,8 @@ kk_runner_execute_sequential() {
          if [[ "$VERBOSITY" == "info" ]] || ((f > 0)); then
              echo "$output" | sed -e 's/\r$//' | grep -v '^__COUNTS__:' || true
          else
-             # In error mode, still show [ERROR], [FAIL], and [WARN] messages
-             echo "$output" | sed -e 's/\r$//' | grep -E '^\[ERROR\]|\[FAIL\]|\[WARN\]|: No such file|: command not found' | grep -v '^__COUNTS__:' || true
+             # In error mode, still show [ERROR], [FAIL], [WARN], and [ASSERTION FAILED] messages
+                 echo "$output" | sed -e 's/\r$//' | grep -E '^\[ERROR\]|\[FAIL\]|\[WARN\]|\[ASSERTION FAILED\]|: No such file|: command not found' | grep -v '^__COUNTS__:' || true
          fi
     done
 }
