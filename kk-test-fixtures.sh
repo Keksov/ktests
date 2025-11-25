@@ -293,22 +293,6 @@ kk_fixture_restore_file() {
 }
 
 # ============================================================================
-# Backward Compatibility
-# ============================================================================
-
-# Maintain backward compatibility with existing test code
-# The original common.sh used this pattern: init_test_tmpdir() and TEST_TMP_DIR variable
-init_test_tmpdir() {
-    local test_id="$1"
-    local script_dir="${SCRIPT_DIR:-.}"
-    kk_fixture_init_tmpdir "$test_id" "$script_dir/.tmp"
-    
-    # Set the backward-compatible variable
-    TEST_TMP_DIR="$KK_TEST_TMPDIR"
-    TEST_ID="$test_id"
-}
-
-# ============================================================================
 # Exports for use in tests
 # ============================================================================
 
