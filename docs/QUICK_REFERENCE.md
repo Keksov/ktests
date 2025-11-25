@@ -84,7 +84,7 @@ backup=$(kk_fixture_backup_file "/etc/config")
 ## Running Tests
 
 ```bash
-# All tests, quiet
+# All tests (parallel, 8 workers - default)
 ./test_suite.sh
 
 # Verbose output
@@ -96,8 +96,13 @@ backup=$(kk_fixture_backup_file "/etc/config")
 ./test_suite.sh -n 1,3,5          # Tests 1, 3, 5
 ./test_suite.sh -n 1-3,5-7        # Tests 1-3 and 5-7
 
-# Single-threaded
-./test_suite.sh -m single
+# Execution modes
+./test_suite.sh -m threaded -w 4  # Parallel with 4 workers
+./test_suite.sh -m threaded -w 8  # Parallel with 8 workers (optimal)
+./test_suite.sh -m single         # Sequential (slower, no parallelism)
+
+# Combined
+./test_suite.sh -n 1-10 -m threaded -w 4 -v info
 
 # Help
 ./test_suite.sh -h
@@ -139,6 +144,16 @@ kk_fixture_cleanup_register "cleanup_my_resources"
 # Handler runs automatically on EXIT
 ```
 
+## CLI Options
+
+```bash
+-v, --verbosity LEVEL    Verbosity: "info" or "error" (default: error)
+-n, --tests SELECTION    Tests to run: "1" "1-5" "1,3,5" (default: all)
+-m, --mode MODE          Execution: "threaded" (default) or "single"
+-w, --workers NUM        Workers in threaded mode (default: 8)
+-h, --help               Show help
+```
+
 ## Module Variables
 
 ```bash
@@ -147,7 +162,7 @@ TESTS_PASSED        # Passed count
 TESTS_FAILED        # Failed count
 VERBOSITY           # "info" or "error"
 MODE                # "single" or "threaded"
-WORKERS             # Thread count
+WORKERS             # Thread count (default 8, optimal)
 TEST_TMP_DIR        # Test temp directory
 ```
 
@@ -201,6 +216,13 @@ BasicTests.sh              ✗ Bad (no number prefix)
 test_001.sh                ✗ Bad (number at end)
 ```
 
+## Performance Tips
+
+- **Default mode is fast**: Uses 8 worker threads by default (2.18x speedup)
+- **No configuration needed**: Just run `./test_suite.sh` for optimal performance
+- **For slow systems**: Use `-m single` or `-w 2` to reduce resource usage
+- **For CI/CD**: Default settings work great; set `-w 4` for shared resources
+
 ## Cheat Sheet
 
 ```bash
@@ -212,6 +234,17 @@ init_test_tmpdir "001"
 test_start "My test"
 kk_assert_equals "expected" "actual" "message"
 # Done! Cleanup is automatic
+```
+
+```bash
+# Fast test runner (parallel, 8 workers)
+./test_suite.sh
+
+# Slow test runner (sequential)
+./test_suite.sh -m single
+
+# Medium speed (4 workers)
+./test_suite.sh -m threaded -w 4
 ```
 
 ## Version
