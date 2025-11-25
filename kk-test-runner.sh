@@ -164,10 +164,6 @@ Options:
    -w, --workers NUM      Number of worker threads in threaded mode
                           Default: 8
    
-   --suppress-assert-output
-                          Suppress [ASSERTION FAILED] messages when using
-                          "if ! kk_assert_*" patterns in tests
-   
    -h, --help            Show this help message
 
 Examples:
@@ -263,6 +259,11 @@ kk_runner_execute_sequential() {
         
         kk_test_debug "Executing: $(basename "$clean_file")"
         
+        # Show test file name in info mode
+        if [[ "$VERBOSITY" == "info" ]]; then
+            echo "[TEST] $(basename "$clean_file")"
+        fi
+        
         # Run test in subshell to isolate state
          output="$(
              bash -c "
@@ -324,73 +325,141 @@ kk_runner_execute_threaded() {
         return 0
     fi
     
-    # For simplicity with many tests, fall back to sequential if too few tests or workers
-    if [[ $num_files -le $WORKERS ]]; then
+    # For very small number of tests, use sequential to avoid overhead
+    if [[ $num_files -le 1 ]]; then
         kk_runner_execute_sequential "${test_files[@]}"
         return 0
     fi
     
-    # Create a named pipe for worker coordination
-    local fifo_dir
-    fifo_dir=$(mktemp -d)
-    local fifo="$fifo_dir/test_queue"
-    mkfifo "$fifo" 2>/dev/null || true
-    
-    # Worker function to run tests
-    worker_func() {
-        local test_file
-        while IFS= read -r test_file <&3; do
-            [[ -z "$test_file" ]] && break
-            
-            local output counts_line t p f
-             output="$(
-                 bash -c "
-                     export VERBOSITY='$VERBOSITY'
-                     export KK_OUTPUT_COUNTS=1
-                     source '$test_file'
-                     # Always output counts (needed by runner for result tracking)
-                     echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
-                 " 2>&1 || true
-             )"
-            
-            counts_line="$(printf '%s\n' "$output" | grep '^__COUNTS__:' | tail -n 1)"
-            if [[ -n "$counts_line" ]]; then
-                echo "$counts_line"
-            else
-                echo "__COUNTS__:1:0:1"
-            fi
-        done 3<&-
+    # Create temporary directory for results
+    local results_dir
+    results_dir=$(mktemp -d) || {
+        kk_test_error "Failed to create temporary directory for threaded execution"
+        kk_runner_execute_sequential "${test_files[@]}"
+        return $?
     }
     
-    # Start workers
-    local pids=()
-    for ((w=0; w<WORKERS; w++)); do
-        worker_func 3<"$fifo" &
-        pids+=($!)
+    # Function to execute a single test and save results
+    run_test() {
+        local test_file="$1"
+        local result_file="$2"
+        local output counts_line t p f
+        
+        [[ ! -f "$test_file" ]] && {
+            echo "__COUNTS__:1:0:1" > "$result_file"
+            return 1
+        }
+        
+        local clean_file="${test_file%$'\r'}"
+        
+        kk_test_debug "Executing: $(basename "$clean_file")"
+        
+        # Show test file name in info mode
+        if [[ "$VERBOSITY" == "info" ]]; then
+            echo "[TEST] $(basename "$clean_file")"
+        fi
+        
+        # Run test in subshell to isolate state
+        output="$(
+            bash -c "
+                export VERBOSITY='$VERBOSITY'
+                export KK_OUTPUT_COUNTS=1
+                export _KK_ASSERT_QUIET_MODE='$_KK_ASSERT_QUIET_MODE'
+                export _KK_TEST_QUIET_MODE='$_KK_TEST_QUIET_MODE'
+                source '$clean_file'
+                # Always output counts
+                echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
+            " 2>&1 || true
+        )"
+        
+        # Parse counters
+        counts_line="$(printf '%s\n' "$output" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
+        
+        # Save results to file
+        {
+            echo "$counts_line"
+            echo "$output"
+        } > "$result_file"
+    }
+    
+    # Export function for subshells
+    export -f run_test kk_test_debug
+    export results_dir VERBOSITY _KK_ASSERT_QUIET_MODE _KK_TEST_QUIET_MODE
+    
+    # Actual number of workers to use
+    local num_workers=$WORKERS
+    [[ $num_workers -gt $num_files ]] && num_workers=$num_files
+    
+    # Run tests in parallel using xargs or manual background processes
+    if command -v xargs &>/dev/null; then
+        # Use xargs for better parallelization if available
+        printf '%s\n' "${test_files[@]}" | xargs -P "$num_workers" -I {} bash -c '
+            run_test "$1" "$2/$(basename "$1").result"
+        ' _ {} "$results_dir"
+    else
+        # Manual parallel execution using background processes
+        local active_jobs=0
+        for ((i=0; i<num_files; i++)); do
+            # Limit number of concurrent jobs
+            while [[ $(jobs -r | wc -l) -ge $num_workers ]]; do
+                sleep 0.01
+            done
+            
+            run_test "${test_files[$i]}" "$results_dir/${i}.result" &
+        done
+        wait
+    fi
+    
+    # Collect and aggregate results
+    local total_t=0 total_p=0 total_f=0
+    for result_file in "$results_dir"/*.result; do
+        [[ ! -f "$result_file" ]] && continue
+        
+        local first_line
+        first_line=$(head -n 1 "$result_file")
+        
+        local counts_line output_lines
+        counts_line=$(grep '^__COUNTS__:' "$result_file" | head -n 1)
+        
+        if [[ -n "$counts_line" ]]; then
+            local t p f
+            IFS=':' read -r _ t p f <<<"$counts_line"
+            t=${t:-0}; p=${p:-0}; f=${f:-0}
+            total_t=$((total_t + t))
+            total_p=$((total_p + p))
+            total_f=$((total_f + f))
+            
+            # Track failed test files
+            if ((f > 0)); then
+                local test_idx
+                test_idx="${result_file##*/}"
+                test_idx="${test_idx%.result}"
+                if [[ "$test_idx" =~ ^[0-9]+$ ]] && [[ $test_idx -lt ${#test_files[@]} ]]; then
+                    FAILED_TEST_FILES+=("$(basename "${test_files[$test_idx]}")")
+                fi
+            fi
+        else
+            # Test failed to report counters
+            total_t=$((total_t + 1))
+            total_f=$((total_f + 1))
+        fi
+        
+        # Show output
+        if [[ "$VERBOSITY" == "info" ]] || grep -q "^__COUNTS__:[0-9]*:[0-9]*:[1-9]" "$result_file"; then
+            grep -v '^__COUNTS__:' "$result_file" | sed -e 's/\r$//' || true
+        else
+            # In error mode, show errors and warnings
+            grep -E '^\[ERROR\]|\[FAIL\]|\[WARN\]|\[ASSERTION FAILED\]|: No such file|: command not found' "$result_file" | grep -v '^__COUNTS__:' || true
+        fi
     done
     
-    # Queue test files
-    for test_file in "${test_files[@]}"; do
-        echo "$test_file" >> "$fifo"
-    done
-    
-    # Signal end of queue
-    for ((w=0; w<WORKERS; w++)); do
-        echo "" >> "$fifo"
-    done
-    
-    # Collect results from workers
-    local all_output
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-        # Results are printed to stdout by worker
-    done
+    # Update global counters
+    TESTS_TOTAL=$((TESTS_TOTAL + total_t))
+    TESTS_PASSED=$((TESTS_PASSED + total_p))
+    TESTS_FAILED=$((TESTS_FAILED + total_f))
     
     # Cleanup
-    rm -rf "$fifo_dir" 2>/dev/null || true
-    
-    # Fall back to sequential execution as it's more reliable in bash
-    kk_runner_execute_sequential "${test_files[@]}"
+    rm -rf "$results_dir"
 }
 
 # ============================================================================
@@ -439,7 +508,7 @@ kk_runner_execute_tests() {
             kk_runner_execute_sequential "${test_files[@]}"
             ;;
         threaded)
-            kk_runner_execute_sequential "${test_files[@]}"  # Use sequential for now (safer)
+            kk_runner_execute_threaded "${test_files[@]}"
             ;;
         *)
             kk_test_error "Unknown execution mode: $MODE"
