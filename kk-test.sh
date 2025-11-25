@@ -7,6 +7,12 @@
 #
 # This will automatically source all framework components in the correct order.
 
+# Prevent multiple sourcing
+if [[ -n "$_KK_TEST_SOURCED" ]]; then
+    return
+fi
+_KK_TEST_SOURCED=1
+
 # Get the directory where this file is located
 _KK_TEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _KK_TEST_ROOT_DIR="$(dirname "$_KK_TEST_LIB_DIR")"
@@ -43,11 +49,15 @@ source "$_KK_TEST_LIB_DIR/kk-test-runner.sh" || {
 # Framework Exports
 # ============================================================================
 
-# Export framework version
-readonly KK_TEST_FRAMEWORK_VERSION="1.0.0"
+# Export framework version (only if not already set)
+if [[ -z "$KK_TEST_FRAMEWORK_VERSION" ]]; then
+    readonly KK_TEST_FRAMEWORK_VERSION="1.0.0"
+fi
 
-# Export framework directory for templates
-readonly KK_TEST_FRAMEWORK_DIR="$_KK_TEST_ROOT_DIR"
+# Export framework directory for templates (only if not already set)
+if [[ -z "$KK_TEST_FRAMEWORK_DIR" ]]; then
+    readonly KK_TEST_FRAMEWORK_DIR="$_KK_TEST_ROOT_DIR"
+fi
 
 # ============================================================================
 # Provide convenience functions
