@@ -25,9 +25,9 @@ MODULE_DIR="$SCRIPT_DIR/.."
 
 # Source the main testing framework
 # This loads all framework components: core, assertions, fixtures, runner
-KKTESTS_DIR="$(dirname "$MODULE_DIR")/kktests"
-source "$KKTESTS_DIR/lib/kk-test.sh" || {
-    echo "ERROR: Failed to load testing framework from $KKTESTS_DIR/lib/kk-test.sh" >&2
+KTESTS_DIR="$(dirname "$MODULE_DIR")/ktests"
+source "$KTESTS_DIR/lib/ktest.sh" || {
+    echo "ERROR: Failed to load testing framework from $KTESTS_DIR/lib/ktest.sh" >&2
     exit 1
 }
 
@@ -44,7 +44,7 @@ source "$KKTESTS_DIR/lib/kk-test.sh" || {
 MODULE_NAME="<MODULE_NAME>"
 
 # Initialize test environment
-kk_test_init "$MODULE_NAME" "$SCRIPT_DIR"
+kt_test_init "$MODULE_NAME" "$SCRIPT_DIR"
 
 # ============================================================================
 # Module Sourcing (Optional)
@@ -55,7 +55,7 @@ kk_test_init "$MODULE_NAME" "$SCRIPT_DIR"
 # if [[ -f "$MODULE_SCRIPT" ]]; then
 #     source "$MODULE_SCRIPT"
 # else
-#     kk_test_error "Module script not found: $MODULE_SCRIPT"
+#     kt_test_error "Module script not found: $MODULE_SCRIPT"
 #     exit 1
 # fi
 
@@ -65,10 +65,10 @@ kk_test_init "$MODULE_NAME" "$SCRIPT_DIR"
 
 # Parse command-line arguments
 # This will set: VERBOSITY, TEST_SELECTION, MODE, WORKERS
-kk_runner_parse_args "$@"
+kt_runner_parse_args "$@"
 
 # Example: Enable debug mode conditionally
-# [[ "$VERBOSITY" == "info" ]] && kk_config_set "debug" "true"
+# [[ "$VERBOSITY" == "info" ]] && kt_config_set "debug" "true"
 
 # ============================================================================
 # Custom Cleanup Handlers (Optional)
@@ -81,7 +81,7 @@ kk_runner_parse_args "$@"
 #     # Cleanup code here
 #     rm -f /tmp/my_test_resource
 # }
-# kk_fixture_cleanup_register "cleanup_my_resources"
+# kt_fixture_cleanup_register "cleanup_my_resources"
 
 # ============================================================================
 # Test Utilities (Optional)
@@ -91,6 +91,6 @@ kk_runner_parse_args "$@"
 # Example:
 #
 # assert_module_loaded() {
-#     kk_assert_true "$(declare -F Module.new)" "Module should be loaded"
+#     kt_assert_true "$(declare -F Module.new)" "Module should be loaded"
 # }
 

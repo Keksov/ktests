@@ -49,8 +49,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KKLASS_DIR="$SCRIPT_DIR/.."
 
 # Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
+KT_RED='\033[0;31m'
+KT_GREEN='\033[0;32m'
 # ... 200+ more lines of duplicated code ...
 
 test_start() { ... }
@@ -66,11 +66,11 @@ parse_args() { ... }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$SCRIPT_DIR/.."
 
-KKTESTS_DIR="$(dirname "$MODULE_DIR")/kktests"
-source "$KKTESTS_DIR/lib/kk-test.sh"
+KTESTS_DIR="$(dirname "$MODULE_DIR")/ktests"
+source "$KTESTS_DIR/lib/ktest.sh"
 
-kk_test_init "module_name" "$SCRIPT_DIR"
-kk_runner_parse_args "$@"
+kt_test_init "module_name" "$SCRIPT_DIR"
+kt_runner_parse_args "$@"
 ```
 
 **Reduction: ~91% less code in common.sh**
@@ -105,7 +105,7 @@ fi
 
 ### After (with assertions)
 ```bash
-kk_assert_equals "expected" "$result" "Values match"
+kt_assert_equals "expected" "$result" "Values match"
 ```
 
 ## Test Each Suite
@@ -136,19 +136,19 @@ cp templates/common.sh.template kcl/tfile/tests/common.sh
 ### Issue: Framework not found
 ```bash
 # Check the path in your common.sh
-KKTESTS_DIR="$(dirname "$MODULE_DIR")/kktests"
+KTESTS_DIR="$(dirname "$MODULE_DIR")/ktests"
 
-# Should resolve to: /c:/projects/kkbot/lib/kktests
+# Should resolve to: /c:/projects/kkbot/lib/ktests
 ```
 
 ### Issue: Tests not running
 ```bash
 # Verify directory structure
-ls -la kktests/lib/kk-test*.sh
-ls -la kktests/templates/common.sh.template
+ls -la ktests/lib/ktest*.sh
+ls -la ktests/templates/common.sh.template
 
 # Run with full path if needed
-source "/c:/projects/kkbot/lib/kktests/lib/kk-test.sh"
+source "/c:/projects/kkbot/lib/ktests/lib/ktest.sh"
 ```
 
 ### Issue: Backward compatibility
@@ -188,7 +188,7 @@ else
 fi
 
 # After
-kk_assert_file_exists "$file" "File created"
+kt_assert_file_exists "$file" "File created"
 ```
 
 ### Register Cleanup
@@ -196,7 +196,7 @@ kk_assert_file_exists "$file" "File created"
 cleanup_service() {
     kill "$SERVICE_PID" 2>/dev/null || true
 }
-kk_fixture_cleanup_register "cleanup_service"
+kt_fixture_cleanup_register "cleanup_service"
 # Runs automatically on EXIT
 ```
 

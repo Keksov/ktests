@@ -1,35 +1,35 @@
 #!/bin/bash
 # Unit tests: Array assertion checks
 
-source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
+source "$(cd "$(dirname "$0")/.." && pwd)/ktest.sh"
 
-kk_test_init "AssertionsArrayChecks" "$(dirname "$0")"
+kt_test_init "AssertionsArrayChecks" "$(dirname "$0")"
 
-# Test kk_assert_array_length with correct length
-kk_test_start "kk_assert_array_length with correct length"
+# Test kt_assert_array_length with correct length
+kt_test_start "kt_assert_array_length with correct length"
 declare -a test_arr=("a" "b" "c")
-if kk_assert_array_length test_arr 3 "Array length"; then
-    kk_test_pass "Assertion passed"
+if kt_assert_array_length test_arr 3 "Array length"; then
+    kt_test_pass "Assertion passed"
 else
-    kk_test_fail "Assertion failed"
+    kt_test_fail "Assertion failed"
 fi
 
-# Test kk_assert_array_length with incorrect length
-kk_test_start "kk_assert_array_length with incorrect length"
-if ! kk_assert_quiet kk_assert_array_length test_arr 5 "Array length"; then
-    kk_test_pass "Assertion correctly failed"
+# Test kt_assert_array_length with incorrect length
+kt_test_start "kt_assert_array_length with incorrect length"
+if ! kt_assert_quiet kt_assert_array_length test_arr 5 "Array length"; then
+    kt_test_pass "Assertion correctly failed"
 else
-    kk_test_fail "Assertion should have failed"
+    kt_test_fail "Assertion should have failed"
 fi
 
-# Test kk_assert_array_length with empty array variable
-kk_test_start "kk_assert_array_length with empty array variable"
+# Test kt_assert_array_length with empty array variable
+kt_test_start "kt_assert_array_length with empty array variable"
 unset test_empty_arr
 declare -a test_empty_arr=()
-if kk_assert_array_length test_empty_arr 0 "Empty array test"; then
-    kk_test_pass "Assertion passed"
+if kt_assert_array_length test_empty_arr 0 "Empty array test"; then
+    kt_test_pass "Assertion passed"
 else
-    kk_test_fail "Assertion failed"
+    kt_test_fail "Assertion failed"
 fi
 
 

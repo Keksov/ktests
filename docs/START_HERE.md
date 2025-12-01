@@ -33,13 +33,13 @@ A centralized testing library that:
 ## Files Overview
 
 ```
-kktests/
+ktests/
 ├── lib/
-│   ├── kk-test-core.sh          # Logging & counters
-│   ├── kk-test-assertions.sh    # Assertion helpers
-│   ├── kk-test-fixtures.sh      # Resource management
-│   ├── kk-test-runner.sh        # Test execution
-│   └── kk-test.sh               # Main entry point
+│   ├── ktest_core.sh          # Logging & counters
+│   ├── ktest_assertions.sh    # Assertion helpers
+│   ├── ktest_fixtures.sh      # Resource management
+│   ├── ktest_runner.sh        # Test execution
+│   └── ktest.sh               # Main entry point
 │
 ├── templates/
 │   ├── common.sh.template       # Copy for new suites
@@ -76,7 +76,7 @@ kktests/
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 test_start "My first test"
-kk_assert_equals "hello" "hello" "Values match"
+kt_assert_equals "hello" "hello" "Values match"
 # Done! Cleanup is automatic
 ```
 
@@ -88,9 +88,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 init_test_tmpdir "001"
 
 test_start "File operations"
-file=$(kk_fixture_tmpfile "data")
+file=$(kt_fixture_tmpfile "data")
 echo "test" > "$file"
-kk_assert_file_exists "$file" "File created"
+kt_assert_file_exists "$file" "File created"
 # Framework cleans up automatically
 ```
 
@@ -123,19 +123,19 @@ kk_assert_file_exists "$file" "File created"
 
 ```bash
 # Values
-kk_assert_equals "expected" "actual" "message"
+kt_assert_equals "expected" "actual" "message"
 
 # Strings
-kk_assert_contains "$text" "substr" "message"
+kt_assert_contains "$text" "substr" "message"
 
 # Files
-kk_assert_file_exists "/path" "message"
+kt_assert_file_exists "/path" "message"
 
 # Commands
-kk_assert_success "ls /tmp" "message"
+kt_assert_success "ls /tmp" "message"
 
 # Arrays
-kk_assert_array_contains "arr" "value" "message"
+kt_assert_array_contains "arr" "value" "message"
 ```
 
 ## Key Features

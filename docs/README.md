@@ -5,13 +5,13 @@ A unified shell testing framework that eliminates code duplication across all te
 ## Overview
 
 ```
-kktests/
+ktests/
 ├── lib/
-│   ├── kk-test-core.sh          # Core functionality (logging, counters)
-│   ├── kk-test-assertions.sh    # 30+ assertion helpers
-│   ├── kk-test-fixtures.sh      # Temp files and resource management
-│   ├── kk-test-runner.sh        # Test discovery and execution
-│   └── kk-test.sh               # Main orchestrator
+│   ├── ktest_core.sh          # Core functionality (logging, counters)
+│   ├── ktest_assertions.sh    # 30+ assertion helpers
+│   ├── ktest_fixtures.sh      # Temp files and resource management
+│   ├── ktest_runner.sh        # Test discovery and execution
+│   └── ktest.sh               # Main orchestrator
 │
 ├── templates/
 │   ├── common.sh.template       # Copy this to your tests/
@@ -73,23 +73,23 @@ Your tests now use the framework. **No other changes needed.**
 
 ```bash
 # Values
-kk_assert_equals "expected" "actual" "message"
-kk_assert_true "$var" "message"
+kt_assert_equals "expected" "actual" "message"
+kt_assert_true "$var" "message"
 
 # Strings
-kk_assert_contains "text" "substring" "message"
-kk_assert_matches "text" "regex" "message"
+kt_assert_contains "text" "substring" "message"
+kt_assert_matches "text" "regex" "message"
 
 # Files
-kk_assert_file_exists "/path" "message"
-kk_assert_dir_exists "/path" "message"
+kt_assert_file_exists "/path" "message"
+kt_assert_dir_exists "/path" "message"
 
 # Commands
-kk_assert_success "command arg" "message"
-kk_assert_failure "command arg" "message"
+kt_assert_success "command arg" "message"
+kt_assert_failure "command arg" "message"
 
 # Arrays
-kk_assert_array_contains "arr" "value" "message"
+kt_assert_array_contains "arr" "value" "message"
 ```
 
 ## Fixtures and Cleanup
@@ -99,7 +99,7 @@ kk_assert_array_contains "arr" "value" "message"
 init_test_tmpdir "001"
 
 # Create temp file
-file=$(kk_fixture_tmpfile "data")
+file=$(kt_fixture_tmpfile "data")
 echo "content" > "$file"
 # Automatically cleaned up when test exits!
 ```
@@ -110,7 +110,7 @@ cleanup_service() {
     kill "$SERVICE_PID" 2>/dev/null || true
 }
 
-kk_fixture_cleanup_register "cleanup_service"
+kt_fixture_cleanup_register "cleanup_service"
 # Runs automatically on EXIT
 ```
 
@@ -152,17 +152,17 @@ test_section "My Tests"
 
 # Test 1: Values
 test_start "Check values"
-kk_assert_equals "5" "5" "Numbers match"
+kt_assert_equals "5" "5" "Numbers match"
 
 # Test 2: Files
 test_start "Check file"
-file=$(kk_fixture_tmpfile "test_data")
+file=$(kt_fixture_tmpfile "test_data")
 echo "data" > "$file"
-kk_assert_file_exists "$file" "File created"
+kt_assert_file_exists "$file" "File created"
 
 # Test 3: Commands
 test_start "Check command"
-kk_assert_success "ls /tmp" "Can list directory"
+kt_assert_success "ls /tmp" "Can list directory"
 
 # Cleanup is automatic - no trap cleanup needed!
 ```
@@ -216,16 +216,16 @@ test_section "title"          # Section header
 ### Fixtures
 ```bash
 init_test_tmpdir "001"                    # Create test tmpdir
-file=$(kk_fixture_tmpfile "prefix")       # Create temp file
-dir=$(kk_fixture_tmpdir_create "name")    # Create temp directory
-kk_fixture_cleanup_register "handler"     # Register cleanup
+file=$(kt_fixture_tmpfile "prefix")       # Create temp file
+dir=$(kt_fixture_tmpdir_create "name")    # Create temp directory
+kt_fixture_cleanup_register "handler"     # Register cleanup
 ```
 
 ### Configuration
 ```bash
-kk_config_set "debug" "true"              # Enable debug
-kk_config_set "verbosity" "info"          # Set verbosity
-value=$(kk_config_get "debug")            # Get config value
+kt_config_set "debug" "true"              # Enable debug
+kt_config_set "verbosity" "info"          # Set verbosity
+value=$(kt_config_get "debug")            # Get config value
 ```
 
 ## CLI Options
@@ -291,9 +291,9 @@ All existing test code continues to work:
 
 | Problem | Solution |
 |---------|----------|
-| Framework not found | Verify KKTESTS_DIR path in common.sh |
+| Framework not found | Verify KTESTS_DIR path in common.sh |
 | Tests not discovered | Files must match `NNN_*.sh` pattern |
-| Cleanup not working | Check `trap 'kk_fixture_teardown' EXIT` |
+| Cleanup not working | Check `trap 'kt_fixture_teardown' EXIT` |
 | Windows issues | Framework handles CRLF automatically |
 
 ## File Naming Convention

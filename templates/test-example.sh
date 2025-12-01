@@ -34,7 +34,7 @@ result="hello"
 expected="hello"
 
 # Use assertion helpers from framework
-kk_assert_equals "$expected" "$result" "Strings should match"
+kt_assert_equals "$expected" "$result" "Strings should match"
 
 # ============================================================================
 # Test Case 2: File System Check
@@ -43,10 +43,10 @@ kk_assert_equals "$expected" "$result" "Strings should match"
 test_start "Temp directory creation"
 
 # Create a temporary file in the test directory
-test_file=$(kk_fixture_tmpfile "test")
+test_file=$(kt_fixture_tmpfile "test")
 
 # Assert the file was created
-kk_assert_file_exists "$test_file" "Temp file should exist"
+kt_assert_file_exists "$test_file" "Temp file should exist"
 
 # ============================================================================
 # Test Case 3: Multiple Assertions
@@ -59,8 +59,8 @@ value1="42"
 value2="42"
 value3="hello"
 
-kk_assert_equals "$value1" "$value2" "Numeric values should match"
-kk_assert_not_equals "$value1" "$value3" "Values should not be equal"
+kt_assert_equals "$value1" "$value2" "Numeric values should match"
+kt_assert_not_equals "$value1" "$value3" "Values should not be equal"
 
 # ============================================================================
 # Test Case 4: Output Validation
@@ -72,8 +72,8 @@ test_start "Command output validation"
 output=$(echo "This is test output")
 
 # Assert output contains expected text
-kk_assert_output_contains "$output" "test" "Output should contain 'test'"
-kk_assert_output_not_contains "$output" "error" "Output should not contain 'error'"
+kt_assert_output_contains "$output" "test" "Output should contain 'test'"
+kt_assert_output_not_contains "$output" "error" "Output should not contain 'error'"
 
 # ============================================================================
 # Test Case 5: Directory Operations
@@ -82,10 +82,10 @@ kk_assert_output_not_contains "$output" "error" "Output should not contain 'erro
 test_start "Directory operations"
 
 # Create a temporary subdirectory
-test_dir=$(kk_fixture_tmpdir_create "subdir")
+test_dir=$(kt_fixture_tmpdir_create "subdir")
 
 # Assert the directory exists
-kk_assert_dir_exists "$test_dir" "Temp directory should exist"
+kt_assert_dir_exists "$test_dir" "Temp directory should exist"
 
 # ============================================================================
 # Test Case 6: Conditional Testing
@@ -95,7 +95,7 @@ test_start "Conditional assertions"
 
 # Only run these if running in verbose mode
 if [[ "$VERBOSITY" == "info" ]]; then
-    kk_test_log "This is extra diagnostic information"
+    kt_test_log "This is extra diagnostic information"
 fi
 
 # Use test_info for conditional logging in quiet mode
@@ -108,7 +108,7 @@ test_info "Test completed successfully"
 test_start "Test failure example"
 
 # This assertion will fail (intentionally for demo)
-kk_assert_equals "expected" "actual" "This assertion demonstrates a failure"
+kt_assert_equals "expected" "actual" "This assertion demonstrates a failure"
 
 # Continue with more tests (failures don't stop execution)
 
@@ -122,10 +122,10 @@ test_start "Array operations"
 my_array=("apple" "banana" "cherry")
 
 # Assert array length
-kk_assert_array_length "my_array" 3 "Array should have 3 elements"
+kt_assert_array_length "my_array" 3 "Array should have 3 elements"
 
 # Assert array contains a value
-kk_assert_array_contains "my_array" "banana" "Array should contain 'banana'"
+kt_assert_array_contains "my_array" "banana" "Array should contain 'banana'"
 
 # ============================================================================
 # Test Case 9: Fixture Management
@@ -134,7 +134,7 @@ kk_assert_array_contains "my_array" "banana" "Array should contain 'banana'"
 test_start "File fixture creation"
 
 # Create a fixture file with specific content
-fixture_file=$(kk_fixture_create_file "config.txt" "key=value")
+fixture_file=$(kt_fixture_create_file "config.txt" "key=value")
 
 # Verify the file was created
 if [[ -f "$fixture_file" ]]; then
@@ -149,12 +149,12 @@ fi
 
 # Register a custom cleanup handler
 cleanup_demo() {
-    kk_test_debug "Custom cleanup handler called"
+    kt_test_debug "Custom cleanup handler called"
     # Add cleanup logic here
 }
 
 # Uncomment to demonstrate cleanup handler:
-# kk_fixture_cleanup_register "cleanup_demo"
+# kt_fixture_cleanup_register "cleanup_demo"
 
 # ============================================================================
 # Summary

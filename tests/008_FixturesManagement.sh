@@ -1,26 +1,26 @@
 #!/bin/bash
 # Unit tests: Test fixtures management
 
-source "$(cd "$(dirname "$0")/.." && pwd)/kk-test.sh"
+source "$(cd "$(dirname "$0")/.." && pwd)/ktest.sh"
 
-kk_test_init "FixturesManagement" "$(dirname "$0")"
+kt_test_init "FixturesManagement" "$(dirname "$0")"
 
 # Test fixture temp directory creation
-kk_test_start "Fixture temp directory creation"
-tmpdir=$(kk_fixture_tmpdir)
+kt_test_start "Fixture temp directory creation"
+tmpdir=$(kt_fixture_tmpdir)
 if [[ -d "$tmpdir" ]]; then
-    kk_test_pass "Temp directory created"
+    kt_test_pass "Temp directory created"
 else
-    kk_test_fail "Temp directory not created"
+    kt_test_fail "Temp directory not created"
 fi
 
 # Test fixture temp file creation
-kk_test_start "Fixture temp file creation"
-tmpfile=$(kk_fixture_tmpfile "testfile")
+kt_test_start "Fixture temp file creation"
+tmpfile=$(kt_fixture_tmpfile "testfile")
 if [[ -f "$tmpfile" ]]; then
-    kk_test_pass "Temp file created"
+    kt_test_pass "Temp file created"
 else
-    kk_test_fail "Temp file not created"
+    kt_test_fail "Temp file not created"
 fi
 
 
