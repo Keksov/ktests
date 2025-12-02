@@ -18,16 +18,26 @@ fi
 
 SCRIPT_DIR="$1"
 SUITE_NAME="${2:-Test Suite}"
-TEST_FILTER="${3:-/[0-9][0-9][0-9]_}"
 
-# Shift to remove consumed arguments
-if [[ $# -ge 3 ]]; then
-    shift 3
-elif [[ $# -ge 2 ]]; then
-    shift 2
+# Parse remaining arguments carefully
+# The third argument might be TEST_FILTER (starts with /) or an option (starts with -)
+# If it looks like an option, use default TEST_FILTER and pass it to kt_runner_parse_args
+
+shift 2  # Remove SCRIPT_DIR and SUITE_NAME
+remaining_args=()
+
+# Process $1 onwards
+if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; then
+    # Third arg is not an option, assume it's TEST_FILTER
+    TEST_FILTER="$1"
+    shift
 else
-    shift 1
+    # Third arg is an option or missing, use default TEST_FILTER
+    TEST_FILTER="/[0-9][0-9][0-9]_"
 fi
+
+# Collect remaining arguments for kt_runner_parse_args
+remaining_args=("$@")
 
 # Determine ktests library directory based on current script location
 KTESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +45,7 @@ export KTESTS_LIB_DIR
 source "$KTESTS_LIB_DIR/ktest.sh"
 
 # Parse remaining command line arguments
-kt_runner_parse_args "$@"
+kt_runner_parse_args "${remaining_args[@]}"
 
 # Show test execution info
 kt_test_section "Starting $SUITE_NAME"

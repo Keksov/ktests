@@ -94,10 +94,20 @@ kt_runner_parse_args() {
                 shift
                 ;;
             --verbosity|-v)
+                if [[ $# -lt 2 ]]; then
+                    kt_test_error "Option $1 requires a value"
+                    kt_runner_show_help
+                    exit 1
+                fi
                 VERBOSITY="$2"
                 shift 2
                 ;;
             -n|--tests)
+                if [[ $# -lt 2 ]]; then
+                    kt_test_error "Option $1 requires a value"
+                    kt_runner_show_help
+                    exit 1
+                fi
                 TEST_SELECTION="$2"
                 shift 2
                 ;;
@@ -106,6 +116,11 @@ kt_runner_parse_args() {
                 shift
                 ;;
             -m|--mode)
+                if [[ $# -lt 2 ]]; then
+                    kt_test_error "Option $1 requires a value"
+                    kt_runner_show_help
+                    exit 1
+                fi
                 MODE="$2"
                 shift 2
                 ;;
@@ -114,6 +129,11 @@ kt_runner_parse_args() {
                 shift
                 ;;
             -w|--workers)
+                if [[ $# -lt 2 ]]; then
+                    kt_test_error "Option $1 requires a value"
+                    kt_runner_show_help
+                    exit 1
+                fi
                 WORKERS="$2"
                 shift 2
                 ;;

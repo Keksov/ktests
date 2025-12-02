@@ -27,7 +27,7 @@ declare -g _KT_ID=""
 declare -g _KT_TMPDIR=""
 
 # Base temporary directory
-declare -g KT__TMPBASE=""
+declare -g _KT_TMPBASE=""
 
 # Array of registered cleanup functions
 declare -ga _KT_CLEANUP_HANDLERS=()
@@ -47,13 +47,13 @@ kt_fixture_init_tmpdir() {
     local base_dir="${2:-./.tmp}"
     
     _KT_ID="$test_id"
-    KT__TMPBASE="$base_dir"
+    _KT_TMPBASE="$base_dir"
     
     # Ensure base directory exists
-    [[ ! -d "$KT__TMPBASE" ]] && mkdir -p "$KT__TMPBASE"
+    [[ ! -d "$_KT_TMPBASE" ]] && mkdir -p "$_KT_TMPBASE"
     
     # Create test-specific directory
-    _KT_TMPDIR="$KT__TMPBASE/$test_id"
+    _KT_TMPDIR="$_KT_TMPBASE/$test_id"
     mkdir -p "$_KT_TMPDIR"
     
     _KT_CREATED_TMPDIRS+=("$_KT_TMPDIR")
