@@ -17,7 +17,7 @@ if [[ -z "$_KTEST_CORE_SOURCED" ]]; then
 fi
 
 # ============================================================================
-# Global Variables
+# Global Variables and Constants
 # ============================================================================
 
 # Test execution configuration
@@ -35,6 +35,81 @@ declare -ga TESTS_TO_RUN=()
 
 # Array of failed test file names
 declare -ga FAILED_TEST_FILES=()
+
+# Constants for error handling
+readonly KT_ERROR_COUNTS="__COUNTS__:1:0:1"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+# Parse counts line and set count_total, count_passed, count_failed
+# Usage: kt_runner_parse_counts "__COUNTS__:10:8:2"
+kt_runner_parse_counts() {
+    local counts_line="$1"
+    if [[ -n "$counts_line" ]]; then
+        IFS=':' read -r _ count_total count_passed count_failed <<<"$counts_line"
+        count_total=${count_total:-0}; count_passed=${count_passed:-0}; count_failed=${count_failed:-0}
+    else
+        count_total=1; count_passed=0; count_failed=1
+    fi
+}
+
+# Add counts to global test counters
+# Usage: kt_runner_add_counts 10 8 2
+kt_runner_add_counts() {
+    local t="$1" p="$2" f="$3"
+    TESTS_TOTAL=$((TESTS_TOTAL + t))
+    TESTS_PASSED=$((TESTS_PASSED + p))
+    TESTS_FAILED=$((TESTS_FAILED + f))
+}
+
+# Set error counts and related variables
+# Usage: kt_runner_set_error_counts
+kt_runner_set_error_counts() {
+    counts_line="$KT_ERROR_COUNTS"
+    count_total=1
+    count_passed=0
+    count_failed=1
+}
+
+# Clean filename: remove Windows line endings
+# Usage: clean_name=$(kt_runner_clean_filename "$filename")
+kt_runner_clean_filename() {
+    local filename="$1"
+    echo "${filename%$'\r'}"
+}
+
+# Show usage information
+kt_runner_show_help() {
+    cat <<'EOF'
+Test Runner Usage: test_suite.sh [OPTIONS]
+
+Options:
+   -v, --verbosity LEVEL  Set verbosity level: "info" (verbose) or "error" (quiet)
+                          Default: error
+   
+   -n, --tests SELECTION  Run specific tests by number or range
+                          Examples: "1" "1,3,5" "1-5" "1-3,5,7-9"
+   
+   -m, --mode MODE        Execution mode: "threaded" or "single"
+                          Default: threaded
+   
+   -w, --workers NUM      Number of worker threads in threaded mode
+                          Default: 8 (optimal for most systems)
+                          Recommended: 2-8 (higher values show diminishing returns)
+   
+   -h, --help            Show this help message
+
+   Examples:
+   ./test_suite.sh                           # Run all tests in threaded mode (8 workers)
+   ./test_suite.sh -v info                   # Run all tests with verbose output
+   ./test_suite.sh -n 1-5                    # Run tests 1-5 in threaded mode
+   ./test_suite.sh -n 1,3,5 -m single       # Run tests 1, 3, 5 sequentially
+   ./test_suite.sh -v info -m threaded -w 4 # Run all tests with 4 threads
+   ./test_suite.sh -m threaded -w 2         # Run with 2 workers (resource-limited system)
+EOF
+}
 
 # ============================================================================
 # Test Selection Parsing
@@ -83,9 +158,6 @@ kt_runner_parse_args() {
     MODE="threaded"
     WORKERS=8
     _KT_ASSERT_QUIET_MODE="${_KT_ASSERT_QUIET_MODE:-normal}"
-    
-    # If VERBOSITY is already set from environment, respect it but allow override
-    local env_verbosity="$VERBOSITY"
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -171,36 +243,7 @@ kt_runner_parse_args() {
     export VERBOSITY MODE WORKERS TEST_SELECTION FAILED_TEST_FILES _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE
 }
 
-# Show usage information
-kt_runner_show_help() {
-    cat <<'EOF'
-Test Runner Usage: test_suite.sh [OPTIONS]
 
-Options:
-   -v, --verbosity LEVEL  Set verbosity level: "info" (verbose) or "error" (quiet)
-                          Default: error
-   
-   -n, --tests SELECTION  Run specific tests by number or range
-                          Examples: "1" "1,3,5" "1-5" "1-3,5,7-9"
-   
-   -m, --mode MODE        Execution mode: "threaded" or "single"
-                          Default: threaded
-   
-   -w, --workers NUM      Number of worker threads in threaded mode
-                          Default: 8 (optimal for most systems)
-                          Recommended: 2-8 (higher values show diminishing returns)
-   
-   -h, --help            Show this help message
-
-   Examples:
-   ./test_suite.sh                           # Run all tests in threaded mode (8 workers)
-   ./test_suite.sh -v info                   # Run all tests with verbose output
-   ./test_suite.sh -n 1-5                    # Run tests 1-5 in threaded mode
-   ./test_suite.sh -n 1,3,5 -m single       # Run tests 1, 3, 5 sequentially
-   ./test_suite.sh -v info -m threaded -w 4 # Run all tests with 4 threads
-   ./test_suite.sh -m threaded -w 2         # Run with 2 workers (resource-limited system)
-EOF
-}
 
 # ============================================================================
 # Test File Discovery
@@ -224,37 +267,33 @@ kt_runner_find_tests() {
     cd "$test_dir" || return 1
     
     local test_files=()
+    shopt -s nullglob  # Enable nullglob once for entire function
     
     if [[ ${#TESTS_TO_RUN[@]} -gt 0 ]]; then
         # Find specific test numbers
         for num in "${TESTS_TO_RUN[@]}"; do
-            shopt -s nullglob
-            
             # Try various zero-padding patterns
             for pattern_var in "${num}_*.sh" "0${num}_*.sh" "00${num}_*.sh" "$(printf '%03d' "$num")_*.sh"; do
                 for f in $pattern_var; do
                     [[ -f "$f" ]] && test_files+=("$f")
                 done
             done
-            
-            shopt -u nullglob
         done
     else
         # Find all test files with 3-digit prefix
-        shopt -s nullglob
         for f in [0-9][0-9][0-9]_*.sh; do
             [[ -f "$f" ]] && test_files+=("$f")
         done
-        shopt -u nullglob
     fi
     
+    shopt -u nullglob  # Disable nullglob
     cd "$old_pwd" || return 1
     
     # Remove duplicates and clean newlines
     local cleaned=()
     declare -A seen
     for f in "${test_files[@]}"; do
-        f="${f%$'\r'}"  # Remove Windows line endings
+        f=$(kt_runner_clean_filename "$f")
         if [[ ! -v seen["$f"] ]]; then
             seen["$f"]=1
             cleaned+=("$f")
@@ -268,6 +307,95 @@ kt_runner_find_tests() {
 }
 
 # ============================================================================
+# Common Test Execution Utilities
+# ============================================================================
+
+# Execute a single test and return output and counts
+# Usage: kt_runner_execute_single_test "/path/to/test.sh"
+# Sets: output_content, counts_line, count_total, count_passed, count_failed
+kt_runner_execute_single_test() {
+    local test_file="$1"
+    
+    [[ ! -f "$test_file" ]] && {
+        output_content=""
+        kt_runner_set_error_counts
+        return 1
+    }
+    
+    local clean_file=$(kt_runner_clean_filename "$test_file")
+    
+    kt_test_debug "Executing: $(basename "$clean_file")"
+    
+    # Show test file name in info mode
+    if [[ "$VERBOSITY" == "info" ]]; then
+        echo "[TEST] $(basename "$clean_file")"
+    fi
+    
+    # Run test in subshell to isolate state
+    output_content="$(
+        bash -c "
+            export VERBOSITY='$VERBOSITY'
+            export KK_OUTPUT_COUNTS=1
+            export _KT_ASSERT_QUIET_MODE='$_KT_ASSERT_QUIET_MODE'
+            export _KTEST_QUIET_MODE='$_KTEST_QUIET_MODE'
+            export KT_TESTS_DIR='$(dirname "$clean_file")'
+            export KTESTS_LIB_DIR='$KTESTS_LIB_DIR'
+            export KTEST_SOURCE_PATH='$KTESTS_LIB_DIR/ktest_source.sh'
+            source \"\$KTEST_SOURCE_PATH\"
+            source '$clean_file'
+            # Always output counts (needed by runner for result tracking)
+            echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
+        " 2>&1 || true
+    )"
+    
+    # Parse counters from output
+    counts_line="$(printf '%s\n' "$output_content" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
+    if [[ -n "$counts_line" ]]; then
+        kt_runner_parse_counts "$counts_line"
+    else
+        kt_runner_set_error_counts
+    fi
+}
+
+# Filter test output based on verbosity level
+# Usage: kt_runner_filter_output "full_output_text" "counts_line" count_failed
+# Outputs filtered content to stdout
+kt_runner_filter_output() {
+    local output="$1"
+    local counts_line="$2"
+    local failed_count="$3"
+    
+    # Always show errors and warnings in all verbosity modes
+    # Show full output on verbose or failure
+    if [[ "$VERBOSITY" == "info" ]] || ((failed_count > 0)); then
+        echo "$output" | sed -e 's/\r$//' | grep -v '^__COUNTS__:' || true
+    else
+        # In error mode, still show [ERROR], [FAIL], [WARN], [ASSERTION FAILED], SCRIPT ERROR, and other error messages
+        # For SCRIPT ERROR blocks, show the entire block until we hit __COUNTS__ or a blank line followed by non-error output
+        local lines=()
+        local in_error_block=0
+        while IFS= read -r line; do
+            if [[ "$line" == *"SCRIPT ERROR"* ]]; then
+                in_error_block=1
+                lines+=("$line")
+            elif [[ "$line" =~ ^__COUNTS__: ]]; then
+                # COUNTS line marks the end of error output
+                in_error_block=0
+            elif [[ $in_error_block -eq 1 ]]; then
+                lines+=("$line")
+            elif [[ "$line" == "["* ]] || [[ "$line" == *": No such file" ]] || [[ "$line" == *": command not found" ]]; then
+                if [[ ! "$line" =~ ^__COUNTS__: ]]; then
+                    lines+=("$line")
+                fi
+            fi
+        done < <(printf '%s\n' "$output" | sed -e 's/\r$//')
+        if (( ${#lines[@]} > 0 )); then
+            printf '%s\n' "${lines[@]}"
+        fi
+    fi
+}
+
+# ============================================================================
 # Sequential Test Execution
 # ============================================================================
 
@@ -275,89 +403,24 @@ kt_runner_find_tests() {
 # Usage: kt_runner_execute_sequential test_file1 test_file2 ...
 kt_runner_execute_sequential() {
     local test_file
-    local output
-    local counts_line
-    local t p f
 
     for test_file in "$@"; do
         [[ ! -f "$test_file" ]] && continue
         
-        local clean_file="${test_file%$'\r'}"
+        # Execute test and get results
+        kt_runner_execute_single_test "$test_file"
         
-        kt_test_debug "Executing: $(basename "$clean_file")"
+        # Update global counters
+        kt_runner_add_counts "$count_total" "$count_passed" "$count_failed"
         
-        # Show test file name in info mode
-        if [[ "$VERBOSITY" == "info" ]]; then
-            echo "[TEST] $(basename "$clean_file")"
+        # Track failed test files
+        if ((count_failed > 0)); then
+            local clean_file=$(kt_runner_clean_filename "$test_file")
+            FAILED_TEST_FILES+=("$(basename "$clean_file")")
         fi
         
-        # Run test in subshell to isolate state
-         output="$(
-             bash -c "
-                 export VERBOSITY='$VERBOSITY'
-                 export KK_OUTPUT_COUNTS=1
-                 export _KT_ASSERT_QUIET_MODE='$_KT_ASSERT_QUIET_MODE'
-                 export _KTEST_QUIET_MODE='$_KTEST_QUIET_MODE'
-                 export KT_TESTS_DIR='$(dirname "$clean_file")'
-                 export KTESTS_LIB_DIR='$KTESTS_LIB_DIR'
-                 export KTEST_SOURCE_PATH='$KTESTS_LIB_DIR/ktest_source.sh'
-                 source \"\$KTEST_SOURCE_PATH\"
-                 source '$clean_file'
-                 # Always output counts (needed by runner for result tracking)
-                 echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
-             " 2>&1 || true
-         )"
-
-         # Parse counters from output
-         counts_line="$(printf '%s\n' "$output" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
-         if [[ -n "$counts_line" ]]; then
-             IFS=':' read -r _ t p f <<<"$counts_line"
-             t=${t:-0}; p=${p:-0}; f=${f:-0}
-             TESTS_TOTAL=$((TESTS_TOTAL + t))
-             TESTS_PASSED=$((TESTS_PASSED + p))
-             TESTS_FAILED=$((TESTS_FAILED + f))
-             
-             # Track failed test files
-             if ((f > 0)); then
-                 FAILED_TEST_FILES+=("$(basename "$clean_file")")
-             fi
-         else
-             # Test failed to report counters
-             TESTS_TOTAL=$((TESTS_TOTAL + 1))
-             TESTS_FAILED=$((TESTS_FAILED + 1))
-             local test_name="$(basename "$clean_file")"
-             kt_test_fail "$test_name"
-             FAILED_TEST_FILES+=("$test_name")
-         fi
-
-         # Always show errors and warnings in all verbosity modes
-         # Show full output on verbose or failure
-         if [[ "$VERBOSITY" == "info" ]] || ((f > 0)); then
-             echo "$output" | sed -e 's/\r$//' | grep -v '^__COUNTS__:' || true
-         else
-             # In error mode, still show [ERROR], [FAIL], [WARN], [ASSERTION FAILED], SCRIPT ERROR, and other error messages
-             # For SCRIPT ERROR blocks, show the entire block until we hit __COUNTS__ or a blank line followed by non-error output
-             local lines=()
-             local in_error_block=0
-             while IFS= read -r line; do
-                 if [[ "$line" == *"SCRIPT ERROR"* ]]; then
-                     in_error_block=1
-                     lines+=("$line")
-                 elif [[ "$line" =~ ^__COUNTS__: ]]; then
-                     # COUNTS line marks the end of error output
-                     in_error_block=0
-                 elif [[ $in_error_block -eq 1 ]]; then
-                     lines+=("$line")
-                 elif [[ "$line" == "["* ]] || [[ "$line" == *": No such file" ]] || [[ "$line" == *": command not found" ]]; then
-                     if [[ ! "$line" =~ ^__COUNTS__: ]]; then
-                         lines+=("$line")
-                     fi
-                 fi
-             done < <(printf '%s\n' "$output" | sed -e 's/\r$//')
-             if (( ${#lines[@]} > 0 )); then
-                 printf '%s\n' "${lines[@]}"
-             fi
-             fi
+        # Filter and display output
+        kt_runner_filter_output "$output_content" "$counts_line" "$count_failed"
     done
 }
 
@@ -393,52 +456,20 @@ kt_runner_execute_threaded() {
     run_test() {
         local test_file="$1"
         local result_file="$2"
-        local output counts_line t p f
         
-        [[ ! -f "$test_file" ]] && {
-            echo "__COUNTS__:1:0:1" > "$result_file"
-            return 1
-        }
-        
-        local clean_file="${test_file%$'\r'}"
-        
-        kt_test_debug "Executing: $(basename "$clean_file")"
-        
-        # Show test file name in info mode
-        if [[ "$VERBOSITY" == "info" ]]; then
-            echo "[TEST] $(basename "$clean_file")"
-        fi
-        
-        # Run test in subshell to isolate state
-        output="$(
-            bash -c "
-                export VERBOSITY='$VERBOSITY'
-                export KK_OUTPUT_COUNTS=1
-                export _KT_ASSERT_QUIET_MODE='$_KT_ASSERT_QUIET_MODE'
-                export _KTEST_QUIET_MODE='$_KTEST_QUIET_MODE'
-                export KT_TESTS_DIR='$(dirname "$clean_file")'
-                export KTESTS_LIB_DIR='$KTESTS_LIB_DIR'
-                export KTEST_SOURCE_PATH='$KTESTS_LIB_DIR/ktest_source.sh'
-                source \"\$KTEST_SOURCE_PATH\"
-                source '$clean_file'
-                # Always output counts
-                echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
-            " 2>&1 || true
-        )"
-        
-        # Parse counters
-        counts_line="$(printf '%s\n' "$output" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
+        # Use common execution function
+        kt_runner_execute_single_test "$test_file"
         
         # Save results to file
         {
             echo "$counts_line"
-            echo "$output"
+            echo "$output_content"
         } > "$result_file"
     }
     
     # Export function for subshells
-    export -f run_test kt_test_debug
-    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE
+    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts
+    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR
     
     # Actual number of workers to use
     local num_workers=$WORKERS
@@ -469,16 +500,13 @@ kt_runner_execute_threaded() {
     for result_file in "$results_dir"/*.result; do
         [[ ! -f "$result_file" ]] && continue
         
-        local first_line
-        first_line=$(head -n 1 "$result_file")
-        
-        local counts_line output_lines
+        local counts_line
         counts_line=$(grep '^__COUNTS__:' "$result_file" | head -n 1)
         
         if [[ -n "$counts_line" ]]; then
             local t p f
-            IFS=':' read -r _ t p f <<<"$counts_line"
-            t=${t:-0}; p=${p:-0}; f=${f:-0}
+            kt_runner_parse_counts "$counts_line"
+            t=$count_total; p=$count_passed; f=$count_failed
             total_t=$((total_t + t))
             total_p=$((total_p + p))
             total_f=$((total_f + f))
@@ -498,36 +526,14 @@ kt_runner_execute_threaded() {
             total_f=$((total_f + 1))
         fi
         
-        # Show output
-        if [[ "$VERBOSITY" == "info" ]] || grep -q "^__COUNTS__:[0-9]*:[0-9]*:[1-9]" "$result_file"; then
-            grep -v '^__COUNTS__:' "$result_file" | sed -e 's/\r$//' || true
-        else
-            # In error mode, show errors and warnings, including full SCRIPT ERROR blocks
-            local lines=()
-            local in_error_block=0
-            while IFS= read -r line; do
-                if [[ "$line" == *"SCRIPT ERROR"* ]]; then
-                    in_error_block=1
-                    lines+=("$line")
-                elif [[ "$line" =~ ^__COUNTS__: ]]; then
-                    # COUNTS line marks the end of error output
-                    in_error_block=0
-                elif [[ $in_error_block -eq 1 ]]; then
-                    lines+=("$line")
-                elif [[ "$line" == "["* ]] || [[ "$line" == *": No such file" ]] || [[ "$line" == *": command not found" ]]; then
-                    if [[ ! "$line" =~ ^__COUNTS__: ]]; then
-                        lines+=("$line")
-                    fi
-                fi
-            done < <(cat "$result_file" | sed -e 's/\r$//')
-            printf '%s\n' "${lines[@]}"
-        fi
+        # Show output with filtering
+        local output_content
+        output_content=$(cat "$result_file")
+        kt_runner_filter_output "$output_content" "$counts_line" "$f"
     done
     
     # Update global counters
-    TESTS_TOTAL=$((TESTS_TOTAL + total_t))
-    TESTS_PASSED=$((TESTS_PASSED + total_p))
-    TESTS_FAILED=$((TESTS_FAILED + total_f))
+    kt_runner_add_counts "$total_t" "$total_p" "$total_f"
     
     # Cleanup
     rm -rf "$results_dir"
@@ -602,4 +608,3 @@ parse_args() {
 # ============================================================================
 
 readonly KT__RUNNER_VERSION="1.0.0"
-
