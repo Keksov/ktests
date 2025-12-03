@@ -278,7 +278,7 @@ kt_runner_execute_sequential() {
     local output
     local counts_line
     local t p f
-    
+
     for test_file in "$@"; do
         [[ ! -f "$test_file" ]] && continue
         
@@ -307,10 +307,9 @@ kt_runner_execute_sequential() {
                  echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
              " 2>&1 || true
          )"
-         
+
          # Parse counters from output
          counts_line="$(printf '%s\n' "$output" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
-         
          if [[ -n "$counts_line" ]]; then
              IFS=':' read -r _ t p f <<<"$counts_line"
              t=${t:-0}; p=${p:-0}; f=${f:-0}
@@ -330,15 +329,35 @@ kt_runner_execute_sequential() {
              kt_test_fail "$test_name"
              FAILED_TEST_FILES+=("$test_name")
          fi
-         
+
          # Always show errors and warnings in all verbosity modes
          # Show full output on verbose or failure
          if [[ "$VERBOSITY" == "info" ]] || ((f > 0)); then
              echo "$output" | sed -e 's/\r$//' | grep -v '^__COUNTS__:' || true
          else
-             # In error mode, still show [ERROR], [FAIL], [WARN], and [ASSERTION FAILED] messages
-                 echo "$output" | sed -e 's/\r$//' | grep -E '^\[ERROR\]|\[FAIL\]|\[WARN\]|\[ASSERTION FAILED\]|: No such file|: command not found' | grep -v '^__COUNTS__:' || true
-         fi
+             # In error mode, still show [ERROR], [FAIL], [WARN], [ASSERTION FAILED], SCRIPT ERROR, and other error messages
+             # For SCRIPT ERROR blocks, show the entire block until we hit __COUNTS__ or a blank line followed by non-error output
+             local lines=()
+             local in_error_block=0
+             while IFS= read -r line; do
+                 if [[ "$line" == *"SCRIPT ERROR"* ]]; then
+                     in_error_block=1
+                     lines+=("$line")
+                 elif [[ "$line" =~ ^__COUNTS__: ]]; then
+                     # COUNTS line marks the end of error output
+                     in_error_block=0
+                 elif [[ $in_error_block -eq 1 ]]; then
+                     lines+=("$line")
+                 elif [[ "$line" == "["* ]] || [[ "$line" == *": No such file" ]] || [[ "$line" == *": command not found" ]]; then
+                     if [[ ! "$line" =~ ^__COUNTS__: ]]; then
+                         lines+=("$line")
+                     fi
+                 fi
+             done < <(printf '%s\n' "$output" | sed -e 's/\r$//')
+             if (( ${#lines[@]} > 0 )); then
+                 printf '%s\n' "${lines[@]}"
+             fi
+             fi
     done
 }
 
@@ -361,7 +380,7 @@ kt_runner_execute_threaded() {
         kt_runner_execute_sequential "${test_files[@]}"
         return 0
     fi
-    
+
     # Create temporary directory for results
     local results_dir
     results_dir=$(mktemp -d) || {
@@ -483,8 +502,25 @@ kt_runner_execute_threaded() {
         if [[ "$VERBOSITY" == "info" ]] || grep -q "^__COUNTS__:[0-9]*:[0-9]*:[1-9]" "$result_file"; then
             grep -v '^__COUNTS__:' "$result_file" | sed -e 's/\r$//' || true
         else
-            # In error mode, show errors and warnings
-            grep -E '^\[ERROR\]|\[FAIL\]|\[WARN\]|\[ASSERTION FAILED\]|: No such file|: command not found' "$result_file" | grep -v '^__COUNTS__:' || true
+            # In error mode, show errors and warnings, including full SCRIPT ERROR blocks
+            local lines=()
+            local in_error_block=0
+            while IFS= read -r line; do
+                if [[ "$line" == *"SCRIPT ERROR"* ]]; then
+                    in_error_block=1
+                    lines+=("$line")
+                elif [[ "$line" =~ ^__COUNTS__: ]]; then
+                    # COUNTS line marks the end of error output
+                    in_error_block=0
+                elif [[ $in_error_block -eq 1 ]]; then
+                    lines+=("$line")
+                elif [[ "$line" == "["* ]] || [[ "$line" == *": No such file" ]] || [[ "$line" == *": command not found" ]]; then
+                    if [[ ! "$line" =~ ^__COUNTS__: ]]; then
+                        lines+=("$line")
+                    fi
+                fi
+            done < <(cat "$result_file" | sed -e 's/\r$//')
+            printf '%s\n' "${lines[@]}"
         fi
     done
     
