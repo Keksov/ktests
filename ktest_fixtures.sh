@@ -8,7 +8,7 @@
 if [[ -n "$_KTEST_FIXTURES_SOURCED" ]]; then
     return
 fi
-_KTEST_FIXTURES_SOURCED=1
+declare -g _KTEST_FIXTURES_SOURCED=1
 
 # Ensure core framework is available
 if [[ -z "$_KTEST_CORE_SOURCED" ]]; then

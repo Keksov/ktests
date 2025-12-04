@@ -11,7 +11,7 @@
 if [[ -n "$_KTEST_SOURCED" ]]; then
     return
 fi
-_KTEST_SOURCED=1
+declare -g _KTEST_SOURCED=1
 
 # Get the directory where this file is located
 # Use KTESTS_LIB_DIR if already set (from test runner), otherwise compute from BASH_SOURCE

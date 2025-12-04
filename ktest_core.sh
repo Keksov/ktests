@@ -9,7 +9,7 @@
 if [[ -n "$_KTEST_CORE_SOURCED" ]]; then
     return
 fi
-_KTEST_CORE_SOURCED=1
+declare -g _KTEST_CORE_SOURCED=1
 
 # ============================================================================
 # Color Definitions
