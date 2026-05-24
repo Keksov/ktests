@@ -80,6 +80,55 @@ kt_runner_clean_filename() {
     echo "${filename%$'\r'}"
 }
 
+# Extract the last __COUNTS__ line from captured test output without relying on external grep.
+kt_runner_find_last_counts_line() {
+    local output="$1"
+    local line=""
+    local counts=""
+
+    if [[ -n "$output" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line=${line%$'\r'}
+            if [[ "$line" =~ ^__COUNTS__: ]]; then
+                counts="$line"
+            fi
+        done < <(printf '%s' "$output")
+    fi
+
+    printf '%s' "$counts"
+}
+
+# Extract the first __COUNTS__ line from a result file without relying on external grep.
+kt_runner_find_first_counts_in_file() {
+    local result_file="$1"
+    local line=""
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        if [[ "$line" =~ ^__COUNTS__: ]]; then
+            printf '%s' "$line"
+            return 0
+        fi
+    done < "$result_file"
+
+    return 1
+}
+
+# Print output lines except internal __COUNTS__ markers.
+kt_runner_print_output_without_counts() {
+    local output="$1"
+    local line=""
+
+    if [[ -n "$output" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line=${line%$'\r'}
+            if [[ ! "$line" =~ ^__COUNTS__: ]]; then
+                printf '%s\n' "$line"
+            fi
+        done < <(printf '%s' "$output")
+    fi
+}
+
 # Show usage information
 kt_runner_show_help() {
     cat <<'EOF'
@@ -349,7 +398,7 @@ kt_runner_execute_single_test() {
     )"
     
     # Parse counters from output
-    counts_line="$(printf '%s\n' "$output_content" | sed -e 's/\r$//' | grep '^__COUNTS__:' | tail -n 1)"
+    counts_line="$(kt_runner_find_last_counts_line "$output_content")"
     if [[ -n "$counts_line" ]]; then
         kt_runner_parse_counts "$counts_line"
     else
@@ -368,7 +417,7 @@ kt_runner_filter_output() {
     # Always show errors and warnings in all verbosity modes
     # Show full output on verbose or failure
     if [[ "$VERBOSITY" == "info" ]] || ((failed_count > 0)); then
-        echo "$output" | sed -e 's/\r$//' | grep -v '^__COUNTS__:' || true
+        kt_runner_print_output_without_counts "$output"
     else
         # In error mode, still show [ERROR], [FAIL], [WARN], [ASSERTION FAILED], SCRIPT ERROR, and other error messages
         # For SCRIPT ERROR blocks, show the entire block until we hit __COUNTS__ or a blank line followed by non-error output
@@ -468,7 +517,7 @@ kt_runner_execute_threaded() {
     }
     
     # Export function for subshells
-    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts
+    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line
     export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR
     
     # Actual number of workers to use
@@ -501,7 +550,7 @@ kt_runner_execute_threaded() {
         [[ ! -f "$result_file" ]] && continue
         
         local counts_line
-        counts_line=$(grep '^__COUNTS__:' "$result_file" | head -n 1)
+        counts_line=$(kt_runner_find_first_counts_in_file "$result_file")
         
         if [[ -n "$counts_line" ]]; then
             local t p f
