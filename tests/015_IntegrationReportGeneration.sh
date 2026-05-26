@@ -135,7 +135,7 @@ fi
 kt_test_start "File paths with spaces"
 testdir=$(kt_fixture_tmpdir_create "test dir with spaces")
 testfile="$testdir/test file.txt"
-touch "$testfile"
+: > "$testfile"
 if kt_assert_file_exists "$testfile" "File with spaces" >/dev/null 2>&1; then
     kt_test_pass "File exists check"
     kt_test_pass "Paths with spaces work"

@@ -155,9 +155,9 @@ fi
 kt_test_start "Fixture cleanup with complex structure"
 complex_dir=$(kt_fixture_tmpdir)
 mkdir -p "$complex_dir/level1/level2/level3"
-touch "$complex_dir/level1/file1.txt"
-touch "$complex_dir/level1/level2/file2.txt"
-touch "$complex_dir/level1/level2/level3/file3.txt"
+: > "$complex_dir/level1/file1.txt"
+: > "$complex_dir/level1/level2/file2.txt"
+: > "$complex_dir/level1/level2/level3/file3.txt"
 if [[ -f "$complex_dir/level1/level2/level3/file3.txt" ]]; then
     kt_test_pass "Complex structure created for cleanup test"
 else

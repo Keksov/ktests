@@ -90,7 +90,7 @@ chmod 644 "$readonly_file" 2>/dev/null || true
 kt_test_start "File assertions with spaces in paths"
 space_dir=$(kt_fixture_tmpdir_create "dir with spaces")
 space_file="$space_dir/file with spaces.txt"
-touch "$space_file"
+: > "$space_file"
 if kt_assert_file_exists "$space_file" "File with spaces in path"; then
     kt_test_pass "Assertions work with space-containing paths"
 else
@@ -118,7 +118,7 @@ fi
 # Test with hidden files
 kt_test_start "File assertions with hidden files"
 hidden_file="$TMPDIR/.hiddenfile"
-touch "$hidden_file"
+: > "$hidden_file"
 if kt_assert_file_exists "$hidden_file" "Hidden file exists"; then
     kt_test_pass "Hidden files are handled correctly"
 else
@@ -133,7 +133,7 @@ for i in {1..10}; do
 done
 mkdir -p "$long_path"
 long_file="$long_path/verylongfilename.txt"
-touch "$long_file"
+: > "$long_file"
 if kt_assert_file_exists "$long_file" "Long path file"; then
     kt_test_pass "Long paths are handled correctly"
 else
@@ -143,7 +143,7 @@ fi
 # Test with special characters in filenames
 kt_test_start "File assertions with special characters"
 special_file="$TMPDIR/file!@#$%^&*().txt"
-touch "$special_file"
+: > "$special_file"
 if kt_assert_file_exists "$special_file" "Special chars file"; then
     kt_test_pass "Special characters in filenames handled correctly"
 else

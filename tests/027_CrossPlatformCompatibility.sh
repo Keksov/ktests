@@ -33,7 +33,7 @@ kt_test_start "Path handling with spaces"
 space_path="$TMPDIR/path with spaces"
 mkdir -p "$space_path"
 space_file="$space_path/test file.txt"
-touch "$space_file"
+: > "$space_file"
 if kt_assert_file_exists "$space_file" "File with spaces in path"; then
     kt_test_pass "Paths with spaces handled correctly"
 else
@@ -43,7 +43,7 @@ fi
 # Test Unicode characters in filenames
 kt_test_start "Unicode characters in filenames"
 unicode_file="$TMPDIR/test_café_файл.txt"
-touch "$unicode_file"
+: > "$unicode_file"
 if kt_assert_file_exists "$unicode_file" "Unicode filename"; then
     kt_test_pass "Unicode filenames supported"
 else
@@ -96,7 +96,8 @@ kt_test_start "Case sensitivity handling"
 case_dir=$(kt_fixture_tmpdir_create "CaseTest")
 UPPERCASE_FILE="$case_dir/UPPERCASE.txt"
 lowercase_file="$case_dir/lowercase.txt"
-touch "$UPPERCASE_FILE" "$lowercase_file"
+: > "$UPPERCASE_FILE"
+: > "$lowercase_file"
 if kt_assert_file_exists "$UPPERCASE_FILE" "Uppercase file" && kt_assert_file_exists "$lowercase_file" "Lowercase file"; then
     kt_test_pass "Case sensitivity handled correctly"
 else
@@ -106,7 +107,7 @@ fi
 # Test with special characters in file operations
 kt_test_start "Special characters in file operations"
 special_chars_file="$TMPDIR/test!@#\$%^&*().txt"
-touch "$special_chars_file"
+: > "$special_chars_file"
 if kt_assert_file_exists "$special_chars_file" "Special characters file"; then
     kt_test_pass "Special characters in filenames supported"
 else
