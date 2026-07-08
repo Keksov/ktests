@@ -35,6 +35,10 @@ declare -ga _KT_CLEANUP_HANDLERS=()
 # Array of created temporary directories
 declare -ga _KT_CREATED_TMPDIRS=()
 
+# Monotonic sequence so each backup gets a uniquely-named restore handler
+# (a PID-only name collided when two files were backed up in one process).
+declare -gi _KT_BACKUP_SEQ=0
+
 # ============================================================================
 # Temp Directory Management
 # ============================================================================
@@ -251,22 +255,27 @@ kt_fixture_backup_file() {
         return 1
     fi
     
+    local seq=$(( ++_KT_BACKUP_SEQ ))
     local backup_name
-    backup_name=$(basename "$filepath")_backup_$$
+    backup_name=$(basename "$filepath")_backup_${$}_${seq}
     local backup_path="$_KT_TMPDIR/$backup_name"
-    
+
     if [[ -d "$filepath" ]]; then
         cp -r "$filepath" "$backup_path"
     else
         cp "$filepath" "$backup_path"
     fi
-    
+
     kt_test_debug "Backed up file: $filepath -> $backup_path"
-    
-    # Register restore handler
-    kt_fixture_cleanup_register "_kt_restore_file_$$ "
-    eval "_kt_restore_file_$$ () { cp -r '$backup_path' '$filepath' 2>/dev/null || true; }"
-    
+
+    # Register + define the auto-restore handler under the SAME unique name so
+    # teardown's `declare -F` actually finds it (the old name had a trailing
+    # space and never matched). Paths are %q-escaped so spaces/quotes in a path
+    # can't break the generated function body.
+    local handler="_kt_restore_file_${$}_${seq}"
+    kt_fixture_cleanup_register "$handler"
+    eval "${handler}() { cp -r $(printf '%q' "$backup_path") $(printf '%q' "$filepath") 2>/dev/null || true; }"
+
     echo "$backup_path"
 }
 

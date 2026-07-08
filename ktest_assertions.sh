@@ -329,6 +329,8 @@ kt_assert_file_writable() {
 
 # Assert that a command succeeds (exit code 0)
 # Usage: kt_assert_success "command arg1 arg2" "description"
+# TRUST BOUNDARY: $cmd is executed via `bash -c "$cmd"` — this is a string-eval
+# API for test authors. Only pass trusted (test-authored) command strings.
 kt_assert_success() {
     local cmd="$1"
     local desc="${2:-Command success check}"
@@ -344,6 +346,7 @@ kt_assert_success() {
 
 # Assert that a command fails (non-zero exit code)
 # Usage: kt_assert_failure "command arg1 arg2" "description"
+# TRUST BOUNDARY: like kt_assert_success, $cmd runs via `bash -c` — trusted input only.
 kt_assert_failure() {
     local cmd="$1"
     local desc="${2:-Command failure check}"

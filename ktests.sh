@@ -70,8 +70,8 @@ if [[ "$VERBOSITY" == "info" ]]; then
     echo ""
 fi
 
-# Execute all tests
-kt_runner_execute_tests "$SCRIPT_DIR"
+# Execute all tests (pass TEST_FILTER so execution matches the displayed set)
+kt_runner_execute_tests "$SCRIPT_DIR" "$TEST_FILTER"
 
 # Display final results
 echo ""

@@ -380,21 +380,28 @@ kt_runner_execute_single_test() {
         echo "[TEST] $(basename "$clean_file")"
     fi
     
-    # Run test in subshell to isolate state
+    # Run test in subshell to isolate state.
+    # Pass all values (including file paths) through the ENVIRONMENT rather than
+    # splicing them into the bash -c script text, and keep the script body
+    # single-quoted. This way a test path containing a quote or space cannot
+    # break out of the generated shell code (the old form interpolated
+    # '$clean_file' / '$KTESTS_LIB_DIR' into a double-quoted body).
     output_content="$(
-        bash -c "
-            export VERBOSITY='$VERBOSITY'
-            export KK_OUTPUT_COUNTS=1
-            export _KT_ASSERT_QUIET_MODE='$_KT_ASSERT_QUIET_MODE'
-            export _KTEST_QUIET_MODE='$_KTEST_QUIET_MODE'
-            export KT_TESTS_DIR='$(dirname "$clean_file")'
-            export KTESTS_LIB_DIR='$KTESTS_LIB_DIR'
-            export KTEST_SOURCE_PATH='$KTESTS_LIB_DIR/ktest_source.sh'
-            source \"\$KTEST_SOURCE_PATH\"
-            source '$clean_file'
+        VERBOSITY="$VERBOSITY" \
+        KK_OUTPUT_COUNTS=1 \
+        _KT_ASSERT_QUIET_MODE="$_KT_ASSERT_QUIET_MODE" \
+        _KTEST_QUIET_MODE="$_KTEST_QUIET_MODE" \
+        KT_TESTS_DIR="$(dirname "$clean_file")" \
+        KTESTS_LIB_DIR="$KTESTS_LIB_DIR" \
+        KTEST_SOURCE_PATH="$KTESTS_LIB_DIR/ktest_source.sh" \
+        KT_CLEAN_FILE="$clean_file" \
+        bash -c '
+            export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
+            source "$KTEST_SOURCE_PATH"
+            source "$KT_CLEAN_FILE"
             # Always output counts (needed by runner for result tracking)
-            echo \"__COUNTS__:\$TESTS_TOTAL:\$TESTS_PASSED:\$TESTS_FAILED\"
-        " 2>&1 || true
+            echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+        ' 2>&1 || true
     )"
     
     # Parse counters from output
@@ -548,33 +555,40 @@ kt_runner_execute_threaded() {
     local total_t=0 total_p=0 total_f=0
     for result_file in "$results_dir"/*.result; do
         [[ ! -f "$result_file" ]] && continue
-        
+
+        # Reset per-iteration so the else-branch and the filter call below never
+        # see a previous iteration's failure count.
+        local t=0 p=0 f=0
         local counts_line
         counts_line=$(kt_runner_find_first_counts_in_file "$result_file")
-        
+
         if [[ -n "$counts_line" ]]; then
-            local t p f
             kt_runner_parse_counts "$counts_line"
             t=$count_total; p=$count_passed; f=$count_failed
             total_t=$((total_t + t))
             total_p=$((total_p + p))
             total_f=$((total_f + f))
-            
-            # Track failed test files
-            if ((f > 0)); then
-                local test_idx
-                test_idx="${result_file##*/}"
-                test_idx="${test_idx%.result}"
-                if [[ "$test_idx" =~ ^[0-9]+$ ]] && [[ $test_idx -lt ${#test_files[@]} ]]; then
-                    FAILED_TEST_FILES+=("$(basename "${test_files[$test_idx]}")")
-                fi
-            fi
         else
             # Test failed to report counters
+            t=1; f=1
             total_t=$((total_t + 1))
             total_f=$((total_f + 1))
         fi
-        
+
+        # Track failed test files. Result files are named two ways: the xargs
+        # path names them "<basename>.result", the manual-background path uses
+        # "<index>.result". Handle both so the failed-file list is populated in
+        # threaded mode (it silently was not before).
+        if ((f > 0)); then
+            local failed_name="${result_file##*/}"
+            failed_name="${failed_name%.result}"
+            if [[ "$failed_name" =~ ^[0-9]+$ ]] && [[ $failed_name -lt ${#test_files[@]} ]]; then
+                FAILED_TEST_FILES+=("$(basename "${test_files[$failed_name]}")")
+            else
+                FAILED_TEST_FILES+=("$failed_name")
+            fi
+        fi
+
         # Show output with filtering
         local output_content
         output_content=$(cat "$result_file")
@@ -596,21 +610,30 @@ kt_runner_execute_threaded() {
 # Usage: kt_runner_execute_tests "/path/to/tests"
 kt_runner_execute_tests() {
     local test_dir="${1:-.}"
-    
+    local filter="${2:-}"
+
     if [[ ! -d "$test_dir" ]]; then
         kt_test_error "Test directory not found: $test_dir"
         return 1
     fi
-    
+
     # Reset counters before execution
     kt_test_reset_counts
     FAILED_TEST_FILES=()
-    
-    # Find test files
+
+    # Find test files. A non-empty filter must apply to what actually RUNS —
+    # previously the filter only shaped the displayed list while execution
+    # re-discovered everything, so a custom filter silently ran all tests.
     local test_files=()
-    while IFS= read -r file; do
-        test_files+=("$file")
-    done < <(kt_runner_find_tests "$test_dir")
+    if [[ -n "$filter" ]]; then
+        while IFS= read -r file; do
+            test_files+=("$file")
+        done < <(kt_runner_find_tests "$test_dir" | grep "$filter")
+    else
+        while IFS= read -r file; do
+            test_files+=("$file")
+        done < <(kt_runner_find_tests "$test_dir")
+    fi
     
     if [[ ${#test_files[@]} -eq 0 ]]; then
         kt_test_error "No test files found in $test_dir"
