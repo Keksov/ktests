@@ -386,26 +386,42 @@ kt_runner_execute_single_test() {
     # single-quoted. This way a test path containing a quote or space cannot
     # break out of the generated shell code (the old form interpolated
     # '$clean_file' / '$KTESTS_LIB_DIR' into a double-quoted body).
-    output_content="$(
-        VERBOSITY="$VERBOSITY" \
-        KK_OUTPUT_COUNTS=1 \
-        _KT_ASSERT_QUIET_MODE="$_KT_ASSERT_QUIET_MODE" \
-        _KTEST_QUIET_MODE="$_KTEST_QUIET_MODE" \
-        KT_TESTS_DIR="$(dirname "$clean_file")" \
-        KTESTS_LIB_DIR="$KTESTS_LIB_DIR" \
-        KTEST_SOURCE_PATH="$KTESTS_LIB_DIR/ktest_source.sh" \
-        KT_CLEAN_FILE="$clean_file" \
-        bash -c '
-            export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
-            source "$KTEST_SOURCE_PATH"
-            source "$KT_CLEAN_FILE"
-            # Always output counts (needed by runner for result tracking)
-            echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
-        ' 2>&1 || true
-    )"
-    
+    #
+    # Retry on a MISSING counts line: under heavy parallel load a worker's
+    # subprocess can be killed or fail to fork before it prints __COUNTS__, which
+    # was otherwise miscounted as a failure — the source of intermittent
+    # suite-level failures in threaded mode. A test that actually ran (whether it
+    # passed OR failed) prints a counts line and is never retried, so real
+    # failures are preserved and only transient subprocess deaths are recovered.
+    local __kt_attempt=0
+    local __kt_max_attempts=3
+    counts_line=""
+    while (( __kt_attempt < __kt_max_attempts )); do
+        output_content="$(
+            VERBOSITY="$VERBOSITY" \
+            KK_OUTPUT_COUNTS=1 \
+            _KT_ASSERT_QUIET_MODE="$_KT_ASSERT_QUIET_MODE" \
+            _KTEST_QUIET_MODE="$_KTEST_QUIET_MODE" \
+            KT_TESTS_DIR="$(dirname "$clean_file")" \
+            KTESTS_LIB_DIR="$KTESTS_LIB_DIR" \
+            KTEST_SOURCE_PATH="$KTESTS_LIB_DIR/ktest_source.sh" \
+            KT_CLEAN_FILE="$clean_file" \
+            bash -c '
+                export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
+                source "$KTEST_SOURCE_PATH"
+                source "$KT_CLEAN_FILE"
+                # Always output counts (needed by runner for result tracking)
+                echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+            ' 2>&1 || true
+        )"
+        counts_line="$(kt_runner_find_last_counts_line "$output_content")"
+        [[ -n "$counts_line" ]] && break
+        (( __kt_attempt++ ))
+        # Brief backoff to let transient resource pressure (e.g. fork limits) ease.
+        (( __kt_attempt < __kt_max_attempts )) && sleep 0.1
+    done
+
     # Parse counters from output
-    counts_line="$(kt_runner_find_last_counts_line "$output_content")"
     if [[ -n "$counts_line" ]]; then
         kt_runner_parse_counts "$counts_line"
     else
