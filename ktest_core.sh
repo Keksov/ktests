@@ -6,7 +6,7 @@
 # first by test suites before other framework components.
 
 # Prevent multiple sourcing
-if [[ -n "$_KTEST_CORE_SOURCED" ]]; then
+if [[ -n "${_KTEST_CORE_SOURCED:-}" ]]; then
     return
 fi
 declare -g _KTEST_CORE_SOURCED=1

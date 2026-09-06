@@ -8,14 +8,30 @@
 # This will automatically source all framework components in the correct order.
 
 # Prevent multiple sourcing
-if [[ -n "$_KTEST_SOURCED" ]]; then
+if [[ -n "${_KTEST_SOURCED:-}" ]]; then
     return
 fi
 declare -g _KTEST_SOURCED=1
 
+# ============================================================================
+# Locale contract (kcl decision D6, review 2026-09-06)
+# ============================================================================
+# The whole corpus runs under UTF-8. On this machine LANG and LC_ALL are empty,
+# which puts bash in the C locale: `${#s}` counts BYTES, `${s,,}` CORRUPTS
+# multi-byte text on 5.2 (`ÄÖ` -> garbage) and `.` in a regex does not match a
+# multi-byte character — so tests were silently pinning byte semantics while the
+# unit docs promise characters (finding X-LOCALE: TSH-04, tregex T3).
+#
+# Pinned here rather than in each runner because every runner AND every test
+# file sources this one entry point, so a test file executed directly behaves
+# exactly as it does inside a sweep. A test that needs another locale sets it
+# for its own subshell / child process.
+export LC_ALL="C.UTF-8"
+export LANG="C.UTF-8"
+
 # Get the directory where this file is located
 # Use KTESTS_LIB_DIR if already set (from test runner), otherwise compute from BASH_SOURCE
-if [[ -n "$KTESTS_LIB_DIR" ]]; then
+if [[ -n "${KTESTS_LIB_DIR:-}" ]]; then
     _KTEST_LIB_DIR="$KTESTS_LIB_DIR"
 else
     _KTEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,12 +71,12 @@ source "$_KTEST_LIB_DIR/ktest_runner.sh" || {
 # ============================================================================
 
 # Export framework version (only if not already set)
-if [[ -z "$KT__FRAMEWORK_VERSION" ]]; then
+if [[ -z "${KT__FRAMEWORK_VERSION:-}" ]]; then
     readonly KT__FRAMEWORK_VERSION="1.0.0"
 fi
 
 # Export framework directory for templates (only if not already set)
-if [[ -z "$KT__FRAMEWORK_DIR" ]]; then
+if [[ -z "${KT__FRAMEWORK_DIR:-}" ]]; then
     readonly KT__FRAMEWORK_DIR="$_KTEST_ROOT_DIR"
 fi
 
@@ -88,7 +104,7 @@ kt_test_init() {
     
     # Set up cleanup trap
     # Output __COUNTS__ only if KK_OUTPUT_COUNTS is set (used by test runner)
-    if [[ -n "${KK_OUTPUT_COUNTS}" && "${KK_OUTPUT_COUNTS}" != "0" ]]; then
+    if [[ -n "${KK_OUTPUT_COUNTS:-}" && "${KK_OUTPUT_COUNTS:-}" != "0" ]]; then
         trap 'kt_fixture_teardown; echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"' EXIT
     else
         trap 'kt_fixture_teardown' EXIT

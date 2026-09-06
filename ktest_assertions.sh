@@ -5,13 +5,13 @@
 # Requires: ktest_core.sh to be sourced first
 
 # Prevent multiple sourcing
-if [[ -n "$_KTEST_ASSERTIONS_SOURCED" ]]; then
+if [[ -n "${_KTEST_ASSERTIONS_SOURCED:-}" ]]; then
     return
 fi
 declare -g _KTEST_ASSERTIONS_SOURCED=1
 
 # Ensure core framework is available
-if [[ -z "$_KTEST_CORE_SOURCED" ]]; then
+if [[ -z "${_KTEST_CORE_SOURCED:-}" ]]; then
     echo "ERROR: ktest_core.sh must be sourced before ktest_assertions.sh"
     return 1
 fi
