@@ -412,7 +412,7 @@ kt_runner_execute_single_test() {
                 source "$KT_CLEAN_FILE"
                 # Always output counts (needed by runner for result tracking)
                 echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
-            ' 2>&1 || true
+            ' "$clean_file" 2>&1 || true
         )"
         counts_line="$(kt_runner_find_last_counts_line "$output_content")"
         [[ -n "$counts_line" ]] && break
