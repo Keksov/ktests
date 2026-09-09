@@ -99,8 +99,11 @@ kt_test_init() {
     # Set file name for error reporting (from caller's context)
     KT__FILE="$(basename "${BASH_SOURCE[1]}")"
     
-    # Initialize fixtures
-    kt_fixture_setup "$test_name" "$script_dir"
+    # Initialize fixtures. The fixture directory carries the test FILE name as
+    # well as the given name, so two files passing the same name (or one derived
+    # from something shared) never share a directory under the parallel runner
+    # (kcl review P8-F2).
+    kt_fixture_setup "${test_name}.${KT__FILE%.sh}" "$script_dir"
     
     # Set up cleanup trap
     # Output __COUNTS__ only if KK_OUTPUT_COUNTS is set (used by test runner)
