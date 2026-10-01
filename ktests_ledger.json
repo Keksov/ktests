@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "project": "ktests — the kbool test framework/runner. This ledger tracks the 2026-09-30 fix plan (PLAN.md): T1, a fatally-aborted test file can be reported green with a silently lower total.",
+  "created": "2026-09-30",
+  "updated": "2026-10-01",
+  "status": "PLANNED, critic-hardened 2026-10-01 (first draft mechanism replaced by the measured abort matrix); no code.",
+  "findings": {
+    "T1": "ktest_runner.sh:395-416: two abort classes are reported green today. (A) shell-exit class (exit N, set -u unbound, ${v:?}, set -e, inline syntax error, file-scope return N): the wrapper echo is not reached, but kt_test_init's EXIT trap (ktest.sh:110-111) prints the counts collected so far — green with a silently lower total. (B) aborted-top-level-command class (arithmetic recursion, bad/empty array subscript, division by 0): the rest of the file RUNS, source rc is 0 — the aborted command's asserts just vanish. Measured 2026-10-01 on both bashes (18-fixture matrix). The first draft's anecdote (thttpserver 003 131/131 vs 137/4) was NOT reproducible and was retracted; the reconstruction gives 137:133:4 with the suite correctly red."
+  },
+  "phases": {
+    "P0": {
+      "name": "abort matrix + wrapper/runner fix + red-first tests",
+      "status": "pending",
+      "gate": "ktests suite green on bash 5.2.37 and 5.3.9; full kbool master sweep 0 [FAIL] with unchanged per-suite totals on both"
+    }
+  },
+  "critic": {
+    "date": "2026-10-01",
+    "findings": "C1 blocker (two abort classes; EXIT-trap counts are the green path; source rc blind to class B), C4 (anecdote not reproducible), C5 (retry rule), C6 (threaded folding), C7 (nonce markers), C14 (env vars do not cross into 5.3)",
+    "baseline": "526 file-runs per bash: src_rc!=0 = 0; t>p+f = 2 nested fixtures; p>t = 8 real files; fatal-diagnostic lines = 0; per-suite totals identical across 4 sweeps, sum 7794"
+  }
+}
