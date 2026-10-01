@@ -3,7 +3,7 @@
   "project": "ktests — the kbool test framework/runner. This ledger tracks the 2026-09-30 fix plan (PLAN.md): T1, a fatally-aborted test file can be reported green with a silently lower total.",
   "created": "2026-09-30",
   "updated": "2026-10-01",
-  "status": "P0 DONE 2026-10-01 (worker), awaiting review + full master sweep on both bashes; not committed.",
+  "status": "P0 DONE+COMMITTED 2026-10-01 (f231248)",
   "findings": {
     "T1": "ktest_runner.sh:395-416: two abort classes are reported green today. (A) shell-exit class (exit N, set -u unbound, ${v:?}, set -e, inline syntax error, file-scope return N): the wrapper echo is not reached, but kt_test_init's EXIT trap (ktest.sh:110-111) prints the counts collected so far — green with a silently lower total. (B) aborted-top-level-command class (arithmetic recursion, bad/empty array subscript, division by 0): the rest of the file RUNS, source rc is 0 — the aborted command's asserts just vanish. Measured 2026-10-01 on both bashes (18-fixture matrix). The first draft's anecdote (thttpserver 003 131/131 vs 137/4) was NOT reproducible and was retracted; the reconstruction gives 137:133:4 with the suite correctly red."
   },
@@ -12,7 +12,7 @@
       "name": "abort matrix + wrapper/runner fix + red-first tests",
       "status": "done",
       "gate": "ktests suite green on bash 5.2.37 and 5.3.9; full kbool master sweep 0 [FAIL] with unchanged per-suite totals on both",
-      "commit": "",
+      "commit": "f231248",
       "items": {
         "1_end_marker": "wrapper prints __KT_END_<nonce>__:<src_rc>:<t>:<p>:<f> right after `source FILE`, before the wrapper's __COUNTS__; nonce = BASHPID x RANDOM RANDOM x EPOCHREALTIME digits, fresh per attempt, passed as env KT_END_NONCE and unset in the child before the framework and the test are sourced; matched anywhere on a line (a test whose last output has no newline glues it) but only with THIS nonce",
         "2_class_A": "no END -> `shell exited mid-file (child rc=N)` (N = exit status of the bash -c; `|| true` removed, captured as `$(...) || rc=$?`); END with src_rc >= 2 -> `source returned rc=N` (see deviation D1)",
@@ -59,7 +59,8 @@
       "found_in_P0": {
         "F1 (low)": "kt_runner_execute_threaded `export`s VERBOSITY (and _KT_ASSERT_QUIET_MODE, _KTEST_QUIET_MODE, KTESTS_LIB_DIR): a caller that passes one as a prefix assignment (`VERBOSITY=error kt_runner_execute_threaded ...`) keeps the prefix value after the call (bash: exporting a temporary-environment variable inside a function makes it persist). Repro: `VERBOSITY=info; VERBOSITY=error kt_runner_execute_threaded a.sh b.sh >/dev/null; echo $VERBOSITY` -> error. 034 saves/restores by hand. Not fixed.",
         "F2 (low)": "KT_ERROR_COUNTS is readonly but not exported, so in an xargs worker kt_runner_set_error_counts (test file missing) sets counts_line to empty - the collector then counts the file 1:0:1 anyway, so the verdict is unchanged. Not fixed."
-      }
+      },
+      "review": "supervisor 2026-10-01: suite re-run 351/351 both bashes; full sweep 29/29 0 [FAIL] both, per-suite totals identical except ktests 319->351, sum 7826 on both; D1 (source rc 1 is not a verdict, rc>=2 is; return-1-between-tests residual documented) ACCEPTED"
     }
   },
   "critic": {
