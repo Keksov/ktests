@@ -39,6 +39,25 @@ declare -ga FAILED_TEST_FILES=()
 # Constants for error handling
 readonly KT_ERROR_COUNTS="__COUNTS__:1:0:1"
 
+# The cygwin fork-failure signatures (KT_ENV_FORK_FAILURE_RE) — ONE definition,
+# shared with tools/timing_check.sh.
+_kt_runner_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_kt_runner_dir" == "${BASH_SOURCE[0]}" ]] && _kt_runner_dir="."
+source "$_kt_runner_dir/ktest_env_signatures.sh" || {
+    echo "ERROR: Failed to load ktest_env_signatures.sh" >&2
+    unset _kt_runner_dir
+    return 1
+}
+unset _kt_runner_dir
+
+# A bash fatal diagnostic in a file's captured output: "<file>: line N: <msg>".
+# Each of these aborts the top-level command that hit it (or the shell), so the
+# asserts of that command vanish (ktests fix plan T1, PLAN.md §2.3). <file> is
+# whatever file the failing code lives in — the test file or a library it
+# calls. 5.3.9 says "arithmetic syntax error", which "syntax error" covers.
+# Groups: 2 = file, 3 = line number, 4 = the message.
+declare -g KT_BASH_FATAL_DIAG_RE='^([A-Za-z]:)?([[:alnum:]/._~-][^:]*): line ([0-9]+): (.*(expression recursion level exceeded|bad array subscript|invalid variable name|circular name reference|division by 0|unbound variable|syntax error).*)$'
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -114,7 +133,8 @@ kt_runner_find_first_counts_in_file() {
     return 1
 }
 
-# Print output lines except internal __COUNTS__ markers.
+# Print output lines except internal __COUNTS__ and END markers. An END marker
+# glued to a test's last line (printed without a newline) is cut off the line.
 kt_runner_print_output_without_counts() {
     local output="$1"
     local line=""
@@ -122,11 +142,102 @@ kt_runner_print_output_without_counts() {
     if [[ -n "$output" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             line=${line%$'\r'}
+            if [[ "$line" == *__KT_END_* && "$line" =~ ^(.*)__KT_END_[A-Za-z0-9]+__:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+                line="${BASH_REMATCH[1]}"
+                [[ -z "$line" ]] && continue
+            fi
             if [[ ! "$line" =~ ^__COUNTS__: ]]; then
                 printf '%s\n' "$line"
             fi
         done < <(printf '%s' "$output")
     fi
+}
+
+# Scan one file's captured output in a single pass.
+# Usage: kt_runner_scan_capture "$output" "$nonce"
+# Sets: _kt_scan_counts  the LAST __COUNTS__ line ("" if none). A normal run
+#                        prints two (the wrapper's and kt_test_init's EXIT
+#                        trap's), so count lines are never assumed unique;
+#       _kt_scan_end     "1" when this attempt's END marker was printed, else "";
+#       _kt_scan_end_rc/_t/_p/_f  the marker's source rc and counters;
+#       _kt_scan_ndiag   the number of bash fatal diagnostics (KT_BASH_FATAL_DIAG_RE);
+#       _kt_scan_diag    the first one, as "<file basename>:<line>: <message>".
+# Only the marker carrying THIS attempt's nonce counts: a nested runner inside
+# a test prints its own markers with other nonces. The marker may sit at the
+# end of a line (the test's last output had no newline).
+kt_runner_scan_capture() {
+    local output="$1" nonce="$2" line=""
+    local end_re="__KT_END_${nonce}__:([0-9]+):([0-9]+):([0-9]+):([0-9]+)$"
+    _kt_scan_counts=""; _kt_scan_end=""
+    _kt_scan_end_rc=0; _kt_scan_end_t=0; _kt_scan_end_p=0; _kt_scan_end_f=0
+    _kt_scan_ndiag=0; _kt_scan_diag=""
+
+    [[ -n "$output" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        if [[ "$line" == __COUNTS__:* ]]; then
+            _kt_scan_counts="$line"
+        elif [[ -n "$nonce" && "$line" == *"__KT_END_${nonce}__:"* && "$line" =~ $end_re ]]; then
+            _kt_scan_end=1
+            _kt_scan_end_rc="${BASH_REMATCH[1]}"; _kt_scan_end_t="${BASH_REMATCH[2]}"
+            _kt_scan_end_p="${BASH_REMATCH[3]}"; _kt_scan_end_f="${BASH_REMATCH[4]}"
+        elif [[ "$line" == *": line "* && "$line" =~ $KT_BASH_FATAL_DIAG_RE ]]; then
+            _kt_scan_ndiag=$(( _kt_scan_ndiag + 1 ))
+            if [[ -z "$_kt_scan_diag" ]]; then
+                _kt_scan_diag="${BASH_REMATCH[2]##*/}:${BASH_REMATCH[3]}: ${BASH_REMATCH[4]}"
+            fi
+        fi
+    done < <(printf '%s' "$output")
+    return 0
+}
+
+# Judge a file from its scan and fold an abort into its counts.
+# Usage: kt_runner_judge_capture "basename.sh" child_rc
+# Reads the kt_runner_scan_capture results and counts_line; sets _kt_abort_cause.
+# A file is ABORTED (ktests fix plan T1, PLAN.md §2) when:
+#   - its END marker is missing: the shell exited mid-file (exit N, set -u,
+#     ${v:?}, set -e, a replaced EXIT trap ...);
+#   - its source returned rc >= 2 (an inline syntax error, a file-scope
+#     `return N`). rc 1 alone is the ordinary status of a trailing false-y
+#     command (`[[ … ]] && …`) and is no verdict;
+#   - at END, TESTS_TOTAL > TESTS_PASSED + TESTS_FAILED: a test was started and
+#     never closed — its block was aborted. One-sided on purpose: a test that
+#     passes twice (p > t) is legal;
+#   - its output carries a bash fatal diagnostic (KT_BASH_FATAL_DIAG_RE).
+# An aborted file counts one more test, failed: counts_line becomes
+# __COUNTS__:t+1:p:f+1 (t:p:f from the last counts line, 0:0:0 without one)
+# and "[FAIL] <file>: source aborted (<cause>)" is appended to output_content —
+# before the threaded runner writes its result file, whose collector reads the
+# FIRST counts line and fails a file only on f > 0.
+kt_runner_judge_capture() {
+    local base="$1" child_rc="$2" cause=""
+    local t=0 p=0 f=0
+
+    if [[ -z "$_kt_scan_end" ]]; then
+        cause="shell exited mid-file (child rc=$child_rc)"
+    else
+        if (( 10#$_kt_scan_end_rc >= 2 )); then
+            cause="source returned rc=$_kt_scan_end_rc"
+        fi
+        if (( 10#$_kt_scan_end_t > 10#$_kt_scan_end_p + 10#$_kt_scan_end_f )); then
+            cause+="${cause:+; }test aborted mid-block"
+        fi
+    fi
+    if (( _kt_scan_ndiag > 0 )); then
+        cause+="${cause:+; }bash error at $_kt_scan_diag"
+        if (( _kt_scan_ndiag > 1 )); then
+            cause+=" (+$(( _kt_scan_ndiag - 1 )) more)"
+        fi
+    fi
+    _kt_abort_cause="$cause"
+    [[ -z "$cause" ]] && return 0
+
+    if [[ "$counts_line" =~ ^__COUNTS__:([0-9]+):([0-9]+):([0-9]+) ]]; then
+        t="${BASH_REMATCH[1]}"; p="${BASH_REMATCH[2]}"; f="${BASH_REMATCH[3]}"
+    fi
+    counts_line="__COUNTS__:$(( 10#$t + 1 )):$(( 10#$p )):$(( 10#$f + 1 ))"
+    output_content+="${output_content:+$'\n'}[FAIL] $base: source aborted ($cause)"
+    return 0
 }
 
 # Show usage information
@@ -387,16 +498,30 @@ kt_runner_execute_single_test() {
     # break out of the generated shell code (the old form interpolated
     # '$clean_file' / '$KTESTS_LIB_DIR' into a double-quoted body).
     #
-    # Retry on a MISSING counts line: under heavy parallel load a worker's
-    # subprocess can be killed or fail to fork before it prints __COUNTS__, which
-    # was otherwise miscounted as a failure — the source of intermittent
-    # suite-level failures in threaded mode. A test that actually ran (whether it
-    # passed OR failed) prints a counts line and is never retried, so real
-    # failures are preserved and only transient subprocess deaths are recovered.
+    # END marker (ktests fix plan T1): right after the `source` the wrapper
+    # prints __KT_END_<nonce>__:<source rc>:<t>:<p>:<f>. The nonce is fresh per
+    # attempt and handed over in the environment (then unset, so the test file
+    # cannot echo it); only the marker with THIS nonce counts. A missing marker
+    # means the shell exited mid-file — the counts line can still be there,
+    # printed by kt_test_init's EXIT trap with the counts collected so far.
+    # No trap is added to the test's shell: a test's own EXIT trap replaces
+    # the framework's, and that case is a missing marker too.
+    #
+    # Retry iff the attempt left NO END marker, NO counts line, AND its capture
+    # is empty or shows a cygwin fork failure (KT_ENV_FORK_FAILURE_RE): under
+    # heavy parallel load a worker's subprocess can die or fail to fork before
+    # it prints anything — the source of intermittent suite-level failures in
+    # threaded mode. A file that printed counts or its marker, or printed other
+    # output and then died, is deterministic and is judged at once.
+    local base="${clean_file##*/}"
     local __kt_attempt=0
     local __kt_max_attempts=3
+    local __kt_nonce=""
+    local __kt_child_rc=0
     counts_line=""
     while (( __kt_attempt < __kt_max_attempts )); do
+        __kt_nonce="${BASHPID}x${RANDOM}${RANDOM}x${EPOCHREALTIME//[!0-9]/}"
+        __kt_child_rc=0
         output_content="$(
             VERBOSITY="$VERBOSITY" \
             KK_OUTPUT_COUNTS=1 \
@@ -406,27 +531,33 @@ kt_runner_execute_single_test() {
             KTESTS_LIB_DIR="$KTESTS_LIB_DIR" \
             KTEST_SOURCE_PATH="$KTESTS_LIB_DIR/ktest_source.sh" \
             KT_CLEAN_FILE="$clean_file" \
+            KT_END_NONCE="$__kt_nonce" \
             bash -c '
                 export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
+                _KT_END_NONCE="$KT_END_NONCE"; unset KT_END_NONCE
                 source "$KTEST_SOURCE_PATH"
                 source "$KT_CLEAN_FILE"
+                _KT_SRC_RC=$?
+                echo "__KT_END_${_KT_END_NONCE}__:$_KT_SRC_RC:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
                 # Always output counts (needed by runner for result tracking)
                 echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
-            ' "$clean_file" 2>&1 || true
-        )"
-        counts_line="$(kt_runner_find_last_counts_line "$output_content")"
-        [[ -n "$counts_line" ]] && break
-        (( __kt_attempt++ ))
+            ' "$clean_file" 2>&1
+        )" || __kt_child_rc=$?
+        kt_runner_scan_capture "$output_content" "$__kt_nonce"
+        counts_line="$_kt_scan_counts"
+        [[ -n "$_kt_scan_end" || -n "$counts_line" ]] && break
+        [[ -z "$output_content" || "$output_content" =~ $KT_ENV_FORK_FAILURE_RE ]] || break
+        __kt_attempt=$(( __kt_attempt + 1 ))
         # Brief backoff to let transient resource pressure (e.g. fork limits) ease.
         (( __kt_attempt < __kt_max_attempts )) && sleep 0.1
     done
 
-    # Parse counters from output
-    if [[ -n "$counts_line" ]]; then
-        kt_runner_parse_counts "$counts_line"
-    else
-        kt_runner_set_error_counts
-    fi
+    # Fold an abort verdict (missing END, source rc, unclosed test, bash fatal
+    # diagnostic) into counts_line and output_content.
+    kt_runner_judge_capture "$base" "$__kt_child_rc"
+
+    # Parse counters (a file without a counts line was folded to 1:0:1 above)
+    kt_runner_parse_counts "$counts_line"
 }
 
 # Filter test output based on verbosity level
@@ -444,10 +575,17 @@ kt_runner_filter_output() {
     else
         # In error mode, still show [ERROR], [FAIL], [WARN], [ASSERTION FAILED], SCRIPT ERROR, and other error messages
         # For SCRIPT ERROR blocks, show the entire block until we hit __COUNTS__ or a blank line followed by non-error output
+        # A bash fatal diagnostic (KT_BASH_FATAL_DIAG_RE) is always shown; END markers never are.
         local lines=()
         local in_error_block=0
         while IFS= read -r line; do
-            if [[ "$line" == *"SCRIPT ERROR"* ]]; then
+            if [[ "$line" == *__KT_END_* && "$line" =~ ^(.*)__KT_END_[A-Za-z0-9]+__:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+                line="${BASH_REMATCH[1]}"
+                [[ -z "$line" ]] && continue
+            fi
+            if [[ "$line" == *": line "* && "$line" =~ $KT_BASH_FATAL_DIAG_RE ]]; then
+                lines+=("$line")
+            elif [[ "$line" == *"SCRIPT ERROR"* ]]; then
                 in_error_block=1
                 lines+=("$line")
             elif [[ "$line" =~ ^__COUNTS__: ]]; then
@@ -540,8 +678,8 @@ kt_runner_execute_threaded() {
     }
     
     # Export function for subshells
-    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line
-    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR
+    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture
+    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE
     
     # Actual number of workers to use
     local num_workers=$WORKERS

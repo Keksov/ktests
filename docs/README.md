@@ -11,6 +11,7 @@ ktests/
 │   ├── ktest_assertions.sh    # 30+ assertion helpers
 │   ├── ktest_fixtures.sh      # Temp files and resource management
 │   ├── ktest_runner.sh        # Test discovery and execution
+│   ├── ktest_env_signatures.sh # cygwin fork-failure signatures (runner + tools)
 │   └── ktest.sh               # Main orchestrator
 │
 ├── templates/
@@ -140,6 +141,40 @@ kt_fixture_cleanup_register "cleanup_service"
 # Help
 ./test_suite.sh -h
 ```
+
+## How the Runner Judges a Test File
+
+Each file runs in its own `bash -c` wrapper that sources the framework, then
+`source`s the file, then prints an END marker
+`__KT_END_<nonce>__:<source rc>:<total>:<passed>:<failed>` and the counts line
+`__COUNTS__:<total>:<passed>:<failed>`. The nonce is fresh for every run of every
+file and only the marker with that nonce counts (a nested runner inside a test
+prints markers of its own). Neither line is ever shown in the output.
+
+A file whose assertions merely fail is counted as before. A file that did not run
+to its end is **aborted** and is FAILED even when every test it reached passed:
+
+| what the runner sees | cause in the `[FAIL]` line |
+|---|---|
+| no END marker — the shell exited: `exit N`, `set -u` on an unset variable, `${v:?}`, `set -e` + a failing command, the test's own EXIT trap replacing the framework's | `shell exited mid-file (child rc=N)` |
+| END marker with source rc >= 2 — an inline syntax error, a file-scope `return N` | `source returned rc=N` |
+| at END, total > passed + failed — a test was started and its block never closed | `test aborted mid-block` |
+| a bash fatal diagnostic `<file>: line N: …` (expression recursion level exceeded, bad array subscript, invalid variable name, circular name reference, division by 0, unbound variable, syntax error) — the command that hit it was dropped, the rest of the file ran | `bash error at <file>:<N>: <message>` |
+
+An aborted file counts one more test, failed (`total+1`, `failed+1`), its output
+is shown with the bash diagnostic, and the runner adds the line
+`[FAIL] <file>: source aborted (<cause>)`. Two rules are one-sided on purpose: a
+test that passes twice (passed > total) is legal, and a source rc of 1 alone is
+just a trailing false-y command (`[[ -d $x ]] && rm -rf "$x"`), not a verdict.
+
+A file is re-run (up to 3 attempts, 0.1 s apart) only when it left no END
+marker, no counts line, AND printed nothing or a cygwin fork failure (the
+signatures in `ktest_env_signatures.sh`, shared with `tools/timing_check.sh`):
+that is a worker that died before it could start under load. Anything else is
+judged at once.
+
+Never call `exit` in a test file, and do not put tests after a `return` — both
+end the file early and are reported as aborts.
 
 ## Example Test
 

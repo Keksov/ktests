@@ -79,6 +79,15 @@ across 4 full sweeps (sum 7794), so the "unchanged totals" gate is real.
 |---|---|---|
 | **P0** | the §2 fix; red-first fixtures per abort class (recursion, bad subscript, `$((1/0))`, `exit N`, `set -u`, `${v:?}`, `set -e`, inline syntax error, file-scope `return N` — each must be reported FAILED with its cause; a last-command-rc-1 file and a double-pass file must stay green), run through **both** `kt_runner_execute_sequential` and `kt_runner_execute_threaded` asserting `FAILED_TEST_FILES`; runner docs | ktests suite green both bashes; full kbool master sweep 0 [FAIL] and **identical per-suite totals** (sum 7794) on both |
 
+**P0 DONE 2026-10-01 (worker; awaiting review, not committed).** END marker + class-A/B
+detectors + folding + retry rule in `ktest_runner.sh`; shared `ktest_env_signatures.sh`
+(also used by `tools/timing_check.sh`); tests 034 (22, red 19) and 035 (10, red 8);
+ktests 351/351 threaded on 5.2.37 and 5.3.9 and single on 5.2.37; kklass 344,
+thttpserver 497, tpipe 190, kkore 455 unchanged on both. Deviation D1: §2.2 and the
+last-command-rc-1 control contradict (both give source rc 1) — rc ≥ 2 is the verdict,
+rc 1 alone is not; a `return N` inside a test block is still caught as an unclosed
+test. Details, measurements and D2–D6 in the ledger.
+
 ## 4. Traps
 
 - The runner is threaded ×8: the nonce and any temp names must be per-file; no shared

@@ -3,15 +3,63 @@
   "project": "ktests — the kbool test framework/runner. This ledger tracks the 2026-09-30 fix plan (PLAN.md): T1, a fatally-aborted test file can be reported green with a silently lower total.",
   "created": "2026-09-30",
   "updated": "2026-10-01",
-  "status": "PLANNED, critic-hardened 2026-10-01 (first draft mechanism replaced by the measured abort matrix); no code.",
+  "status": "P0 DONE 2026-10-01 (worker), awaiting review + full master sweep on both bashes; not committed.",
   "findings": {
     "T1": "ktest_runner.sh:395-416: two abort classes are reported green today. (A) shell-exit class (exit N, set -u unbound, ${v:?}, set -e, inline syntax error, file-scope return N): the wrapper echo is not reached, but kt_test_init's EXIT trap (ktest.sh:110-111) prints the counts collected so far — green with a silently lower total. (B) aborted-top-level-command class (arithmetic recursion, bad/empty array subscript, division by 0): the rest of the file RUNS, source rc is 0 — the aborted command's asserts just vanish. Measured 2026-10-01 on both bashes (18-fixture matrix). The first draft's anecdote (thttpserver 003 131/131 vs 137/4) was NOT reproducible and was retracted; the reconstruction gives 137:133:4 with the suite correctly red."
   },
   "phases": {
     "P0": {
       "name": "abort matrix + wrapper/runner fix + red-first tests",
-      "status": "pending",
-      "gate": "ktests suite green on bash 5.2.37 and 5.3.9; full kbool master sweep 0 [FAIL] with unchanged per-suite totals on both"
+      "status": "done",
+      "gate": "ktests suite green on bash 5.2.37 and 5.3.9; full kbool master sweep 0 [FAIL] with unchanged per-suite totals on both",
+      "commit": "",
+      "items": {
+        "1_end_marker": "wrapper prints __KT_END_<nonce>__:<src_rc>:<t>:<p>:<f> right after `source FILE`, before the wrapper's __COUNTS__; nonce = BASHPID x RANDOM RANDOM x EPOCHREALTIME digits, fresh per attempt, passed as env KT_END_NONCE and unset in the child before the framework and the test are sourced; matched anywhere on a line (a test whose last output has no newline glues it) but only with THIS nonce",
+        "2_class_A": "no END -> `shell exited mid-file (child rc=N)` (N = exit status of the bash -c; `|| true` removed, captured as `$(...) || rc=$?`); END with src_rc >= 2 -> `source returned rc=N` (see deviation D1)",
+        "3_class_B": "END t > p+f -> `test aborted mid-block` (one-sided); any captured line matching KT_BASH_FATAL_DIAG_RE -> `bash error at <file>:<N>: <message>` (+N more)",
+        "4_folding": "kt_runner_judge_capture, called inside kt_runner_execute_single_test before run_test writes the result file: counts_line = __COUNTS__:t+1:p:f+1 (t:p:f from the last counts line, 0:0:0 if none) and `[FAIL] <basename>: source aborted (<cause>)` appended to output_content; kt_runner_filter_output keeps diagnostic lines at error verbosity; it and kt_runner_print_output_without_counts drop END markers",
+        "5_retry": "retry (max 3, 0.1 s backoff as before) iff no END AND no counts AND (capture empty OR =~ KT_ENV_FORK_FAILURE_RE); the regex lives once in ktest_env_signatures.sh, sourced by ktest_runner.sh and tools/timing_check.sh (TC_ENV_RE removed)",
+        "6_compat": "ordinary failing assertions unchanged (034 ok_plainfail 2:1:1, no cause line); totals of ktests (old files), kklass, tpipe, kkore, thttpserver identical on both bashes",
+        "docs": "docs/README.md: new section 'How the Runner Judges a Test File' (+ the new file in the tree); tools/README.md: the ENV regex is the shared one"
+      },
+      "tests": {
+        "034_SourceAbortDetection.sh": "13 abort fixtures (b_recursion, b_subscript, b_negindex, b_div0, b_arith_syntax, b_filescope_div0, a_exit, a_set_u, a_qmark, a_set_e, a_syntax, a_return, a_fake_end) each FAILED with exact counts + cause substrings via kt_runner_execute_sequential; 3 controls (last-command rc 1, double pass, ordinary failing assert) keep their counts and get no verdict; all 16 through sequential AND threaded: exact FAILED_TEST_FILES, totals 62:37:14, a cause line per abort, no END marker in the output, diagnostics shown at error verbosity - 22 tests",
+        "035_RetryRuleAndSignatures.sh": "attempts per retry case (empty 3, output-then-death 1, fork-failure signature 3, counts-without-END 1, transient death 2 then green); KT_ENV_FORK_FAILURE_RE matches the 7 documented signatures and no ordinary line; one definition only (no other ktests script holds the literal; runner + timing_check source the shared file); END-marker stripping incl. a glued marker; error-mode filter keeps a diagnostic; a glued END still judged complete - 10 tests"
+      },
+      "red_before": {
+        "034_SourceAbortDetection.sh": "19 FAIL / 22 on 5.2.37 and on 5.3.9 (every abort fixture green under the old runner with exactly the plan-predicted counts: class B in-block 4:3:0, class A 3:2:0, file-scope 3:3:0; the 3 controls passed)",
+        "035_RetryRuleAndSignatures.sh": "8 FAIL / 10 on 5.2.37 and on 5.3.9 (only `transient` and the glued-output case passed)"
+      },
+      "gate_results": {
+        "ktests threaded 5.2.37": "351/351, 0 [FAIL] (319 before + 22 + 10)",
+        "ktests threaded 5.3.9": "351/351, 0 [FAIL]",
+        "ktests --mode single 5.2.37": "351/351, 0 [FAIL]",
+        "kklass/tests": "344/344 on 5.2.37 and 5.3.9 (before: 344 both)",
+        "kcl/thttpserver/tests": "497/497 on 5.2.37 and 5.3.9 (before: 497 both)",
+        "kcl/tpipe/tests": "190/190 on 5.2.37 and 5.3.9 (before: 190 both)",
+        "kkore/tests": "455/455 on 5.2.37 and 5.3.9 (before: 455 both)",
+        "master sweep": "NOT run by the worker (reviewer gate): expect every per-suite total identical except ktests 319 -> 351 (sum 7794 -> 7826)"
+      },
+      "measured": [
+        "`(( expr ))` used as a COMMAND does not abort the enclosing top-level command on either bash: `{ (( kt_r + 1 )); echo x; }` with kt_r=kt_r, and `{ (( 1 + )); echo x; }`, print the diagnostic and then run `echo x` (the (( returns 1). Arithmetic EXPANSION `$(( ))` and an assoc/indexed subscript error (empty key, [-1] on an empty array) abort the whole { } block. The fixtures therefore use $(( )). A stray `(( bad ))` in a test is still caught by the diagnostic grep.",
+        "A bash fatal diagnostic is prefixed with the file the failing CODE lives in: an error inside a library function called from a test prints `<lib.sh>: line N:`, not the test file. KT_BASH_FATAL_DIAG_RE therefore accepts any file prefix (first char alnum or / . _ ~ -, optional drive letter; a line starting with `[` or an ANSI escape cannot match).",
+        "5.3.9 prints `arithmetic syntax error` where 5.2.37 prints `syntax error`; the regex term `syntax error` covers both.",
+        "`source FILE` returns the status of FILE's last command: a file ending in `[[ -n \"\" ]] && echo x` gives src_rc 1 on both bashes - the same value a file-scope `return 1` gives (see D1).",
+        "Child rc: set -u on an unset variable and ${v:?} -> 127; exit 3 -> 3; set -e; false -> 1 (5.2.37).",
+        "Scan cost unchanged: on a 20000-line capture the old kt_runner_find_last_counts_line takes 8.94 s and the new single-pass kt_runner_scan_capture 9.04 s (both bound by `read` from a process substitution, ~0.45 ms/line)."
+      ],
+      "deviations": [
+        "D1 (plan conflict): section 2.2 says END with src_rc != 0 -> FAILED; section 3 says a last-command-rc-1 file must stay green. Both cannot hold: such a file has src_rc 1, the same value as `return 1`. Implemented: src_rc >= 2 -> `source returned rc=N`; rc 1 alone is no verdict. A file-scope `return N` inside a test block is still caught by the unclosed-test detector for every N (034 a_return asserts both causes for N=4); what goes undetected is only a `return 1` BETWEEN tests. Rejected alternative: a RETURN trap comparing $? at the end of the source with the source rc (tells most `return N` from falling off the end) - it adds a trap to the test shell, and thttpserver 001/003/006/008 run `set -T` DEBUG-trap canaries under which an inherited RETURN trap would fire on every function return.",
+        "D2: the diagnostic grep matches a diagnostic from ANY file (the plan writes `^<file>:`), because class-B aborts inside library code carry the library path (measured above).",
+        "D3: the signature regex lives in a new dependency-free file ktest_env_signatures.sh (KT_ENV_FORK_FAILURE_RE): timing_check.sh is a standalone tool that cannot source ktest_runner.sh (which needs ktest_core.sh).",
+        "D4: the `[FAIL] <file>: source aborted (...)` line is plain text (no ANSI colour): the threaded path runs kt_runner_execute_single_test in an xargs bash where the readonly KT_RED constants do not exist.",
+        "D5: several causes are joined with `; ` (e.g. `source returned rc=2; test aborted mid-block; bash error at f.sh:6: syntax error near unexpected token`); the fold is applied once (+1/+1) whatever the number of causes.",
+        "D6: test 022's two nested directory-scan fixtures (kt_test_start + kt_assert_equals, never closed) are now judged aborted inside 022; 022 asserts only TESTS_TOTAL >= 2 and discards their output, so it stays green (the plan predicted this)."
+      ],
+      "found_in_P0": {
+        "F1 (low)": "kt_runner_execute_threaded `export`s VERBOSITY (and _KT_ASSERT_QUIET_MODE, _KTEST_QUIET_MODE, KTESTS_LIB_DIR): a caller that passes one as a prefix assignment (`VERBOSITY=error kt_runner_execute_threaded ...`) keeps the prefix value after the call (bash: exporting a temporary-environment variable inside a function makes it persist). Repro: `VERBOSITY=info; VERBOSITY=error kt_runner_execute_threaded a.sh b.sh >/dev/null; echo $VERBOSITY` -> error. 034 saves/restores by hand. Not fixed.",
+        "F2 (low)": "KT_ERROR_COUNTS is readonly but not exported, so in an xargs worker kt_runner_set_error_counts (test file missing) sets counts_line to empty - the collector then counts the file 1:0:1 anyway, so the verdict is unchanged. Not fixed."
+      }
     }
   },
   "critic": {

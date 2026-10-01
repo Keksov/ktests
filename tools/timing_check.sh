@@ -65,8 +65,9 @@ tc_usage() { sed -n '2,/^$/p' "$TC_SELF" | sed 's/^# \{0,1\}//'; }
 TC_STORMS="0,8"; TC_REPS=5; TC_BASH=""; TC_GREP=""; TC_WORKERS=""
 TC_TIMEOUT=900; TC_WARMUP=1; TC_LOG=""; TC_TIMING=""; TC_KEEP=""
 # cygwin fork failures (seen under a system commit limit: 0xC000012D is
-# STATUS_COMMITMENT_LIMIT) — a run that shows one is ENV, not a test verdict
-TC_ENV_RE='dofork:|child_copy:|cygheap read copy failed|0xC000012D|0xC0000142|Resource temporarily unavailable|fork: retry'
+# STATUS_COMMITMENT_LIMIT) — a run that shows one is ENV, not a test verdict.
+# ONE definition (KT_ENV_FORK_FAILURE_RE), shared with the runner's retry rule.
+source "$TC_DIR/../ktest_env_signatures.sh" || { printf 'timing_check: cannot load ktest_env_signatures.sh\n' >&2; exit 2; }
 TC_ARGV=( "$@" )
 TC_POS=()
 while (( $# > 0 )); do
@@ -193,7 +194,7 @@ tc_run() {
     # over any FAIL line of the same run. Otherwise a FAIL whose every [FAIL]
     # line matches --timing is TIMING-FAIL, anything else FUNC-FAIL.
     local envhit=''
-    if [[ "$out" =~ $TC_ENV_RE ]]; then envhit="${BASH_REMATCH[0]}"; fi
+    if [[ "$out" =~ $KT_ENV_FORK_FAILURE_RE ]]; then envhit="${BASH_REMATCH[0]}"; fi
     if (( rc == 125 || rc == 126 || rc == 127 )) && [[ -z "$envhit" ]]; then envhit="runner rc=$rc"; fi
     if [[ -z "$fails" && $rc -eq 0 && -n "$envhit" ]]; then
         # every case passed although the machine printed a fork failure (the

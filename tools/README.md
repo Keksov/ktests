@@ -59,7 +59,9 @@ then a table per target and storm level: passed/runs and the counts of
 **TIMING-FAIL** (every [FAIL] line matches `--timing REGEX`), **FUNC-FAIL**
 (anything else) and **ENV** (the run failed and its output shows a cygwin
 fork failure — `dofork`, `child_copy`, `0xC000012D` = system commit limit,
-`fork: retry` — or the runner could not start, rc 125-127). ENV is the
+`fork: retry` — or the runner could not start, rc 125-127; the signature
+regex `KT_ENV_FORK_FAILURE_RE` is defined once, in `ktest_env_signatures.sh`,
+and the runner's retry rule uses the same one). ENV is the
 machine, not the test: under memory pressure a forked child can even return
 garbage from `$( )`. `--keep-dir DIR` keeps the raw output of every run that
 did not pass, as evidence. Exit status 0 only when every run passed.
