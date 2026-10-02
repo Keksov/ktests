@@ -87,7 +87,7 @@
         "name": "T2-T5",
         "status": "done",
         "gate": "ktests suite both bashes threaded + --mode single on 5.2.37; kklass, thttpserver, kkore suites both bashes, totals unchanged; master sweep = reviewer",
-        "commit": "PENDING",
+        "commit": "17a167c",
         "items": {
           "T2_DT2": "wrapper sets `trap \"_KT_RT_X=\\$?; if (( \\${#BASH_SOURCE[@]} == 0 )); then _KT_RT_RC=\\$_KT_RT_X; fi\" RETURN` right before `source FILE`, `trap - RETURN` right after; END marker gets a 6th field = that status or `x` (trap did not fire). kt_runner_scan_capture reads it (_kt_scan_end_trc); kt_runner_judge_capture: src_rc >= 2 -> `source returned rc=N` as before, ELSE trc != x and trc != src_rc -> `file-scope return (source rc=R after status S)`; folded +1/+1 like every abort. Stripping (kt_runner_print_output_without_counts, kt_runner_filter_output) uses ONE new constant KT_END_MARKER_STRIP_RE (6 fields required).",
           "T3_DT3": "kt_runner_execute_threaded: run_test, `export -f` of the 10 worker functions, `export` of the 7 worker variables + KT_ERROR_COUNTS and the xargs/manual spawn all inside ONE ( ... ) subshell; the collector (caller) reads only the result files. Removed the unused `local active_jobs=0`; the manual loop counter `i` no longer leaks into the caller.",
