@@ -69,7 +69,7 @@
     "baseline": "526 file-runs per bash: src_rc!=0 = 0; t>p+f = 2 nested fixtures; p>t = 8 real files; fatal-diagnostic lines = 0; per-suite totals identical across 4 sweeps, sum 7794"
   },
   "round3": {
-    "status": "PLANNED (critic-hardened, decisions taken)",
+    "status": "P1 DONE+COMMITTED 2026-10-02",
     "plan": "PLAN.md # Round 3",
     "findings": {
       "T2": "file-scope return 1 between tests reported green",
@@ -85,8 +85,68 @@
     "phases": {
       "P1": {
         "name": "T2-T5",
-        "status": "planned",
-        "commit": ""
+        "status": "done",
+        "gate": "ktests suite both bashes threaded + --mode single on 5.2.37; kklass, thttpserver, kkore suites both bashes, totals unchanged; master sweep = reviewer",
+        "commit": "PENDING",
+        "items": {
+          "T2_DT2": "wrapper sets `trap \"_KT_RT_X=\\$?; if (( \\${#BASH_SOURCE[@]} == 0 )); then _KT_RT_RC=\\$_KT_RT_X; fi\" RETURN` right before `source FILE`, `trap - RETURN` right after; END marker gets a 6th field = that status or `x` (trap did not fire). kt_runner_scan_capture reads it (_kt_scan_end_trc); kt_runner_judge_capture: src_rc >= 2 -> `source returned rc=N` as before, ELSE trc != x and trc != src_rc -> `file-scope return (source rc=R after status S)`; folded +1/+1 like every abort. Stripping (kt_runner_print_output_without_counts, kt_runner_filter_output) uses ONE new constant KT_END_MARKER_STRIP_RE (6 fields required).",
+          "T3_DT3": "kt_runner_execute_threaded: run_test, `export -f` of the 10 worker functions, `export` of the 7 worker variables + KT_ERROR_COUNTS and the xargs/manual spawn all inside ONE ( ... ) subshell; the collector (caller) reads only the result files. Removed the unused `local active_jobs=0`; the manual loop counter `i` no longer leaks into the caller.",
+          "T4": "KT_ERROR_COUNTS exported inside that subshell: an xargs worker now writes __COUNTS__:1:0:1 for a missing file.",
+          "T4b": "kt_runner_execute_sequential no longer skips a missing file: kt_runner_execute_single_test folds it 1:0:1 and it lands in FAILED_TEST_FILES, same as threaded.",
+          "T5_DT5a": "the 8 kklass tests (119 121 123 124 125 126 132 133) replace `trap ... EXIT` 1:1 by a kkNNN_cleanup handler + kt_fixture_cleanup_register; temp paths unchanged (124 private TMPDIR keeps its leak-count meaning); 133 handler cds to the start dir (fallback /) before rm. Assertion counts unchanged (kklass 535).",
+          "T5_DT5b": "kt_runner_execute_single_test, after kt_runner_judge_capture: every still-present dir <test dir>/.tmp/*.<base%.sh> is removed and `[WARN] <file>: fixture dir .tmp/<dir> left behind (own EXIT trap?) - removed by the runner; register cleanup with kt_fixture_cleanup_register, never trap EXIT` appended to output_content (shown at error verbosity; verdict unchanged). 0 forks unless a dir is left.",
+          "T5_DT5c": "kt_fixture_init_tmpdir wipes an existing fixture dir that THIS process did not create (not in _KT_CREATED_TMPDIRS) before mkdir: a standalone run leaks at most one dir per file. 0 forks when no stale dir.",
+          "T5_DT5d": "no trap shim (as decided).",
+          "T5_DT5e": "docs/README.md: END marker 6th field + file-scope-return row + residual paragraph + missing-file/WARN paragraph in 'How the Runner Judges a Test File'; 'Never trap ... EXIT' rule in Fixtures and Cleanup and in the closing rules; troubleshooting row replaced (it recommended `trap 'kt_fixture_teardown' EXIT`).",
+          "T5_DT5f": "removed the 15 legacy dirs (all gitignored): kklass/tests/.tmp/{CompiledParity,ComputedPropertyOutput,DuplicateClassGuard,GuardKeepsMetadata,ReservedNames,StaticMethodStatus}; kcl/tstringhelper/tests/.tmp/{001_Chars,008_CopyTo,015_Format,027_LastIndexOf,028_LastIndexOfAny,059_SecurityTests,060_Contract,061_TSH17_ReturnContract}; kcl/tregex/tests/.tmp/DuplicateClassGuard. kcl/math 015 untouched (kcl git status clean)."
+        },
+        "tests": {
+          "036_FileScopeReturn.sh": "17 tests: 5 file-scope returns FAILED with cause (return 1 after a pass, if ...; then return 1; fi, [[ ]] || return 0, eval \"return 1\", return 1 under set -T), 7 controls without verdict (last-command function rc 1, [[ ]] && x at the end, nested lib guard + lib returning 1 mid-file, lib returning 1 as last command, set -u at the end, own RETURN trap that still fires for its own nested source, thttpserver-style set -T DEBUG canary incl. its control run), 3 pinned residuals without verdict (cond || return 1, false; return, own RETURN trap + return 1); all 15 through sequential AND threaded: exact FAILED_TEST_FILES, totals 29:24:5, a cause line per return, no END marker in the output",
+          "037_ThreadedRunnerIsolation.sh": "13 tests: per worker variable (7) a prefix assignment leaves value AND attributes; a plain call adds no export attribute (6 globals) and declares no results_dir; run_test undefined + none of the 10 worker functions visible to a child after the call; an xargs worker (shim xargs function) sees KT_ERROR_COUNTS=__COUNTS__:1:0:1, the worker functions and VERBOSITY; a missing file 2:1:1 + [009_Missing.sh] in sequential and threaded; the manual-background path (shim `command -v xargs` -> 1) gives 3:2:1, the missing file FAILED, no run_test, no VERBOSITY export",
+          "038_OwnExitTrapCleanup.sh": "8 tests: own_trap (2:2:0) and own_trap_exit (1:0:1) leave no dir and print exactly one WARN naming .tmp/TrapFx.<file>; normal and registered (2:2:0) no WARN; a registered handler runs (raw capture); all 4 together sequential and threaded: no dir, 2 WARN, 7:6:1, FAILED=[own_trap_exit.sh]; standalone: an own-trap run leaves its dir, the next run (another cwd/path spelling) sees no stale file, a same-process re-setup keeps its own file",
+          "034_SourceAbortDetection.sh": "a_fake_end fixture prints a 6-field foreign marker (format change only; 22 tests, counts unchanged)",
+          "035_RetryRuleAndSignatures.sh": "END-marker stripping literals in the 6-field form (one with a status, one with x); 10 tests unchanged"
+        },
+        "red_before": {
+          "036_FileScopeReturn.sh": "7 FAIL / 17 on 5.2.37 and on 5.3.9 (each of the 5 returns green 1:1:0 under the old runner + both combined runs 24:24:0; the 10 controls/residuals passed)",
+          "037_ThreadedRunnerIsolation.sh": "12 FAIL / 13 on 5.2.37 (all 7 prefix values persisted, results_dir = the deleted mktemp path; export attrs; run_test + 10 exported functions; KT_ERROR_COUNTS unset in the worker; sequential 1:1:0 []; manual path leaks) — 5 FAIL / 13 on 5.3.9 (no prefix VALUE leak on 5.3, C3 confirmed; attrs, functions, worker env, sequential, manual fail). Only threaded T4b passed on both.",
+          "038_OwnExitTrapCleanup.sh": "5 FAIL / 8 on 5.2.37 and on 5.3.9 (own_trap, own_trap_exit, both combined runs: dirs left and 0 WARN; standalone saw the stale file)",
+          "kklass suite with the unedited 8 files, fixed runner (5.2.37)": "535/535, exactly 8 [WARN] lines, one per file 119 121 123 124 125 126 132 133, 0 leftovers; after DT5a: 0 [WARN]"
+        },
+        "gate_results": {
+          "ktests threaded 5.2.37": "389/389, 0 [FAIL], 0 [WARN] (351 + 17 + 13 + 8)",
+          "ktests threaded 5.3.9": "389/389, 0 [FAIL], 0 [WARN]",
+          "ktests --mode single 5.2.37": "389/389, 0 [FAIL]",
+          "kklass/tests": "535/535 on 5.2.37 and 5.3.9 (before: 535), 0 [WARN]",
+          "kcl/thttpserver/tests": "497/497 on 5.2.37 and 5.3.9 (before: 497) - set -T DEBUG canaries 001/003/006/008 green under the RETURN trap",
+          "kkore/tests": "455/455 on 5.2.37 and 5.3.9 (before: 455)",
+          "before (measured 5.2.37 this session)": "ktests 351, kklass 535, thttpserver 497, kkore 455; 5.3.9 before = the P0/round-2 ledger figures (identical)",
+          "master sweep": "NOT run by the worker (reviewer gate): expect every per-suite total identical except ktests 351 -> 389"
+        },
+        "measured": [
+          "Without set -T a RETURN trap does not fire for function returns at all (not inherited); it fires for every `source`. 036 g_own_rtrap therefore checks the test's own trap through a nested source.",
+          "A test that replaces the EXIT trap and then `exit`s prints NO counts line (the framework trap that prints it is gone) and no END: counted 1:0:1, `shell exited mid-file (child rc=0)` + the WARN.",
+          "C3 reproduced exactly: prefix-assignment VALUE leak on 5.2.37 only (all 7 names, results_dir = deleted mktemp path); attribute + function leak on both bashes.",
+          "Suite wall times (5.2.37, before -> after): ktests 24.4 s (351) -> 28.6 s (389); kklass 41.7 -> 39.1 s; thttpserver 137.4 -> 129.1 s; kkore 3.7 -> 3.7 s: no measurable runner cost."
+        ],
+        "deviations": [
+          "D1 (plumbing choice, DT2 leaves it to the worker): a 6th END field, not a separate line. The strip regex is now ONE constant KT_END_MARKER_STRIP_RE and requires 6 fields, so the 034 a_fake_end fixture (foreign marker) and the 035 stripping literals were moved to the 6-field form (034 is not named by the plan; its counts are unchanged).",
+          "D2: the T2 cause is `file-scope return (source rc=R after status S)`; it is an `elif` after the rc >= 2 check, so a `return N>=2` keeps the single P0 cause `source returned rc=N`.",
+          "D3: the documented residual (cond || return 1, bare return, own RETURN trap + return 1) is PINNED in 036 as no-verdict controls; a future detector that closes one must update 036.",
+          "D4 (DT5a, \"temp paths MAY move\"): paths were NOT moved under kt_fixture_tmpdir - the trap is replaced 1:1 by a handler (least change to path-sensitive tests such as 119's ownership checks). 133's handler cds to the directory the file started in (fallback /) instead of plain `cd /`: 133 ends with `cd /` and a standalone run has a RELATIVE fixture dir, which teardown would otherwise not find.",
+          "D5 (DT5c): the setup wipe spares a dir already in _KT_CREATED_TMPDIRS (created by the same process) - a second kt_fixture_setup with the same id must not wipe the file's own data (038 asserts it).",
+          "D6: the WARN text extends the plan's wording with the dir name and the remedy: `[WARN] <file>: fixture dir .tmp/<dir> left behind (own EXIT trap?) - removed by the runner; register cleanup with kt_fixture_cleanup_register, never trap EXIT`.",
+          "D7: \"math 015 untouched\" is a gate item (kcl git status clean), not a ktests assertion - a ktests test reading a kcl file would couple the repos.",
+          "D8: 037 observes the worker env through a shim `xargs` FUNCTION (command -v finds functions) and forces the manual-background path through a shim `command` function - no PATH games.",
+          "D9: docs row \"no END marker\" said a test's own EXIT trap removes the marker; it does not (the wrapper still prints END) - corrected while editing the section."
+        ],
+        "found_in_P1": {
+          "F1 (low)": "ktests 029_FixtureAutoRestoreRegression leaks 2 `/tmp/tmp.*` dirs per run: it sets `_KT_TMPDIR=\"$(mktemp -d)\"` in two $( ) blocks, which are not in _KT_CREATED_TMPDIRS, so kt_fixture_teardown never removes them (each holds the *_backup_<pid>_<n> files). ~150 accumulated in Git-bash /tmp since 2026-04 (5.3 runs leak into C:\\bin\\msys64\\tmp). Repro: `ls /tmp | grep -c ^tmp.` before/after `bash ktests/tests/029_*.sh` -> +2. The 8 this session created were removed. Not fixed.",
+          "F2 (low)": "kt_runner_parse_args ends with `export VERBOSITY MODE WORKERS TEST_SELECTION FAILED_TEST_FILES _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE` - same 5.2-only prefix-value leak as T3 (outside the plan's T3 scope). Repro: `source ktest.sh; VERBOSITY=info; VERBOSITY=error kt_runner_parse_args; echo $VERBOSITY` -> error on 5.2.37, info on 5.3.9. Not fixed.",
+          "F3 (low)": "21 more legacy fixture dirs (no .<file> suffix, 2026-07/09) outside any tests/ dir, created by tests run with a cwd-relative script dir: kbool/.tmp (6 + unrelated benchmark_*.sh/test_*.sh files from 2025-12), kcl/.tmp (1), kcl/tinifile/.tmp (1), kcl/tlist/.tmp (6), kcl/tqueuestack/.tmp (1), kklass/.tmp (6). Not in the plan's list of 15 - not removed.",
+          "F4 (info, supervisor review)": "critic C5 / plan T5 called the 8 kcl/tstringhelper/tests/.tmp/NNN_<name> dirs pre-5f64a4b legacy: WRONG. They are the tests own private scratch dirs (PRIVTMP=\"$SCRIPT_DIR/.tmp/<file>\", e.g. 001_Chars.sh:21), recreated by every run and never removed by design (reused; gitignored). The P1 worker deleted them; the P1 gate sweep recreated all 8 — harmless. Not a framework leak; not fixed."
+        },
+        "review": "supervisor 2026-10-02: runner/fixture/kklass diffs read; full master sweep 29/29, 0 [FAIL], 0 [WARN] on 5.2.37 and 5.3.9; per-suite totals identical to the P9 sweep except ktests 351->389, sum 8017->8055 on both; deviations D1-D9 accepted; F4 added (tstringhelper private dirs are not legacy)"
       }
     },
     "critic": {

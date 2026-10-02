@@ -56,8 +56,19 @@ kt_fixture_init_tmpdir() {
     # Ensure base directory exists
     [[ ! -d "$_KT_TMPBASE" ]] && mkdir -p "$_KT_TMPBASE"
     
-    # Create test-specific directory
+    # Create test-specific directory. One that already exists and was not
+    # created by THIS process is stale — left by an earlier standalone run
+    # whose teardown never ran (a test's own `trap … EXIT`, a killed shell):
+    # wipe it, so the leak is bounded to one dir per file (round 3, T5/DT5;
+    # under the runner, the runner removes such a dir itself).
     _KT_TMPDIR="$_KT_TMPBASE/$test_id"
+    if [[ -d "$_KT_TMPDIR" ]]; then
+        local __kt_d __kt_own=0
+        for __kt_d in "${_KT_CREATED_TMPDIRS[@]}"; do
+            [[ "$__kt_d" == "$_KT_TMPDIR" ]] && { __kt_own=1; break; }
+        done
+        (( __kt_own )) || rm -rf -- "$_KT_TMPDIR"
+    fi
     mkdir -p "$_KT_TMPDIR"
     
     _KT_CREATED_TMPDIRS+=("$_KT_TMPDIR")

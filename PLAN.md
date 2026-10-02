@@ -129,7 +129,16 @@ P10/P11 — `kklass/PLAN.md` "Round 3"). Ledger key `round3`.
 
 | phase | content | gate |
 |---|---|---|
-| **P1** | T2 per DT2, T3/T4/T4b per DT3, T5 per DT5. Red-first: T2 FAILED — `return 1` after a pass, `if …; then return 1; fi`, `cond || return 0`, `eval "return 1"`, `return 1` under set -T; T2 green — last-command rc 1, `[[ ]] && x` at the end, a nested sourced lib's `return`, a test's own RETURN trap (no verdict), a thttpserver-style set -T DEBUG canary; all through sequential AND threaded. T3: per exported name, a prefix assignment AND the export attribute after a plain call; `run_test` and the exported functions absent after the call (both bashes). T4/T4b: a missing file gives the same counts and FAILED list in sequential and threaded. T5: an own-trap fixture through sequential and threaded leaves no dir and prints the WARN; a standalone run's stale dir is wiped at the next setup; math 015 untouched. The 8 kklass files edited (cleanup only, kklass totals unchanged); docs/README "How the Runner Judges a Test File" (T2 rule + residual) and the EXIT-trap rule | ktests suite both bashes (`--mode single` on 5.2); kklass suite both bashes; master sweep 0 [FAIL], identical per-suite totals except ktests |
+| **P1** (DONE 2026-10-02, see below) | T2 per DT2, T3/T4/T4b per DT3, T5 per DT5. Red-first: T2 FAILED — `return 1` after a pass, `if …; then return 1; fi`, `cond || return 0`, `eval "return 1"`, `return 1` under set -T; T2 green — last-command rc 1, `[[ ]] && x` at the end, a nested sourced lib's `return`, a test's own RETURN trap (no verdict), a thttpserver-style set -T DEBUG canary; all through sequential AND threaded. T3: per exported name, a prefix assignment AND the export attribute after a plain call; `run_test` and the exported functions absent after the call (both bashes). T4/T4b: a missing file gives the same counts and FAILED list in sequential and threaded. T5: an own-trap fixture through sequential and threaded leaves no dir and prints the WARN; a standalone run's stale dir is wiped at the next setup; math 015 untouched. The 8 kklass files edited (cleanup only, kklass totals unchanged); docs/README "How the Runner Judges a Test File" (T2 rule + residual) and the EXIT-trap rule | ktests suite both bashes (`--mode single` on 5.2); kklass suite both bashes; master sweep 0 [FAIL], identical per-suite totals except ktests |
+
+**P1 DONE 2026-10-02 (worker; awaiting review, not committed).** RETURN trap around
+`source FILE` → 6th END field, verdict `file-scope return (source rc=R after status S)`;
+threaded spawn + exports in one subshell, KT_ERROR_COUNTS exported, sequential folds a
+missing file 1:0:1; runner removes a left fixture dir with a `[WARN]`, setup wipes a
+stale one; the 8 kklass files use `kt_fixture_cleanup_register`; 15 legacy dirs removed.
+Tests 036 (17, red 7), 037 (13, red 12 on 5.2 / 5 on 5.3), 038 (8, red 5); ktests
+389/389 threaded on 5.2.37 and 5.3.9 and single on 5.2.37; kklass 535, thttpserver 497,
+kkore 455 unchanged on both. Deviations D1–D9 and findings F1–F3 in the ledger.
 
 ## R3.4 Critic record (2026-10-02)
 

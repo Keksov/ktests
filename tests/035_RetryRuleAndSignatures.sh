@@ -94,7 +94,7 @@ fi
 
 # ---- output: END markers hidden, bash diagnostics shown ----------------------
 kt_test_start "kt_runner_print_output_without_counts drops END markers, also one glued to a line without newline"
-out="$(kt_runner_print_output_without_counts $'line one\n__KT_END_abc123__:0:1:1:0\ntail-without-newline__KT_END_abc123__:0:1:1:0\n__COUNTS__:1:1:0')"
+out="$(kt_runner_print_output_without_counts $'line one\n__KT_END_abc123__:0:1:1:0:0\ntail-without-newline__KT_END_abc123__:0:1:1:0:x\n__COUNTS__:1:1:0')"
 if [[ "$out" == $'line one\ntail-without-newline' ]]; then
     kt_test_pass "markers dropped"
 else
@@ -103,7 +103,7 @@ fi
 
 kt_test_start "kt_runner_filter_output at error verbosity keeps a bash fatal diagnostic, hides noise and END markers"
 diag='/x/y/001_Foo.sh: line 7: 1/0: division by 0 (error token is "0")'
-out="$(VERBOSITY=error kt_runner_filter_output $'noise\n'"$diag"$'\n__KT_END_abc123__:0:1:1:0\n__COUNTS__:1:1:0' "__COUNTS__:1:1:0" 0)"
+out="$(VERBOSITY=error kt_runner_filter_output $'noise\n'"$diag"$'\n__KT_END_abc123__:0:1:1:0:1\n__COUNTS__:1:1:0' "__COUNTS__:1:1:0" 0)"
 if [[ "$out" == "$diag" ]]; then
     kt_test_pass "only the diagnostic"
 else

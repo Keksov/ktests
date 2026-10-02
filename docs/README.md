@@ -115,6 +115,17 @@ kt_fixture_cleanup_register "cleanup_service"
 # Runs automatically on EXIT
 ```
 
+**Never `trap … EXIT` in a test.** `kt_test_init` installs the EXIT trap that
+runs the fixture teardown — your registered handlers (e.g. the restores
+`kt_fixture_backup_file` registers) and the removal of the fixture dir
+`<tests>/.tmp/<Name>.<file>`. A test's own `trap … EXIT` REPLACES it, so none of
+that runs. Register a handler instead (one that first `cd`s out of a directory
+it is about to remove). If a fixture dir is still there after a file ran, the
+runner removes it and prints
+`[WARN] <file>: fixture dir .tmp/<dir> left behind (own EXIT trap?) …`; a
+standalone `bash FILE` wipes such a stale dir at its next setup (a dir created
+earlier by the same process is kept).
+
 ## Running Tests
 
 ```bash
@@ -146,18 +157,23 @@ kt_fixture_cleanup_register "cleanup_service"
 
 Each file runs in its own `bash -c` wrapper that sources the framework, then
 `source`s the file, then prints an END marker
-`__KT_END_<nonce>__:<source rc>:<total>:<passed>:<failed>` and the counts line
-`__COUNTS__:<total>:<passed>:<failed>`. The nonce is fresh for every run of every
-file and only the marker with that nonce counts (a nested runner inside a test
-prints markers of its own). Neither line is ever shown in the output.
+`__KT_END_<nonce>__:<source rc>:<total>:<passed>:<failed>:<return status>` and the
+counts line `__COUNTS__:<total>:<passed>:<failed>`. The nonce is fresh for every
+run of every file and only the marker with that nonce counts (a nested runner
+inside a test prints markers of its own). Neither line is ever shown in the
+output. `<return status>` is the `$?` a RETURN trap set around the `source` saw
+when the file's own source returned (`x` if it did not fire): a file that falls
+off its end gives the status of its last command — the source rc — while a
+file-scope `return N` gives the status of the command BEFORE the `return`.
 
 A file whose assertions merely fail is counted as before. A file that did not run
 to its end is **aborted** and is FAILED even when every test it reached passed:
 
 | what the runner sees | cause in the `[FAIL]` line |
 |---|---|
-| no END marker — the shell exited: `exit N`, `set -u` on an unset variable, `${v:?}`, `set -e` + a failing command, the test's own EXIT trap replacing the framework's | `shell exited mid-file (child rc=N)` |
+| no END marker — the shell exited: `exit N`, `set -u` on an unset variable, `${v:?}`, `set -e` + a failing command (a test's own EXIT trap alone does not remove the marker; with an `exit` the file also has no counts line and is counted `1:0:1`) | `shell exited mid-file (child rc=N)` |
 | END marker with source rc >= 2 — an inline syntax error, a file-scope `return N` | `source returned rc=N` |
+| END marker with source rc 0/1 and a return status different from it — a file-scope `return` (`return 1` between tests, `if …; then return 1; fi`, `cond \|\| return 0`, `eval "return 1"`, also under `set -T`) | `file-scope return (source rc=R after status S)` |
 | at END, total > passed + failed — a test was started and its block never closed | `test aborted mid-block` |
 | a bash fatal diagnostic `<file>: line N: …` (expression recursion level exceeded, bad array subscript, invalid variable name, circular name reference, division by 0, unbound variable, syntax error) — the command that hit it was dropped, the rest of the file ran | `bash error at <file>:<N>: <message>` |
 
@@ -165,7 +181,17 @@ An aborted file counts one more test, failed (`total+1`, `failed+1`), its output
 is shown with the bash diagnostic, and the runner adds the line
 `[FAIL] <file>: source aborted (<cause>)`. Two rules are one-sided on purpose: a
 test that passes twice (passed > total) is legal, and a source rc of 1 alone is
-just a trailing false-y command (`[[ -d $x ]] && rm -rf "$x"`), not a verdict.
+just a trailing false-y command (`[[ -d $x ]] && rm -rf "$x"`), not a verdict —
+the return status tells the two apart. What the return status cannot see (no
+verdict, the file is green with a lower total): `cmd || return N` where `cmd`'s
+own status was N, a bare `return` (it returns the previous status), and a file
+that installs its own RETURN trap (it replaces the runner's, which then never
+fires). A nested `source` of a library and functions under `set -T` fire the
+trap at depth ≥ 1 and are ignored.
+
+A test file that does not exist is counted `1:0:1` and listed as FAILED in both
+execution modes. A fixture dir the file left behind (its EXIT trap was replaced)
+is removed by the runner with a `[WARN]` line — see Fixtures and Cleanup.
 
 A file is re-run (up to 3 attempts, 0.1 s apart) only when it left no END
 marker, no counts line, AND printed nothing or a cygwin fork failure (the
@@ -173,8 +199,9 @@ signatures in `ktest_env_signatures.sh`, shared with `tools/timing_check.sh`):
 that is a worker that died before it could start under load. Anything else is
 judged at once.
 
-Never call `exit` in a test file, and do not put tests after a `return` — both
-end the file early and are reported as aborts.
+Never call `exit` in a test file, do not put tests after a `return` — both end
+the file early and are reported as aborts — and never `trap … EXIT` (the runner
+cannot run your registered handlers then).
 
 ## Example Test
 
@@ -328,7 +355,7 @@ All existing test code continues to work:
 |---------|----------|
 | Framework not found | Verify KTESTS_DIR path in common.sh |
 | Tests not discovered | Files must match `NNN_*.sh` pattern |
-| Cleanup not working | Check `trap 'kt_fixture_teardown' EXIT` |
+| Cleanup not working / `[WARN] … left behind (own EXIT trap?)` | Remove the test's own `trap … EXIT`; register the cleanup with `kt_fixture_cleanup_register` |
 | Windows issues | Framework handles CRLF automatically |
 
 ## File Naming Convention

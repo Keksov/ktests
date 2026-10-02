@@ -58,6 +58,11 @@ unset _kt_runner_dir
 # Groups: 2 = file, 3 = line number, 4 = the message.
 declare -g KT_BASH_FATAL_DIAG_RE='^([A-Za-z]:)?([[:alnum:]/._~-][^:]*): line ([0-9]+): (.*(expression recursion level exceeded|bad array subscript|invalid variable name|circular name reference|division by 0|unbound variable|syntax error).*)$'
 
+# Any file's END marker (whatever its nonce), possibly glued to the end of a
+# line: __KT_END_<nonce>__:<src rc>:<t>:<p>:<f>:<return-trap status or x>.
+# Used to keep markers out of the printed output. Group 1 = the text before it.
+declare -g KT_END_MARKER_STRIP_RE='^(.*)__KT_END_[A-Za-z0-9]+__:[0-9]+:[0-9]+:[0-9]+:[0-9]+:([0-9]+|x)$'
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -142,7 +147,7 @@ kt_runner_print_output_without_counts() {
     if [[ -n "$output" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             line=${line%$'\r'}
-            if [[ "$line" == *__KT_END_* && "$line" =~ ^(.*)__KT_END_[A-Za-z0-9]+__:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+            if [[ "$line" == *__KT_END_* && "$line" =~ $KT_END_MARKER_STRIP_RE ]]; then
                 line="${BASH_REMATCH[1]}"
                 [[ -z "$line" ]] && continue
             fi
@@ -160,6 +165,8 @@ kt_runner_print_output_without_counts() {
 #                        trap's), so count lines are never assumed unique;
 #       _kt_scan_end     "1" when this attempt's END marker was printed, else "";
 #       _kt_scan_end_rc/_t/_p/_f  the marker's source rc and counters;
+#       _kt_scan_end_trc the status the wrapper's RETURN trap saw when the
+#                        outer source returned, "x" when it did not fire;
 #       _kt_scan_ndiag   the number of bash fatal diagnostics (KT_BASH_FATAL_DIAG_RE);
 #       _kt_scan_diag    the first one, as "<file basename>:<line>: <message>".
 # Only the marker carrying THIS attempt's nonce counts: a nested runner inside
@@ -167,9 +174,9 @@ kt_runner_print_output_without_counts() {
 # end of a line (the test's last output had no newline).
 kt_runner_scan_capture() {
     local output="$1" nonce="$2" line=""
-    local end_re="__KT_END_${nonce}__:([0-9]+):([0-9]+):([0-9]+):([0-9]+)$"
+    local end_re="__KT_END_${nonce}__:([0-9]+):([0-9]+):([0-9]+):([0-9]+):([0-9]+|x)$"
     _kt_scan_counts=""; _kt_scan_end=""
-    _kt_scan_end_rc=0; _kt_scan_end_t=0; _kt_scan_end_p=0; _kt_scan_end_f=0
+    _kt_scan_end_rc=0; _kt_scan_end_t=0; _kt_scan_end_p=0; _kt_scan_end_f=0; _kt_scan_end_trc=x
     _kt_scan_ndiag=0; _kt_scan_diag=""
 
     [[ -n "$output" ]] || return 0
@@ -181,6 +188,7 @@ kt_runner_scan_capture() {
             _kt_scan_end=1
             _kt_scan_end_rc="${BASH_REMATCH[1]}"; _kt_scan_end_t="${BASH_REMATCH[2]}"
             _kt_scan_end_p="${BASH_REMATCH[3]}"; _kt_scan_end_f="${BASH_REMATCH[4]}"
+            _kt_scan_end_trc="${BASH_REMATCH[5]}"
         elif [[ "$line" == *": line "* && "$line" =~ $KT_BASH_FATAL_DIAG_RE ]]; then
             _kt_scan_ndiag=$(( _kt_scan_ndiag + 1 ))
             if [[ -z "$_kt_scan_diag" ]]; then
@@ -200,6 +208,13 @@ kt_runner_scan_capture() {
 #   - its source returned rc >= 2 (an inline syntax error, a file-scope
 #     `return N`). rc 1 alone is the ordinary status of a trailing false-y
 #     command (`[[ … ]] && …`) and is no verdict;
+#   - a file-scope `return` (round 3, T2/DT2): source rc < 2 and the status
+#     the wrapper's RETURN trap saw when the outer source returned differs
+#     from the source rc. A file that falls off its end gives both the status
+#     of its last command; `return N` gives the status of the command BEFORE
+#     it. Blind (no verdict) when the trap did not fire — the file installed
+#     its own RETURN trap — and for `cmd || return N` with cmd's status N,
+#     or a bare `return`;
 #   - at END, TESTS_TOTAL > TESTS_PASSED + TESTS_FAILED: a test was started and
 #     never closed — its block was aborted. One-sided on purpose: a test that
 #     passes twice (p > t) is legal;
@@ -218,6 +233,8 @@ kt_runner_judge_capture() {
     else
         if (( 10#$_kt_scan_end_rc >= 2 )); then
             cause="source returned rc=$_kt_scan_end_rc"
+        elif [[ "$_kt_scan_end_trc" != x ]] && (( 10#$_kt_scan_end_trc != 10#$_kt_scan_end_rc )); then
+            cause="file-scope return (source rc=$_kt_scan_end_rc after status $_kt_scan_end_trc)"
         fi
         if (( 10#$_kt_scan_end_t > 10#$_kt_scan_end_p + 10#$_kt_scan_end_f )); then
             cause+="${cause:+; }test aborted mid-block"
@@ -504,8 +521,16 @@ kt_runner_execute_single_test() {
     # cannot echo it); only the marker with THIS nonce counts. A missing marker
     # means the shell exited mid-file — the counts line can still be there,
     # printed by kt_test_init's EXIT trap with the counts collected so far.
-    # No trap is added to the test's shell: a test's own EXIT trap replaces
-    # the framework's, and that case is a missing marker too.
+    # No EXIT trap is added to the test's shell: a test's own EXIT trap
+    # replaces the framework's, and that case is a missing marker too.
+    #
+    # File-scope return (round 3, T2/DT2): a RETURN trap set around the
+    # `source` records `$?` at trap entry when it fires for the OUTER source
+    # (${#BASH_SOURCE[@]} == 0; a nested source fires at depth 1, a function
+    # under set -T deeper) — the 6th END field, "x" if it did not fire. It is
+    # removed right after the source. `$BASH_COMMAND` cannot be used: in the
+    # trap it is always the wrapper's `source`. No fork; ~23 µs per nested
+    # source and ~8.5 µs per function return under set -T (critic C2).
     #
     # Retry iff the attempt left NO END marker, NO counts line, AND its capture
     # is empty or shows a cygwin fork failure (KT_ENV_FORK_FAILURE_RE): under
@@ -536,9 +561,12 @@ kt_runner_execute_single_test() {
                 export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
                 _KT_END_NONCE="$KT_END_NONCE"; unset KT_END_NONCE
                 source "$KTEST_SOURCE_PATH"
+                _KT_RT_RC=x
+                trap "_KT_RT_X=\$?; if (( \${#BASH_SOURCE[@]} == 0 )); then _KT_RT_RC=\$_KT_RT_X; fi" RETURN
                 source "$KT_CLEAN_FILE"
                 _KT_SRC_RC=$?
-                echo "__KT_END_${_KT_END_NONCE}__:$_KT_SRC_RC:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+                trap - RETURN
+                echo "__KT_END_${_KT_END_NONCE}__:$_KT_SRC_RC:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED:$_KT_RT_RC"
                 # Always output counts (needed by runner for result tracking)
                 echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
             ' "$clean_file" 2>&1
@@ -555,6 +583,18 @@ kt_runner_execute_single_test() {
     # Fold an abort verdict (missing END, source rc, unclosed test, bash fatal
     # diagnostic) into counts_line and output_content.
     kt_runner_judge_capture "$base" "$__kt_child_rc"
+
+    # A fixture dir of this file still present after its shell exited means
+    # kt_test_init's EXIT trap did not run — the test replaced it with its own
+    # `trap … EXIT` (round 3, T5/DT5) or the shell was killed. Remove it and
+    # say so; the file's verdict is not changed.
+    local __kt_fx __kt_tdir="${clean_file%/*}"
+    [[ "$__kt_tdir" == "$clean_file" ]] && __kt_tdir="."
+    for __kt_fx in "$__kt_tdir/.tmp/"*".${base%.sh}"; do
+        [[ -d "$__kt_fx" ]] || continue
+        rm -rf -- "$__kt_fx"
+        output_content+="${output_content:+$'\n'}[WARN] $base: fixture dir .tmp/${__kt_fx##*/} left behind (own EXIT trap?) - removed by the runner; register cleanup with kt_fixture_cleanup_register, never trap EXIT"
+    done
 
     # Parse counters (a file without a counts line was folded to 1:0:1 above)
     kt_runner_parse_counts "$counts_line"
@@ -579,7 +619,7 @@ kt_runner_filter_output() {
         local lines=()
         local in_error_block=0
         while IFS= read -r line; do
-            if [[ "$line" == *__KT_END_* && "$line" =~ ^(.*)__KT_END_[A-Za-z0-9]+__:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+            if [[ "$line" == *__KT_END_* && "$line" =~ $KT_END_MARKER_STRIP_RE ]]; then
                 line="${BASH_REMATCH[1]}"
                 [[ -z "$line" ]] && continue
             fi
@@ -615,9 +655,8 @@ kt_runner_execute_sequential() {
     local test_file
 
     for test_file in "$@"; do
-        [[ ! -f "$test_file" ]] && continue
-        
-        # Execute test and get results
+        # Execute test and get results. A missing file is counted 1:0:1 and
+        # listed as FAILED, as in threaded mode (round 3, T4b).
         kt_runner_execute_single_test "$test_file"
         
         # Update global counters
@@ -662,49 +701,55 @@ kt_runner_execute_threaded() {
         return $?
     }
     
-    # Function to execute a single test and save results
-    run_test() {
-        local test_file="$1"
-        local result_file="$2"
-        
-        # Use common execution function
-        kt_runner_execute_single_test "$test_file"
-        
-        # Save results to file
-        {
-            echo "$counts_line"
-            echo "$output_content"
-        } > "$result_file"
-    }
-    
-    # Export function for subshells
-    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture
-    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE
-    
     # Actual number of workers to use
     local num_workers=$WORKERS
     [[ $num_workers -gt $num_files ]] && num_workers=$num_files
-    
-    # Run tests in parallel using xargs or manual background processes
-    if command -v xargs &>/dev/null; then
-        # Use xargs for better parallelization if available
-        printf '%s\n' "${test_files[@]}" | xargs -P "$num_workers" -I {} bash -c '
-            run_test "$1" "$2/$(basename "$1").result"
-        ' _ {} "$results_dir"
-    else
-        # Manual parallel execution using background processes
-        local active_jobs=0
-        for ((i=0; i<num_files; i++)); do
-            # Limit number of concurrent jobs
-            while [[ $(jobs -r | wc -l) -ge $num_workers ]]; do
-                sleep 0.01
+
+    # The worker function, the exports the workers need and the spawn all live
+    # in ONE subshell (round 3, T3/DT3): the caller keeps its values, export
+    # attributes and functions — on 5.2.37 an `export` of a name given as a
+    # prefix assignment (`VERBOSITY=error kt_runner_execute_threaded …`) used
+    # to outlive the call. The collector below reads only the result files.
+    (
+        # Execute a single test and save its results
+        run_test() {
+            local test_file="$1"
+            local result_file="$2"
+
+            # Use common execution function
+            kt_runner_execute_single_test "$test_file"
+
+            # Save results to file
+            {
+                echo "$counts_line"
+                echo "$output_content"
+            } > "$result_file"
+        }
+
+        export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture
+        # KT_ERROR_COUNTS: a missing file's counts line in a worker (T4)
+        export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE KT_ERROR_COUNTS
+
+        # Run tests in parallel using xargs or manual background processes
+        if command -v xargs &>/dev/null; then
+            # Use xargs for better parallelization if available
+            printf '%s\n' "${test_files[@]}" | xargs -P "$num_workers" -I {} bash -c '
+                run_test "$1" "$2/$(basename "$1").result"
+            ' _ {} "$results_dir"
+        else
+            # Manual parallel execution using background processes
+            for ((i=0; i<num_files; i++)); do
+                # Limit number of concurrent jobs
+                while [[ $(jobs -r | wc -l) -ge $num_workers ]]; do
+                    sleep 0.01
+                done
+
+                run_test "${test_files[$i]}" "$results_dir/${i}.result" &
             done
-            
-            run_test "${test_files[$i]}" "$results_dir/${i}.result" &
-        done
-        wait
-    fi
-    
+            wait
+        fi
+    )
+
     # Collect and aggregate results
     local total_t=0 total_p=0 total_f=0
     for result_file in "$results_dir"/*.result; do

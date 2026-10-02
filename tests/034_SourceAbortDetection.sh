@@ -61,7 +61,7 @@ kt034_abort_fixture a_set_e        '    set -e; false'
 kt034_abort_fixture a_syntax       '    echo "unbalanced" )'
 kt034_abort_fixture a_return       '    return 4'
 # a marker-looking line with a foreign nonce does not count as the END marker
-kt034_abort_fixture a_fake_end     '    echo "__KT_END_0123456789__:0:9:9:0"; exit 0'
+kt034_abort_fixture a_fake_end     '    echo "__KT_END_0123456789__:0:9:9:0:0"; exit 0'
 
 # class B at FILE scope (no open test): only the diagnostic shows it
 cat > "$FX/b_filescope_div0.sh" <<'FIXEOF'
