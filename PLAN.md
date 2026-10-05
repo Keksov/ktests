@@ -149,3 +149,35 @@ but an all-bash attribute/function leak; wrong line ref. C4: sequential skips a 
 file. C5: math 015 must not be edited; 15 of 23 dirs are legacy. C6: runner-side glob
 removal + WARN reliable; standalone needs the setup wipe; shim rejected. Probes:
 `scratchpad/critic3/{dt2,ktx,dt3,dt5}/`.
+
+# Round 4 (2026-10-03, critic-hardened 2026-10-05) — the P1 leftovers T6–T7
+
+**Status: PLANNED, critic-hardened (C13/C14 folded), decisions taken; no code.**
+Owner 2026-10-03: "Потом приступай к открытым пунктам". Runs FIRST in round 4
+(before kklass P12 — `kklass/PLAN.md` "Round 4"). Ledger key `round4`.
+
+## R4.1 Findings (ledger `round3.phases.P1.found_in_P1`; critic C13/C14)
+
+| ID | Sev | Where | Symptom (measured) |
+|---|---|---|---|
+| T6 | low | `tests/029_FixtureAutoRestoreRegression.sh` | Each run leaves +2 `tmp.*` dirs: `_KT_TMPDIR="$(mktemp -d)"` in two `$( )` blocks is not in `_KT_CREATED_TMPDIRS` (Git-bash /tmp on 5.2, `C:\bin\msys64\tmp` on 5.3). (C13) Worse: the inner `kt_fixture_teardown` inherits the OUTER `_KT_CREATED_TMPDIRS` (a relative `./.tmp/<Name>.<file>`) and deletes the outer fixture dir mid-test (`critic4/t6/inner.sh`: "OUTER DIR REMOVED"). Census (read-only, 2026-10-05): Git-bash /tmp (= `C:\Users\1\AppData\Local\Temp`) 372 `tmp.*` dirs — 61 hold only `tmp.*_backup_N_N` (029), 310 EMPTY (2026-04..10, not 029's, still appearing), 1 kcl bench tree; msys64 /tmp 159 — 156 only-029, 1 kcl bench tree, 2 kcl tawk/tfind Argv leftovers. No other ktests test escapes teardown with mktemp. |
+| T7 | low | `kt_runner_parse_args` | Ends with `export VERBOSITY MODE WORKERS TEST_SELECTION FAILED_TEST_FILES _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE`. (C14) On 5.2.37 all 6 scalar names persist after a prefix call, including the function's own assignment (a `MODE=single` prefix leaves `MODE=threaded`); 5.3.9 restores them. Nobody needs the export: the single-test wrapper passes VERBOSITY and both quiet modes explicitly, the threaded runner exports in its own subshell (P1), the master runner forwards `"$@"`, MODE/WORKERS/TEST_SELECTION are reset by every parse, FAILED_TEST_FILES is an array (export is a no-op). A copy without the export line: ktests 389/389 threaded on both bashes and single on 5.2. |
+
+## R4.2 Decisions
+
+| # | Decision |
+|---|---|
+| DT6 | (supervisor, per C13) T6: inside each of 029's `$( )` blocks set `_KT_CREATED_TMPDIRS=("$_KT_TMPDIR")` (REPLACE, not append), the scratch dir created under the outer fixture dir — measured: no leak, and the restore still yields ORIGINAL; the test's meaning unchanged. One-time cleanup ONLY of `tmp.*` dirs whose every entry matches `tmp.*_backup_N_N` (both /tmp roots), listed in the ledger; the 310 empty dirs and the kcl leftovers are NOT touched (ledger `found_in_round4_critic`, owner of those unknown). |
+| DT7 | (supervisor, per C14) T7: drop the export line; callers' contract unchanged. |
+
+## R4.3 Phase
+
+| phase | content | gate |
+|---|---|---|
+| **P2** | T6 per DT6, T7 per DT7. Red-first, hermetic (a private TMPDIR — something else keeps creating global `tmp.*` dirs): 029 leaves the private TMPDIR empty and the outer fixture dir still exists after the inner blocks (both bashes); per parse_args name a prefix assignment does not persist on 5.2 and 5.3, and no `-x` attribute is added after a plain call; sequential, threaded and single modes still work | ktests suite both bashes (`--mode single` on 5.2); master sweep 0 [FAIL], identical per-suite totals except ktests |
+
+## R4.4 Critic record (2026-10-05)
+
+C13 (T6: inner teardown deletes the outer fixture dir; census corrects the plan's "~150
+since 2026-04": 61 + 156 029 dirs, 310 empty dirs of unknown origin), C14 (T7: drop the
+export, measured). Probes: `scratchpad/critic4/{t6,t7}/`.

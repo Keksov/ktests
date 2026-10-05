@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": "ktests — the kbool test framework/runner. This ledger tracks the 2026-09-30 fix plan (PLAN.md): T1, a fatally-aborted test file can be reported green with a silently lower total.",
   "created": "2026-09-30",
-  "updated": "2026-10-02",
+  "updated": "2026-10-05",
   "status": "P0 DONE+COMMITTED 2026-10-01 (f231248)",
   "findings": {
     "T1": "ktest_runner.sh:395-416: two abort classes are reported green today. (A) shell-exit class (exit N, set -u unbound, ${v:?}, set -e, inline syntax error, file-scope return N): the wrapper echo is not reached, but kt_test_init's EXIT trap (ktest.sh:110-111) prints the counts collected so far — green with a silently lower total. (B) aborted-top-level-command class (arithmetic recursion, bad/empty array subscript, division by 0): the rest of the file RUNS, source rc is 0 — the aborted command's asserts just vanish. Measured 2026-10-01 on both bashes (18-fixture matrix). The first draft's anecdote (thttpserver 003 131/131 vs 137/4) was NOT reproducible and was retracted; the reconstruction gives 137:133:4 with the suite correctly red."
@@ -154,6 +154,31 @@
       "date": "2026-10-02",
       "probes": "scratchpad/critic3/",
       "supervisor_verified": "C3, C7, C10, C14 (scratchpad/r3/verify.sh)"
+    }
+  },
+  "round4": {
+    "status": "PLANNED (critic-hardened, decisions taken)",
+    "plan": "PLAN.md # Round 4",
+    "findings": {
+      "T6": "029 leaks 2 tmp.* per run AND its inner teardown deletes the outer fixture dir (C13)",
+      "T7": "kt_runner_parse_args export: 5.2 prefix leak; nobody needs the export (C14)"
+    },
+    "decisions": {
+      "DT6": "replace _KT_CREATED_TMPDIRS inside the $( ) blocks, scratch under the outer fixture dir; clean only all-029-backup tmp.* dirs once",
+      "DT7": "drop the export"
+    },
+    "phases": {
+      "P2": {
+        "name": "T6, T7",
+        "status": "planned",
+        "commit": ""
+      }
+    },
+    "critic": {
+      "findings": "C13, C14",
+      "date": "2026-10-05",
+      "probes": "scratchpad/critic4/",
+      "supervisor_verified": "C3, C6, C9 (scratchpad/r4/verify.sh)"
     }
   }
 }
