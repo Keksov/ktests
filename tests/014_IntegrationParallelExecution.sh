@@ -83,39 +83,49 @@ else
     kt_test_fail "Sequential mode not set correctly"
 fi
 
+# The aggregation checks run in a subshell and print the resulting counts:
+# setting THIS file's counters would hide (or fake) its own results in the
+# runner (round 4, review R1).
+
 # Test result aggregation
 kt_test_start "Aggregate results from multiple test runs"
-kt_test_reset_counts
 run1_total=10; run1_pass=9; run1_fail=1
 run2_total=8; run2_pass=8; run2_fail=0
 run3_total=12; run3_pass=10; run3_fail=2
 
-TESTS_TOTAL=$run1_total
-TESTS_PASSED=$run1_pass
-TESTS_FAILED=$run1_fail
-kt_test_accumulate_counts "$run2_total:$run2_pass:$run2_fail"
-kt_test_accumulate_counts "$run3_total:$run3_pass:$run3_fail"
+_kt014_got="$(
+    kt_test_reset_counts
+    TESTS_TOTAL=$run1_total
+    TESTS_PASSED=$run1_pass
+    TESTS_FAILED=$run1_fail
+    kt_test_accumulate_counts "$run2_total:$run2_pass:$run2_fail"
+    kt_test_accumulate_counts "$run3_total:$run3_pass:$run3_fail"
+    echo "$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+)"
 
 expected_total=$((run1_total + run2_total + run3_total))
 expected_pass=$((run1_pass + run2_pass + run3_pass))
 expected_fail=$((run1_fail + run2_fail + run3_fail))
 
-if (( TESTS_TOTAL == expected_total && TESTS_PASSED == expected_pass && TESTS_FAILED == expected_fail )); then
+if [[ "$_kt014_got" == "$expected_total:$expected_pass:$expected_fail" ]]; then
     kt_test_pass "Multi-run result aggregation works correctly"
 else
-    kt_test_fail "Aggregation error: got $TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED expected $expected_total:$expected_pass:$expected_fail"
+    kt_test_fail "Aggregation error: got $_kt014_got expected $expected_total:$expected_pass:$expected_fail"
 fi
 
 # Test handling tests with failures
 kt_test_start "Aggregation preserves failure information"
-kt_test_reset_counts
-kt_test_accumulate_counts "5:4:1"
-kt_test_accumulate_counts "3:2:1"
-kt_test_accumulate_counts "4:4:0"
-if (( TESTS_FAILED == 2 )); then
+_kt014_got="$(
+    kt_test_reset_counts
+    kt_test_accumulate_counts "5:4:1"
+    kt_test_accumulate_counts "3:2:1"
+    kt_test_accumulate_counts "4:4:0"
+    echo "$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+)"
+if [[ "$_kt014_got" == "12:10:2" ]]; then
     kt_test_pass "Failures aggregated correctly"
 else
-    kt_test_fail "Failure count mismatch: got $TESTS_FAILED, expected 2"
+    kt_test_fail "Aggregation mismatch: got $_kt014_got, expected 12:10:2"
 fi
 
 # Test selection with overlapping numbers (should not duplicate)
@@ -129,9 +139,6 @@ fi
 
 # Reset for other tests
 TESTS_TO_RUN=()
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
 
 # Test comprehensive configuration state
 kt_test_start "Save and restore configuration state"

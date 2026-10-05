@@ -30,18 +30,16 @@ else
     kt_test_fail "Legacy test_fail alias missing"
 fi
 
-# Test framework state isolation
+# Test framework state isolation. The reset runs in a subshell: resetting THIS
+# file's counters would hide every assertion before it from the runner
+# (round 4, review R1).
 kt_test_start "Framework state isolation"
-state_before=$TESTS_TOTAL
-kt_test_reset_counts
-state_after=$TESTS_TOTAL
-if (( state_after == 0 )); then
+_kt016_after="$(
+    kt_test_reset_counts
+    echo "$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
+)"
+if [[ "$_kt016_after" == "0:0:0" ]]; then
     kt_test_pass "State isolation works"
 else
-    kt_test_fail "State not properly isolated"
+    kt_test_fail "State not properly isolated (after reset: $_kt016_after)"
 fi
-
-# Restore counts
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0

@@ -176,6 +176,21 @@ Owner 2026-10-03: "Потом приступай к открытым пункт�
 |---|---|---|
 | **P2** | T6 per DT6, T7 per DT7. Red-first, hermetic (a private TMPDIR — something else keeps creating global `tmp.*` dirs): 029 leaves the private TMPDIR empty and the outer fixture dir still exists after the inner blocks (both bashes); per parse_args name a prefix assignment does not persist on 5.2 and 5.3, and no `-x` attribute is added after a plain call; sequential, threaded and single modes still work | ktests suite both bashes (`--mode single` on 5.2); master sweep 0 [FAIL], identical per-suite totals except ktests |
 
+**P2 DONE 2026-10-05 (uncommitted, awaiting review).** T6: 029 scratch dir + restored files under the
+outer fixture dir, list REPLACED per block; +2 asserts (inner dir removed by its own teardown; outer
+dir intact). Red (private TMPDIR, standalone): 2 FAIL + 2 leaked dirs on both bashes → 4/4, TMPDIR
+empty. One-time cleanup: 62 (Git-bash /tmp) + 156 (msys64 /tmp) all-`tmp.*_backup_N_N` dirs removed;
+310 empty dirs and the kcl leftovers untouched. T7: export line dropped; new
+`tests/039_ParseArgsNoExport.sh` (8 asserts) red 8 FAIL on 5.2 / 2 FAIL on 5.3 → 8/8.
+**Review remark R1** (ledger `round4.phases.P2.review_remark_R1`): 022's "non-existent file" assert
+failed on every run since round 3 T4b (a missing file counts 1:0:1) but was invisible — 022 zeroed
+its own counters six times mid-file. Fixed: runner calls run through a subshell helper (`kt022_run`)
+with exact counts, T4b contract checked in sequential and threaded. Same pattern fixed in 013, 014,
+015, 016 (counter checks in subshells; 015's double passes dropped). Red: a FAIL injected after
+`kt_test_init` vanished from the suite totals in all five files → now counted on both bashes.
+Per-file totals 013 1→4, 014 1→10, 015 16→25, 016 0→4, 022 3→14. ktests 435/435 threaded on 5.2.37
+and 5.3.9, `--mode single` on 5.2.37. Found outside: 017 double pass (ledger `found_in_P2`).
+
 ## R4.4 Critic record (2026-10-05)
 
 C13 (T6: inner teardown deletes the outer fixture dir; census corrects the plan's "~150

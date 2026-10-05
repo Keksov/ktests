@@ -415,9 +415,11 @@ kt_runner_parse_args() {
         kt_runner_parse_selection "$TEST_SELECTION"
         kt_test_debug "Parsed test selection: ${TESTS_TO_RUN[*]}"
     fi
-    
-    # Export for subshells
-    export VERBOSITY MODE WORKERS TEST_SELECTION FAILED_TEST_FILES _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE
+
+    # No `export` here (round 4, T7/DT7): on bash 5.2 it made a prefix assignment
+    # (`MODE=single kt_runner_parse_args`) permanent. Children get these values
+    # explicitly: the single-test wrapper passes VERBOSITY and both quiet modes,
+    # the threaded runner exports in its own subshell.
 }
 
 

@@ -55,11 +55,15 @@ else
     kt_test_fail "Failed to create custom fixture directory"
 fi
 
+# The counter checks run in a subshell: resetting THIS file's counters would hide
+# every assertion before it from the runner (round 4, review R1).
+
 # Test counter reset functionality
 kt_test_start "Counter reset functionality"
-initial_total=$TESTS_TOTAL
-kt_test_reset_counts
-if (( TESTS_TOTAL == 0 && TESTS_PASSED == 0 && TESTS_FAILED == 0 )); then
+if (
+    kt_test_reset_counts
+    (( TESTS_TOTAL == 0 && TESTS_PASSED == 0 && TESTS_FAILED == 0 ))
+); then
     kt_test_pass "Counters reset correctly"
 else
     kt_test_fail "Counter reset failed"
@@ -68,23 +72,20 @@ kt_config_set "verbosity" "error"
 
 # Test assertion result accumulation
 kt_test_start "Multiple assertions accumulate counters"
-initial_total=$TESTS_TOTAL
-initial_passed=$TESTS_PASSED
-success_count=0
-for i in {1..5}; do
-    if kt_assert_equals "test" "test" "Test $i" > /dev/null 2>&1; then
-        ((success_count++))
-        kt_test_pass "Assertion $i passed" > /dev/null 2>&1
-    else
-        kt_test_fail "Assertion $i failed" > /dev/null 2>&1
-    fi
-done
-# Check if assertions incremented counters
-# kt_test_start increments TESTS_TOTAL by 1
+_kt013_delta="$(
+    initial_passed=$TESTS_PASSED
+    for i in {1..5}; do
+        if kt_assert_equals "test" "test" "Test $i" > /dev/null 2>&1; then
+            kt_test_pass "Assertion $i passed" > /dev/null 2>&1
+        else
+            kt_test_fail "Assertion $i failed" > /dev/null 2>&1
+        fi
+    done
+    echo $(( TESTS_PASSED - initial_passed ))
+)"
 # kt_test_pass increments TESTS_PASSED by 1 for each successful assertion
-# So TESTS_PASSED should increase by 5 (plus 1 for the initial kt_test_start)
-if (( TESTS_PASSED >= initial_passed + 5 )); then
+if [[ "$_kt013_delta" == 5 ]]; then
     kt_test_pass "Multiple assertions increment counters"
 else
-    kt_test_fail "Counter increment failed (initial_passed: $initial_passed, current_passed: $TESTS_PASSED, expected: $((initial_passed + 5)))"
+    kt_test_fail "Counter increment failed (TESTS_PASSED grew by '$_kt013_delta', expected 5)"
 fi

@@ -59,30 +59,36 @@ else
     kt_test_fail "Failed to create sample test files"
 fi
 
-# Test kt_runner_execute_sequential with multiple files
+
+# kt022_run MODE FN ARGS... - run a runner function IN A SUBSHELL with zeroed counters
+# and print that run's "TOTAL:PASSED:FAILED|FAILED_TEST_FILES|rc". The runner resets
+# and adds to TESTS_TOTAL/PASSED/FAILED in-process; run here, it used to clobber this
+# file's own counters (and the file zeroed them six times), so any assertion before
+# the last reset was invisible to the outer runner (round 4, review R1).
+kt022_run() {
+    local __mode="$1"; shift
+    (
+        MODE="$__mode"
+        TESTS_TOTAL=0; TESTS_PASSED=0; TESTS_FAILED=0; FAILED_TEST_FILES=()
+        __rc=0
+        "$@" >/dev/null 2>&1 || __rc=$?
+        printf '%s:%s:%s|%s|%s' "$TESTS_TOTAL" "$TESTS_PASSED" "$TESTS_FAILED" "${FAILED_TEST_FILES[*]}" "$__rc"
+    )
+}
+
+# kt022_check NAME GOT WANT
+kt022_check() {
+    if [[ "$2" == "$3" ]]; then
+        kt_test_pass "$1"
+    else
+        kt_test_fail "$1: got '$2', want '$3'"
+    fi
+}
+
+# Test kt_runner_execute_sequential with multiple files: test1/test2 pass, test3 fails
 kt_test_start "kt_runner_execute_sequential with multiple test files"
-initial_total=$TESTS_TOTAL
-initial_passed=$TESTS_PASSED
-initial_failed=$TESTS_FAILED
-# Suppress all output from test execution while preserving counter tracking
-_KT_ASSERT_QUIET_MODE=quiet _KTEST_QUIET_MODE=1 kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh" "$TEST_DIR/test3.sh" >/dev/null 2>&1
-final_total=$TESTS_TOTAL
-final_passed=$TESTS_PASSED
-final_failed=$TESTS_FAILED
-
-# Should have 3 more tests total (one from each test file)
-if (( final_total > initial_total )); then
-    kt_test_pass "Sequential execution increased test count"
-else
-    kt_test_fail "Sequential execution did not increase test count"
-fi
-
-# Test that counters are accumulated correctly
-if (( final_passed >= initial_passed + 2 && final_failed >= initial_failed + 1 )); then
-    kt_test_pass "Sequential execution accumulated results correctly"
-else
-    kt_test_fail "Sequential execution did not accumulate results correctly"
-fi
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh" "$TEST_DIR/test3.sh")"
+kt022_check "Sequential execution counts and failed list" "$_r" "3:2:1|test3.sh|0"
 
 # Test kt_runner_execute_threaded function exists
 kt_test_start "kt_runner_execute_threaded function availability"
@@ -92,25 +98,10 @@ else
     kt_test_fail "kt_runner_execute_threaded function not found"
 fi
 
-# Test kt_runner_execute_threaded execution (if function is implemented)
+# Test kt_runner_execute_threaded execution
 kt_test_start "kt_runner_execute_threaded execution test"
-if declare -f kt_runner_execute_threaded > /dev/null 2>&1; then
-    # Reset counters for clean test
-    TESTS_TOTAL=0
-    TESTS_PASSED=0
-    TESTS_FAILED=0
-    
-    # Note: This test may be skipped in environments without proper thread support
-    kt_runner_execute_threaded "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh" >/dev/null 2>&1
-    
-    if (( TESTS_TOTAL >= 2 )); then
-        kt_test_pass "Threaded execution processed multiple files"
-    else
-        kt_test_pass "Threaded execution function available (execution may vary by environment)"
-    fi
-else
-    kt_test_pass "Threaded execution not available in this environment"
-fi
+_r="$(kt022_run threaded kt_runner_execute_threaded "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh" "$TEST_DIR/test3.sh")"
+kt022_check "Threaded execution counts and failed list" "$_r" "3:2:1|test3.sh|0"
 
 # Test kt_runner_execute_tests with specific directory
 kt_test_start "kt_runner_execute_tests with specific directory"
@@ -122,7 +113,7 @@ cat > "$dir_test_dir/001_test.sh" << EOF
 source "$FRAMEWORK_PATH"
 kt_test_init "DirTest1" "\$(dirname "\$0")"
 kt_test_start "Dir test 1"
-kt_assert_equals "a" "a" "Should pass"
+kt_assert_equals "a" "a" "Should pass" && kt_test_pass "Dir test 1"
 EOF
 
 cat > "$dir_test_dir/002_test.sh" << EOF
@@ -130,114 +121,70 @@ cat > "$dir_test_dir/002_test.sh" << EOF
 source "$FRAMEWORK_PATH"
 kt_test_init "DirTest2" "\$(dirname "\$0")"
 kt_test_start "Dir test 2"
-kt_assert_equals "b" "b" "Should pass"
+kt_assert_equals "b" "b" "Should pass" && kt_test_pass "Dir test 2"
 EOF
 
 chmod +x "$dir_test_dir/001_test.sh" "$dir_test_dir/002_test.sh"
 
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-kt_runner_execute_tests "$dir_test_dir" >/dev/null 2>&1
-if (( TESTS_TOTAL >= 2 )); then
-    kt_test_pass "Directory execution found and ran test files"
-else
-    kt_test_fail "Directory execution did not find or run test files"
-fi
+_r="$(kt022_run threaded kt_runner_execute_tests "$dir_test_dir")"
+kt022_check "Directory execution (threaded) found and ran both files" "$_r" "2:2:0||0"
 
-# Test execution with non-existent files
-kt_test_start "Execution with non-existent files"
-initial_total=$TESTS_TOTAL
-kt_runner_execute_sequential "$TEST_DIR/nonexistent.sh" 2>/dev/null
-final_total=$TESTS_TOTAL
-if (( final_total == initial_total )); then
-    kt_test_pass "Non-existent file handling works correctly"
-else
-    kt_test_fail "Non-existent file handling failed"
-fi
+# Test execution with non-existent files: since round 3 T4b a missing file counts
+# 1:0:1 and is listed in FAILED_TEST_FILES, in sequential and threaded alike.
+kt_test_start "Execution with non-existent files (sequential)"
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/nonexistent.sh")"
+kt022_check "Missing file counts 1:0:1 and is listed (sequential)" "$_r" "1:0:1|nonexistent.sh|0"
+
+kt_test_start "Execution with non-existent files (threaded)"
+_r="$(kt022_run threaded kt_runner_execute_threaded "$TEST_DIR/nonexistent.sh")"
+kt022_check "Missing file counts 1:0:1 and is listed (threaded)" "$_r" "1:0:1|nonexistent.sh|0"
 
 # Test mixed file existence in execution
 kt_test_start "Mixed file existence in execution"
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/nonexistent.sh" "$TEST_DIR/test2.sh" 2>/dev/null
-if (( TESTS_TOTAL >= 2 )); then
-    kt_test_pass "Mixed file execution handles missing files gracefully"
-else
-    kt_test_fail "Mixed file execution failed"
-fi
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/nonexistent.sh" "$TEST_DIR/test2.sh")"
+kt022_check "Mixed files: two run, the missing one counts as a failure" "$_r" "3:2:1|nonexistent.sh|0"
 
-# Test runner execution with different modes
+# Test runner execution in single mode
 kt_test_start "Runner execution with different modes"
-MODE="single"
-if declare -f kt_runner_execute_tests > /dev/null 2>&1; then
-    kt_runner_execute_tests "$TEST_DIR" >/dev/null 2>&1
-    kt_test_pass "Single mode execution completed"
-else
-    kt_test_pass "Execution mode test skipped"
-fi
+_r="$(kt022_run single kt_runner_execute_tests "$dir_test_dir")"
+kt022_check "Directory execution (single) found and ran both files" "$_r" "2:2:0||0"
 
 # Test execution tracking
 kt_test_start "Execution result tracking"
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh" >/dev/null 2>&1
-tracked_total=$TESTS_TOTAL
-tracked_passed=$TESTS_PASSED
-tracked_failed=$TESTS_FAILED
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/test1.sh" "$TEST_DIR/test2.sh")"
+kt022_check "Execution tracking records passed tests" "$_r" "2:2:0||0"
 
-if (( tracked_passed > 0 )); then
-    kt_test_pass "Execution tracking records passed tests"
-else
-    kt_test_fail "Execution tracking failed to record passed tests"
-fi
-
-# Test with empty directory
+# Test with empty directory: nothing to run is an error (rc 1), nothing counted
 kt_test_start "Execution with empty directory"
 empty_dir=$(kt_fixture_tmpdir_create "empty")
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-kt_runner_execute_tests "$empty_dir" >/dev/null 2>&1
-if (( TESTS_TOTAL == 0 )); then
-    kt_test_pass "Empty directory execution handled correctly"
-else
-    kt_test_fail "Empty directory execution failed"
-fi
+_r="$(kt022_run threaded kt_runner_execute_tests "$empty_dir")"
+kt022_check "Empty directory execution handled correctly" "$_r" "0:0:0||1"
 
-# Test execution with permission issues
+# Test execution with permission issues (chmod 000 may be a no-op on Windows):
+# it must still produce one counted result for the one file
 kt_test_start "Execution with permission-restricted files"
 chmod 000 "$TEST_DIR/test1.sh"
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-# This should either fail gracefully or be skipped
-kt_runner_execute_sequential "$TEST_DIR/test1.sh" >/dev/null 2>&1
-# Restore permissions
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/test1.sh")"
 chmod 755 "$TEST_DIR/test1.sh"
-kt_test_pass "Permission restriction test completed"
-
-# Test concurrent execution state isolation
-kt_test_start "Concurrent execution state isolation"
-initial_state="$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"
-# Note: This is more of a conceptual test since true concurrency requires thread support
-if [[ -n "$initial_state" ]]; then
-    kt_test_pass "State isolation concept validated"
+if [[ "$_r" == "1:1:0||0" || "$_r" == "1:0:1|test1.sh|0" ]]; then
+    kt_test_pass "Permission restriction test completed"
 else
-    kt_test_pass "State isolation test concept validated"
+    kt_test_fail "Permission restriction: got '$_r'"
 fi
+
+# Test state isolation: a runner call made through kt022_run leaves this file's
+# own counters and failed list untouched
+kt_test_start "Concurrent execution state isolation"
+_before="$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED|${FAILED_TEST_FILES[*]}"
+_r="$(kt022_run single kt_runner_execute_sequential "$TEST_DIR/test3.sh")"
+_after="$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED|${FAILED_TEST_FILES[*]}"
+kt022_check "Runner call leaves the caller's counters alone" "$_after|$_r" "$_before|1:0:1|test3.sh|0"
 
 # Test runner help functionality
 kt_test_start "Runner help functionality"
-if declare -f kt_runner_show_help > /dev/null 2>&1; then
-    help_output=$(kt_runner_show_help 2>&1)
-    if [[ -n "$help_output" ]]; then
-        kt_test_pass "Help functionality works"
-    else
-        kt_test_pass "Help function available (output may be empty in test mode)"
-    fi
+help_output=$(kt_runner_show_help 2>&1)
+if [[ "$help_output" == *"--mode"* ]]; then
+    kt_test_pass "Help functionality works"
 else
-    kt_test_pass "Help function not available"
+    kt_test_fail "Help output lacks --mode: '$help_output'"
 fi
