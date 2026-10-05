@@ -172,7 +172,7 @@
         "name": "T6, T7 + review remark R1",
         "status": "done",
         "gate": "ktests suite threaded 5.2.37 435/435 and 5.3.9 435/435, --mode single 5.2.37 435/435, 0 [FAIL] lines in all three (399 before R1: +36 = 013 1->4, 014 1->10, 015 16->25, 016 0->4, 022 3->14); master sweep = reviewer",
-        "commit": "PENDING",
+        "commit": "58789c7",
         "items": {
           "T6_DT6": "tests/029: `_kt029_outer=\"$_KT_TMPDIR\"` after kt_test_init; in each $( ) block `_KT_TMPDIR=\"$(mktemp -d \"$_kt029_outer/inner.XXXXXX\")\"` + `_KT_CREATED_TMPDIRS=(\"$_KT_TMPDIR\")` (REPLACE); the restored files f/a/b also via `mktemp \"$_kt029_outer/X.XXXXXX\"`. Each block reports whether its scratch dir survived its teardown; 2 new asserts: `each inner teardown removes its own scratch dir`, `inner teardowns leave the outer fixture dir alone`. The two restore asserts unchanged (ORIGINAL, A_ORIG:B_ORIG).",
           "T7_DT7": "ktest_runner.sh kt_runner_parse_args: export line dropped (comment says why). New tests/039_ParseArgsNoExport.sh: per name (VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE MODE WORKERS TEST_SELECTION) a prefix assignment does not persist; a plain call adds no -x to those 6 + FAILED_TEST_FILES and still parses (--mode=single --workers=2); VERBOSITY reaches a child only when passed explicitly. 8 asserts.",
