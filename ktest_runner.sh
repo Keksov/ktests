@@ -489,6 +489,44 @@ kt_runner_find_tests() {
 # Common Test Execution Utilities
 # ============================================================================
 
+# The run's isolation folder (kbool `uses` U41, review R6). ktests.sh calls
+# kt_runner_iso_begin once before running a suite (with the suite's files) and
+# kt_runner_iso_end from its EXIT trap. A test file's HOME is
+# $KT_ISO_ROOT/<file name>: all of them are created by ONE mkdir here (HOME is
+# expected to be an existing folder — kcl tpath tests that), so a file costs no
+# process of its own (review R6 measured 60-195 ms per file for a mkdir + rm
+# each). Without a run folder (the runner functions called directly) a file's
+# HOME is a path that does not exist (kbool only probes it with -f).
+# kt_runner_iso_begin [FILE...] — remove stale kt_iso.<pid>[.*] folders of
+# runners that are gone (one killed before its EXIT trap leaves at most one
+# folder), then create and export KT_ISO_ROOT=${TMPDIR:-/tmp}/kt_iso.<this pid>
+# with one empty folder per FILE name. rc 0 always (if mkdir fails the HOMEs
+# are missing paths, still isolated).
+kt_runner_iso_begin() {
+    local tmp="${TMPDIR:-/tmp}" d pid f
+    local -a dirs=()
+    for d in "$tmp"/kt_iso.*; do
+        [[ -d "$d" ]] || continue
+        pid="${d##*/kt_iso.}"
+        pid="${pid%%.*}"
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" == "$$" ]] && continue
+        kill -0 "$pid" 2>/dev/null && continue
+        rm -rf -- "$d"
+    done
+    export KT_ISO_ROOT="$tmp/kt_iso.$$"
+    dirs=("$KT_ISO_ROOT")
+    for f in "$@"; do dirs+=("$KT_ISO_ROOT/${f##*/}"); done
+    mkdir -p -- "${dirs[@]}" 2>/dev/null || :
+    return 0
+}
+
+# kt_runner_iso_end — remove the run's isolation folder (the EXIT trap).
+kt_runner_iso_end() {
+    [[ -n "${KT_ISO_ROOT:-}" && "${KT_ISO_ROOT##*/}" == kt_iso.* ]] && rm -rf -- "$KT_ISO_ROOT"
+    return 0
+}
+
 # Execute a single test and return output and counts
 # Usage: kt_runner_execute_single_test "/path/to/test.sh"
 # Sets: output_content, counts_line, count_total, count_passed, count_failed
@@ -540,7 +578,25 @@ kt_runner_execute_single_test() {
     # it prints anything — the source of intermittent suite-level failures in
     # threaded mode. A file that printed counts or its marker, or printed other
     # output and then died, is deterministic and is judged at once.
+    #
+    # Config isolation (kbool `uses` decision U41, 2026-10-09): every file runs
+    # with KBOOL_CONFIG, KBOOL_HOME, USERPROFILE, ProgramData and PROGRAMDATA
+    # unset, and HOME plus kbool's /etc hook (__KK_CFG_ETC = $HOME/etc/kbool,
+    # never created) pointed at an empty folder of this file alone — a
+    # developer's ~/.kbool/config, /etc/kbool, $ProgramData/kbool or exported
+    # KBOOL_CONFIG cannot change what a test sees. A test may still install a
+    # config of its own (export KBOOL_CONFIG / HOME ...); a standalone
+    # `bash tests/X.sh` reads the environment as it is.
+    # HOME = $KT_ISO_ROOT/<file name>, created empty for the whole suite by one
+    # mkdir in kt_runner_iso_begin (ktests.sh) and removed by its EXIT trap — no
+    # process per file (U3 review R6). Without that folder (the runner functions
+    # called directly) HOME is a path that does not exist: kbool only probes it
+    # with -f, so it holds no config either.
     local base="${clean_file##*/}"
+    local __kt_iso="${KT_ISO_ROOT:-}/$base"
+    if [[ -z "${KT_ISO_ROOT:-}" || ! -d "$__kt_iso" ]]; then
+        __kt_iso="${TMPDIR:-/tmp}/kt_iso.${BASHPID}.none/home.${RANDOM}${RANDOM}"
+    fi
     local __kt_attempt=0
     local __kt_max_attempts=3
     local __kt_nonce=""
@@ -559,7 +615,10 @@ kt_runner_execute_single_test() {
             KTEST_SOURCE_PATH="$KTESTS_LIB_DIR/ktest_source.sh" \
             KT_CLEAN_FILE="$clean_file" \
             KT_END_NONCE="$__kt_nonce" \
+            HOME="$__kt_iso" \
+            __KK_CFG_ETC="$__kt_iso/etc/kbool" \
             bash -c '
+                unset KBOOL_CONFIG KBOOL_HOME USERPROFILE ProgramData PROGRAMDATA KT_ISO_ROOT
                 export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
                 _KT_END_NONCE="$KT_END_NONCE"; unset KT_END_NONCE
                 source "$KTEST_SOURCE_PATH"

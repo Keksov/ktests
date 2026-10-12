@@ -70,6 +70,11 @@ if [[ "$VERBOSITY" == "info" ]]; then
     echo ""
 fi
 
+# The run's isolation folder (kbool `uses` U41, review R6): created once,
+# removed on exit; stale ones of dead runners are swept first
+kt_runner_iso_begin "${test_files[@]}"
+trap 'kt_runner_iso_end' EXIT
+
 # Execute all tests (pass TEST_FILTER so execution matches the displayed set)
 kt_runner_execute_tests "$SCRIPT_DIR" "$TEST_FILTER"
 
