@@ -586,7 +586,9 @@ kt_runner_execute_single_test() {
     # developer's ~/.kbool/config, /etc/kbool, $ProgramData/kbool or exported
     # KBOOL_CONFIG cannot change what a test sees. A test may still install a
     # config of its own (export KBOOL_CONFIG / HOME ...); a standalone
-    # `bash tests/X.sh` reads the environment as it is.
+    # `bash tests/X.sh` reads the environment as it is. BASH_ENV is emptied for
+    # the file's shell and unset inside it (kbool `uses` U4 final review R6): a
+    # developer's BASH_ENV would run in it and in every bash the test starts.
     # HOME = $KT_ISO_ROOT/<file name>, created empty for the whole suite by one
     # mkdir in kt_runner_iso_begin (ktests.sh) and removed by its EXIT trap — no
     # process per file (U3 review R6). Without that folder (the runner functions
@@ -617,8 +619,9 @@ kt_runner_execute_single_test() {
             KT_END_NONCE="$__kt_nonce" \
             HOME="$__kt_iso" \
             __KK_CFG_ETC="$__kt_iso/etc/kbool" \
+            BASH_ENV="" \
             bash -c '
-                unset KBOOL_CONFIG KBOOL_HOME USERPROFILE ProgramData PROGRAMDATA KT_ISO_ROOT
+                unset KBOOL_CONFIG KBOOL_HOME USERPROFILE ProgramData PROGRAMDATA KT_ISO_ROOT BASH_ENV
                 export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
                 _KT_END_NONCE="$KT_END_NONCE"; unset KT_END_NONCE
                 source "$KTEST_SOURCE_PATH"
@@ -794,7 +797,9 @@ kt_runner_execute_threaded() {
         # Run tests in parallel using xargs or manual background processes
         if command -v xargs &>/dev/null; then
             # Use xargs for better parallelization if available
-            printf '%s\n' "${test_files[@]}" | xargs -P "$num_workers" -I {} bash -c '
+            # BASH_ENV="": a developer's BASH_ENV runs in no worker (U41 R6 of
+            # the kbool `uses` U4 final review; each file's shell drops it too)
+            printf '%s\n' "${test_files[@]}" | BASH_ENV="" xargs -P "$num_workers" -I {} bash -c '
                 run_test "$1" "$2/$(basename "$1").result"
             ' _ {} "$results_dir"
         else

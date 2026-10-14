@@ -25,6 +25,9 @@ for f in "$DEV/home/.kbool/config" "$DEV/up/.kbool/config" "$DEV/pd/kbool/config
     printf '%s\n' 'debug = debug' "unitpath = $DEV/bogus/units" 'defines = DEVBOX' > "$f"
 done
 printf '%s\n' 'debug = quiet' 'defines = OWN' > "$TMP/own.conf"
+# a developer BASH_ENV: bash runs it at the start of every non-interactive shell
+printf '%s\n' "echo \"ran in \${KT_CLEAN_FILE:-a runner shell}\" >> '$TMP/bashenv.log'" > "$TMP/bashenv.sh"
+rm -f "$TMP/bashenv.log"
 KBOOL_ROOT=""
 [[ -f "$KTESTS_LIB_DIR/../kbool.sh" ]] && KBOOL_ROOT="$(cd "$KTESTS_LIB_DIR/.." && pwd)"
 FRAMEWORK="$(cd "$KTESTS_LIB_DIR" && pwd)/ktest.sh"
@@ -40,6 +43,7 @@ shopt -s nullglob dotglob
 h=("\$HOME"/*)
 printf 'home=%s n=%s cfg=%s up=%s pd=%s PD=%s kh=%s etc=%s\n' "\$HOME" "\${#h[@]}" "\${KBOOL_CONFIG-unset}" "\${USERPROFILE-unset}" \\
     "\${ProgramData-unset}" "\${PROGRAMDATA-unset}" "\${KBOOL_HOME-unset}" "\${__KK_CFG_ETC-unset}" > "\$KT040_OUT.$n"
+"\$BASH" -c : 2>/dev/null      # a child of the test: no BASH_ENV may reach it (R6)
 kt_test_start "isolated environment"
 if [[ ! -e \$HOME && \${#h[@]} == 0 && \$HOME != "$DEV/home" && -z \${KBOOL_CONFIG+x}\${USERPROFILE+x}\${ProgramData+x}\${PROGRAMDATA+x}\${KBOOL_HOME+x} \\
       && -n \${__KK_CFG_ETC-} && ! -e \$__KK_CFG_ETC/config ]]; then
@@ -77,7 +81,7 @@ kt040_run() {
     (
         export HOME="$DEV/home" USERPROFILE="$DEV/up" ProgramData="$DEV/pd" PROGRAMDATA="$DEV/pd" \
                KBOOL_CONFIG="$DEV/env.conf" __KK_CFG_ETC="$DEV/etc" KBOOL_HOME="$DEV/kb" \
-               TMPDIR="$RT" KT040_OUT="$TMP/seen.$mode"
+               TMPDIR="$RT" KT040_OUT="$TMP/seen.$mode" BASH_ENV="$TMP/bashenv.sh"
         TESTS_TOTAL=0; TESTS_PASSED=0; TESTS_FAILED=0; FAILED_TEST_FILES=()
         WORKERS=3 "kt_runner_execute_$mode" "$@" > "$TMP/run.$mode.out" 2>&1
         printf '%s:%s:%s|%s' "$TESTS_TOTAL" "$TESTS_PASSED" "$TESTS_FAILED" "${FAILED_TEST_FILES[*]}"
@@ -106,6 +110,13 @@ for mode in sequential threaded; do
         kt_test_fail "h1='$h1' h2='$h2' etc1='$e1' left='${left[*]}'"
     fi
 done
+
+kt_test_start "a developer BASH_ENV runs nowhere under the runner (sequential and threaded): not in a worker, not in a test file's shell, not in a child the test starts [kbool uses U4 final review R6, critic_u4 C4]"
+if [[ ! -e "$TMP/bashenv.log" ]]; then
+    kt_test_pass "never ran"
+else
+    kt_test_fail "ran $(wc -l < "$TMP/bashenv.log") times: $(sort "$TMP/bashenv.log" | uniq -c | tr '\n' '|')"
+fi
 
 kt_test_start "a standalone 'bash tests/X.sh' is not isolated: it sees the developer environment as it is [U41]"
 (
