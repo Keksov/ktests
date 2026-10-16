@@ -196,3 +196,37 @@ and 5.3.9, `--mode single` on 5.2.37. Found outside: 017 double pass (ledger `fo
 C13 (T6: inner teardown deletes the outer fixture dir; census corrects the plan's "~150
 since 2026-04": 61 + 156 029 dirs, 310 empty dirs of unknown origin), C14 (T7: drop the
 export, measured). Probes: `scratchpad/critic4/{t6,t7}/`.
+
+# Round 5 (2026-10-15) — ktests leftovers and machine hygiene
+
+**Status: PLANNED, owner decisions taken (2026-10-15), critic folded (2026-10-16); no code.**
+Owner 2026-10-15: "Приступай к оставшимся пунктам". Runs FIRST in round 5 (before
+kklass P13–P15 — `kklass/PLAN.md` "Round 5"). Ledger key `round5`.
+
+## R5.1 Findings
+
+| ID | Sev | Where | Symptom |
+|---|---|---|---|
+| T8 | low | `tests/017_AdvancedFileSystemAssertions.sh` 'File assertions with symbolic links' (~101–117) | STANDALONE only (`KK_OUTPUT_COUNTS=1 bash tests/017_….sh` → `__COUNTS__:13:14:0`; under the runner 13/13): `$(dirname "$0")` is relative, so the fixture dir is relative and MSYS `ln -s` (copy mode) resolves the relative target from the link's folder → both attempts fail → the fallback passes and the final if/else passes again. The final if/else passes in BOTH branches, so the test can never fail. 159 test files pass a relative `$(dirname "$0")` to `kt_test_init` (critic C1). |
+| T9 | medium | `ktest_runner.sh:762` | `results_dir=$(mktemp -d)` — default `tmp.XXXXXXXXXX` name in the real TMPDIR, removed only at `:867`, no trap. A killed/timed-out threaded run leaks it with `*.sh.result` files (reproduced both bashes; live /tmp holds three such dirs from 10-09/10-14). bash 5.2 does NOT run an EXIT trap on SIGTERM (0/4 variants; 5.3 3/4), so `ktests.sh:76`'s EXIT-only trap is not enough (critic C2, C8). |
+| T10 | low | legacy fixture dirs | 21 old dirs (≤ 2026-09-06) + 3 empty bases (`kcl/tcustomapplication/.tmp`, `kcl/tstringlist/.tmp`, `ktests/.tmp`) — all from kklass tests 119/121/123–126 run by the pre-e4dfd8c runner (`$0="bash"` → cwd-relative base). Root cause already fixed; the current runner from a neutral cwd leaves nothing (critic C6). |
+| T11 | medium | `kcl/tstringhelper/tests/{001,008,015,027,028,059,060,061}` | ACTIVE leak: `mkdir -p "$SCRIPT_DIR/.tmp/<file>"` (`001_Chars.sh:21-22`), never removed; the runner's sweep (`:657`) does not match the names; 8 dirs in the tree, recreated every run (critic C6). |
+| E1 | low | machine /tmp | 311 `tmp.*` dirs are NOT born empty: modify time ≈ birth + 7 days in single-second clusters (56 @ 07-16 21:01:11, 40 @ 07-20 23:08:28, …) — a Windows Temp cleaner emptied them. They were leaked non-empty dirs (T9-shaped: killed/timed-out runs during dev bursts); content gone → unattributable (list: `scratchpad/critic_r5c/empties.txt`). `big/` = `kcl/tfind/bench.sh` (EXIT trap only). `Argv` dirs in msys64 /tmp predate tsed's first commit → a session probe, not kbool code. 5 `.math_fe_<pid>.awk` + `prog.awk` in msys64 /tmp: `kcl/math/math.sh:755`, removed only on the normal path. Other bare `mktemp -d`: `kklass_compiler.sh:133` (leaks if the unit exits at `:148`), 8 kcl `bench.sh`, `kklass/examples/43:188`, `45:9`, test-generated scripts in kcl tdirectory 032/036, tfile 039/043 (critic C2, C7). A clean instrumented sweep of 27 suites leaks nothing to TMPDIR/HOME/cwd (critic C9). |
+
+## R5.2 Decisions
+
+| # | Decision |
+|---|---|
+| DT8 | (supervisor, amended by C1) T8: the fixture base is made ABSOLUTE once in `kt_fixture_setup`/`kt_test_init` (fixes all 159 callers); 017's symlink test does exactly one pass/fail, and when symlinks are unavailable it is an explicit skip (or a single pass with a "symlinks unavailable" note if ktests has no skip) — never pass-then-pass. Standalone and runner counts must agree. |
+| DT9 | (supervisor, amended by C2/C8) T9: results_dir lives under `$KT_ISO_ROOT` with a named template, so the dead-pid sweep at `kt_runner_iso_begin` (`:507-516`) removes it after a kill; the runner and `ktests.sh` add TERM/INT/HUP traps that clean up and exit with 128+signal (EXIT alone is not run on SIGTERM in 5.2). |
+| DT10 | (supervisor, amended by C6) T10: no test change (root cause fixed in e4dfd8c); delete the 21 legacy dirs and the 3 empty bases once (the unrelated 2025-12 `benchmark_*.sh`/`test_*.sh` in `kbool/.tmp`: list for the owner, do not delete). |
+| DT11 | (supervisor, C6) T11: the 8 tstringhelper tests use `kt_fixture_tmpdir_create`; the 8 dirs are deleted. |
+| DE1 | (owner 2026-10-15, refined by C7) E1: every kbool `mktemp -d`/temp file gets a named template (`kbool.*`/`kt_*`/unit-prefixed) and a cleanup that also runs on TERM/INT/HUP (bench.sh ×8, compiler `:133`, examples 43/45, math engine prog file — or the math prog file is swept by dead pid at the next engine start); delete ONLY what is proven kbool's: the T9 `tmp.*` dirs whose content is `*.sh.result`, `big/d1/d2/d3` trees, `.math_fe_<dead pid>.awk`. The 311 emptied `tmp.*` dirs (content gone, unattributable) and the `Argv`/`prog.awk` probe leftovers go to the OWNER as a list — not deleted by us. |
+
+## R5.3 Phase
+
+| phase | content | gate |
+|---|---|---|
+| **P3** | T8 (DT8), T9 (DT9), T10 (DT10), T11 (DT11), E1 (DE1) | ktests suite both bashes; 017 standalone = runner counts; a KILL scenario (threaded suite, a bench, a math-using test killed with TERM) then the next run leaves 0 new `tmp.*`/`kt_*`/`.math_fe_*`/`big/`; a full master sweep both bashes leaves no new entries in TMPDIR, HOME, cwd and no new `*/tests/.tmp/*` outside the runner's swept names (counted before/after); totals unchanged except new tests |
+
+Critic (2026-10-16, `scratchpad/critic_r5c/REPORT.md`): C1 (T8 standalone-only, absolute base), C2/C8 (T9 = the `tmp.*` source, 5.2 SIGTERM skips EXIT), C6 (T10 root cause fixed; T11 live leak), C7 (E1 dirs emptied by a cleaner — unattributable), C9 (gate needs a kill scenario and a `tests/.tmp` check).
