@@ -502,28 +502,389 @@ kt_runner_find_tests() {
 # folder), then create and export KT_ISO_ROOT=${TMPDIR:-/tmp}/kt_iso.<this pid>
 # with one empty folder per FILE name. rc 0 always (if mkdir fails the HOMEs
 # are missing paths, still isolated).
+# Owner marker (review R6): the folder holds .kt_owner = kt_runner_iso_owner.
+# A dead-looking folder whose marker is another bash install's — or that has
+# none (a legacy one, or one whose marker is not written yet) — is removed only
+# once it is older than a day: the processes of another MSYS runtime sharing
+# this TMPDIR are invisible to `kill -0` here, so its LIVE run (and the results
+# dir inside) would be swept. The age is read by ONE `find -mmin` per sweep,
+# only when such a folder is met.
 kt_runner_iso_begin() {
-    local tmp="${TMPDIR:-/tmp}" d pid f
+    local tmp="${TMPDIR:-/tmp}" d pid f own mark aged=0
     local -a dirs=()
+    local -A __kt_old=()
+    kt_runner_iso_owner; own="$REPLY"
     for d in "$tmp"/kt_iso.*; do
-        [[ -d "$d" ]] || continue
+        [[ -d "$d" && ! -L "$d" ]] || continue
         pid="${d##*/kt_iso.}"
         pid="${pid%%.*}"
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
         [[ "$pid" == "$$" ]] && continue
         kill -0 "$pid" 2>/dev/null && continue
+        mark=""
+        [[ -f "$d/.kt_owner" ]] && { IFS= read -r mark < "$d/.kt_owner"; } 2>/dev/null
+        if [[ "$mark" != "$own" ]]; then
+            if (( ! aged )); then
+                aged=1
+                while IFS= read -r f; do
+                    __kt_old["${f##*/}"]=1
+                done < <(command find "$tmp/" -maxdepth 1 -name 'kt_iso.*' -mmin +1440 2>/dev/null)
+            fi
+            [[ -n "${__kt_old["${d##*/}"]+x}" ]] || continue
+        fi
         rm -rf -- "$d"
     done
     export KT_ISO_ROOT="$tmp/kt_iso.$$"
     dirs=("$KT_ISO_ROOT")
     for f in "$@"; do dirs+=("$KT_ISO_ROOT/${f##*/}"); done
     mkdir -p -- "${dirs[@]}" 2>/dev/null || :
+    printf '%s\n' "$own" > "$KT_ISO_ROOT/.kt_owner" 2>/dev/null || :
     return 0
 }
 
-# kt_runner_iso_end — remove the run's isolation folder (the EXIT trap).
+# kt_runner_iso_owner — REPLY = the owner marker for kt_iso.* folders: the
+# source of the `/` mount, i.e. the pid namespace (on MSYS the install's
+# Windows folder, e.g. C:/bin/msys64 vs C:/bin/Git — two runtimes whose pids
+# cannot see each other). Nothing else (review round 2, N3): $BASH differs for
+# /bin/bash and /usr/bin/bash of ONE runtime, and the version adds nothing.
+# "none" without a readable /proc/mounts. No fork. rc 0.
+kt_runner_iso_owner() {
+    local a b c root=""
+    if [[ -r /proc/mounts ]]; then
+        while read -r a b c; do
+            [[ "$b" == / ]] && { root="$a"; break; }
+        done < /proc/mounts
+    fi
+    REPLY="${root:-none}"
+    return 0
+}
+
+# kt_runner_group_stop PID [GRACE] — stop the process group PID leads (a
+# background job started under `set -m`: the subshell, xargs, the workers,
+# their test files) with kt_runner_group_end, then reap PID (review R1) — but
+# only once it is gone: a leader that ignores even KILL (cygwin: blocked in a
+# FIFO open) would hang `wait`, and the trap that called this, for ever
+# (critic P3b F11). A non-numeric or empty PID is a no-op; rc 0. GRACE in
+# tenths of a second, default 30 (3 s). A caller that stops a group whose
+# shell stops a group of its own passes a longer GRACE (ktests.sh: 50) than
+# the inner one (the threaded runner: 30), or it would KILL that shell
+# mid-stop.
+kt_runner_group_stop() {
+    local p="${1:-}" g="${2:-30}"
+    [[ -n "$p" && "$p" != *[!0-9]* ]] || return 0
+    kt_runner_group_end "$p" "$g" ""
+    kill -0 "$p" 2>/dev/null || wait "$p" 2>/dev/null
+    return 0
+}
+# kt_runner_group_end PGID GRACE [SELF] — end process group PGID and every
+# process that descends from it outside it; SELF (a pid in the group: the
+# watchdog) is spared and never signalled by pid. Never waits for a child;
+# rc 0. KT_GROUP_END_STATS = "rounds=… scan_ms=… kill_rounds=… members=[…]
+# outside=…" (diagnostics).
+#   1. Snapshot (/proc, no fork): the group's members and their DESCENDANTS
+#      OUTSIDE the group by the ppid chain — a test file's `timeout N cmd`
+#      (GNU timeout makes its own process group), a `set -m` subgroup (critic
+#      P3b F8) — each with its start time.
+#   2. TERM + CONT the group ONCE (review round 2, N1: a STOPPED group keeps
+#      the TERM pending). No re-send (supervisor 2026-10-16): a second TERM
+#      cuts a test's cleanup short (a trapped TERM inside its EXIT trap exits
+#      bash at once).
+#   3. Wait without forking (read -t on a pty master) until the members are
+#      gone; descendants that appear meanwhile are tracked too. Only then do
+#      the descendants still alive get their TERM+CONT, ONCE, with at least
+#      1 s before the KILL: a member may stop them itself (the run's shell
+#      stops its worker group — our descendants), and a TERM from here as
+#      well cut the threaded test files' cleanups short (P3b rs probe).
+#   4. After GRACE, KILL what is left — the group, its members by pid, the tracked
+#      descendants that are still the process first seen (same start time, or
+#      still in the process group it had then: an exec on the Git runtime
+#      changes the start time) — at most 10 rounds 0.1 s apart.
+# Why "gone" is checked this way (the P3 master-sweep flake, 042/044): on the
+# Git (cygwin) runtime a group signal sent while a member is still in its exec
+# handover (a `sleep` forked moments before) is LOST for that member (probe:
+# 20 of 20 such `sleep`s outlived the TERM, in the right group, their parent
+# gone; 4 of 10 10 ms after the fork, 0 from 50 ms; a forked child that does
+# not exec: 0 of 15; bash 5.3's msys runtime 0 of 20) — it is KILLed after
+# GRACE. Under load such a member is also INVISIBLE to `kill -0 -- -PGID` for
+# tens of ms (probe: 37 ms while `kill -0 <pid>` and its /proc stat already
+# showed it), and on 5.3 /proc's listing missed one for a moment: so the
+# members come from /proc as well, and the group counts as gone only when all
+# views are empty twice, 0.1 s apart.
+kt_runner_group_end() {
+    local P="${1:-}" g="${2:-30}" self="${3:-}" __kt_gm="" __kt_e=0 __kt_k=0 __kt_n=0 __kt_dt=0
+    local __kt_t __kt_end __kt_fd="" __kt_q __kt_st=0 __kt_t0 __kt_out __kt_mem
+    local -A __kt_ds=()
+    [[ -n "$P" && "$P" != *[!0-9]* ]] || return 0
+    [[ -n "$g" && "$g" != *[!0-9]* ]] || g=30
+    KT_GROUP_END_STATS=""
+    __kt_t0="${EPOCHREALTIME/./}"
+    kt_runner_group_scan "$P" "$self"
+    __kt_st=$(( ${EPOCHREALTIME/./} - __kt_t0 ))
+    __kt_out=${#__kt_ds[@]} __kt_mem="$__kt_gm"
+    if ! kill -TERM -- "-$P" 2>/dev/null; then
+        [[ "$P" != "$self" ]] && kill -TERM "$P" 2>/dev/null
+    fi
+    kill -CONT -- "-$P" 2>/dev/null || kill -CONT "$P" 2>/dev/null
+    # a fork-free 0.1 s delay: read -t on a pty master that never has data
+    exec {__kt_fd}<>/dev/ptmx 2>/dev/null || __kt_fd=""
+    __kt_end=$(( ${EPOCHREALTIME/./} + g * 100000 ))
+    while :; do
+        __kt_n=$(( __kt_n + 1 ))
+        __kt_t0="${EPOCHREALTIME/./}"
+        kt_runner_group_scan "$P" "$self"
+        __kt_st=$(( __kt_st + ${EPOCHREALTIME/./} - __kt_t0 ))
+        for __kt_q in "${!__kt_ds[@]}"; do
+            kill -0 "$__kt_q" 2>/dev/null || unset "__kt_ds[$__kt_q]"
+        done
+        if [[ -z "$__kt_gm" ]] \
+            && { [[ -n "$self" ]] || ! kill -0 -- "-$P" 2>/dev/null; } \
+            && { [[ "$P" == "$self" ]] || ! kill -0 "$P" 2>/dev/null; }; then
+            # the members are gone — twice, 0.1 s apart (with SELF in the
+            # group, kill -0 on the group always succeeds: /proc decides)
+            if (( ++__kt_e >= 2 )); then
+                (( ${#__kt_ds[@]} == 0 )) && break
+                # the descendants outside the group get their TERM only now,
+                # ONCE, with at least 1 s before the KILL: one that a member
+                # still running would stop itself (the run's shell stops its
+                # worker group, whose test files are our descendants) must not
+                # get a second TERM — it would cut a test's EXIT-trap cleanup
+                # short (P3b rs probe, threaded mode)
+                if (( ! __kt_dt )); then
+                    __kt_dt=1
+                    for __kt_q in "${!__kt_ds[@]}"; do
+                        kill -TERM "$__kt_q" 2>/dev/null
+                        kill -CONT "$__kt_q" 2>/dev/null
+                    done
+                    __kt_t="${EPOCHREALTIME/./}"
+                    (( __kt_end < __kt_t + 1000000 )) && __kt_end=$(( __kt_t + 1000000 ))
+                fi
+            fi
+        else
+            __kt_e=0
+        fi
+        if (( ${#__kt_ds[@]} > 0 || __kt_e < 2 )); then
+            __kt_t="${EPOCHREALTIME/./}"
+            if (( __kt_t >= __kt_end )); then
+                # at most 10 KILL rounds, and never more than 3 s past the grace
+                (( __kt_k++ >= 10 || __kt_t >= __kt_end + 3000000 )) && break
+                [[ -z "$self" ]] && kill -KILL -- "-$P" 2>/dev/null
+                [[ -n "$__kt_gm" ]] && kill -KILL $__kt_gm 2>/dev/null
+                for __kt_q in "${!__kt_ds[@]}"; do
+                    # only the process first seen (kt_runner_proc_same)
+                    kt_runner_proc_same "$__kt_q" "${__kt_ds[$__kt_q]}" "$P" && kill -KILL "$__kt_q" 2>/dev/null
+                done
+            fi
+        fi
+        if [[ -n "$__kt_fd" ]]; then
+            read -r -t 0.1 -u "$__kt_fd" _ 2>/dev/null
+            (( $? > 128 )) || sleep 0.1
+        else
+            sleep 0.1
+        fi
+    done
+    [[ -n "$__kt_fd" ]] && exec {__kt_fd}>&-
+    KT_GROUP_END_STATS="rounds=$__kt_n scan_ms=$(( __kt_st / 1000 )) kill_rounds=$__kt_k members=[$__kt_mem] outside=$__kt_out"
+    return 0
+}
+# kt_runner_group_scan PGID SELF — helper of kt_runner_group_end, which owns
+# __kt_gm and the assoc array __kt_ds. One pass over /proc, no fork: __kt_gm =
+# the live members of PGID except SELF; every process outside PGID whose
+# parent is a member or an already tracked process (repeated down the chain)
+# is added to __kt_ds (pid -> "start time:pgid"); a parent tracked from an
+# earlier scan adopts children only while kt_runner_proc_same says it is still
+# that process (pids wrap and are reused). /proc/<pid>/pgid and ppid cost
+# ~30 us each on cygwin, /proc/<pid>/stat ~16 ms (it queries Windows): stat
+# is read only for a member (zombies dropped), once for a new descendant and
+# once per scan for a tracked parent.
+# Off cygwin (no /proc/<pid>/pgid) both stay empty and the caller relies on
+# kill -0 alone.
+kt_runner_group_scan() {
+    local __kt_f __kt_q __kt_g __kt_p __kt_l __kt_c=1
+    local -A __kt_par=() __kt_in=() __kt_mb=() __kt_ok=()
+    local -a __kt_x
+    __kt_gm=""
+    for __kt_f in /proc/[0-9]*/pgid; do
+        __kt_q="${__kt_f#/proc/}"; __kt_q="${__kt_q%/pgid}"
+        { read -r __kt_g < "$__kt_f"; } 2>/dev/null || continue
+        { read -r __kt_p < "/proc/$__kt_q/ppid"; } 2>/dev/null || continue
+        __kt_par[$__kt_q]="$__kt_p"
+        [[ "$__kt_g" == "$1" ]] || continue
+        __kt_in[$__kt_q]=1; __kt_mb[$__kt_q]=1
+        [[ "$__kt_q" == "${2:-}" ]] && continue
+        __kt_l=""; { IFS= read -r __kt_l < "/proc/$__kt_q/stat"; } 2>/dev/null
+        __kt_x=( ${__kt_l##*) } )
+        [[ "${__kt_x[0]:-}" == Z ]] && continue
+        __kt_gm+="$__kt_q "
+    done
+    for __kt_q in "${!__kt_ds[@]}"; do __kt_in[$__kt_q]=1; done
+    while (( __kt_c )); do
+        __kt_c=0
+        for __kt_q in "${!__kt_par[@]}"; do
+            [[ -n "${__kt_in[$__kt_q]+x}" ]] && continue
+            __kt_p="${__kt_par[$__kt_q]}"
+            [[ "$__kt_p" != 1 && -n "${__kt_in[$__kt_p]+x}" ]] || continue
+            # a parent tracked from an earlier scan must still be the process
+            # recorded then (cygwin pids wrap and are reused — critic P3b r2
+            # N3): checked once per scan; a reused one is dropped, its
+            # children are not adopted
+            if [[ -z "${__kt_mb[$__kt_p]+x}" && -z "${__kt_ok[$__kt_p]+x}" && -n "${__kt_ds[$__kt_p]+x}" ]]; then
+                if kt_runner_proc_same "$__kt_p" "${__kt_ds[$__kt_p]}" "$1"; then
+                    __kt_ok[$__kt_p]=1
+                else
+                    unset "__kt_ds[$__kt_p]" "__kt_in[$__kt_p]"
+                    continue
+                fi
+            fi
+            __kt_in[$__kt_q]=1; __kt_ok[$__kt_q]=1; __kt_c=1
+            [[ "$__kt_q" == "$BASHPID" || "$__kt_q" == "$$" ]] && continue
+            kt_runner_proc_start "$__kt_q"
+            [[ -n "$REPLY" ]] && __kt_ds[$__kt_q]="$REPLY"
+        done
+    done
+    __kt_gm="${__kt_gm% }"
+    return 0
+}
+# kt_runner_proc_same PID RECORD PGID — rc 0 when PID is still the process
+# recorded as RECORD ("start time:pgid", from kt_runner_proc_start): the same
+# start time, or still in the recorded process group, or in PGID (on the Git
+# runtime an exec changes the start time, not the group). rc 1 when it is
+# gone, a zombie, or another process with a reused pid. No fork.
+kt_runner_proc_same() {
+    kt_runner_proc_start "$1"
+    [[ -n "$REPLY" ]] || return 1
+    [[ "${REPLY%%:*}" == "${2%%:*}" || "${REPLY#*:}" == "${2#*:}" || "${REPLY#*:}" == "$3" ]]
+}
+# kt_runner_proc_start PID — REPLY = "<start time>:<pgid>" of PID (fields 22
+# and 5 of /proc/PID/stat), "" when it is gone or a zombie. No fork. rc 0.
+kt_runner_proc_start() {
+    local __kt_l=""
+    local -a __kt_x
+    REPLY=""
+    { IFS= read -r __kt_l < "/proc/$1/stat"; } 2>/dev/null || return 0
+    __kt_x=( ${__kt_l##*) } )
+    [[ "${__kt_x[0]:-}" == Z ]] && return 0
+    REPLY="${__kt_x[19]:-}:${__kt_x[2]:-}"
+    return 0
+}
+# kt_runner_group_members PGID [STATE] — REPLY = the pids /proc shows in process
+# group PGID (zombies excluded; with STATE, e.g. T, only those in that state),
+# space-separated; "" without /proc. No fork. rc 0.
+# Reads /proc/<pid>/pgid (cygwin: ~30 us) and /proc/<pid>/stat (~16 ms: it
+# queries Windows) only for a match.
+kt_runner_group_members() {
+    local __kt_f __kt_g __kt_l __kt_out=""
+    local -a __kt_x
+    for __kt_f in /proc/[0-9]*/pgid; do
+        { read -r __kt_g < "$__kt_f"; } 2>/dev/null || continue
+        [[ "$__kt_g" == "$1" ]] || continue
+        __kt_f="${__kt_f%/pgid}"
+        __kt_l=""; { IFS= read -r __kt_l < "$__kt_f/stat"; } 2>/dev/null
+        __kt_x=( ${__kt_l##*) } )
+        [[ "${__kt_x[0]:-}" == Z ]] && continue
+        [[ -n "${2:-}" && "${__kt_x[0]:-}" != "$2" ]] && continue
+        __kt_out+="${__kt_f#/proc/} "
+    done
+    REPLY="${__kt_out% }"
+    return 0
+}
+
+# The group's watchdog (review R1): a runner killed with SIGKILL runs no trap,
+# and since its workers live in their own process group a group-wide kill of
+# the runner no longer reaches them. So the runner holds the ONLY writer of a
+# FIFO whose reader is a watchdog inside the worker group: when the runner dies
+# the reader sees EOF and ends its own group (kt_runner_group_end); on the normal path the
+# runner writes a line and the watchdog just exits. One mkfifo per group; no
+# polling. Without a FIFO (mkfifo failed) there is no watchdog.
+# kt_runner_group_open FIFO — create FIFO, open it read-write on a new fd of
+# this shell; REPLY = the fd, or "" (rc 1) when that is not possible.
+kt_runner_group_open() {
+    local __kt_fd
+    REPLY=""
+    mkfifo -- "$1" 2>/dev/null || return 1
+    exec {__kt_fd}<>"$1" || return 1
+    REPLY="$__kt_fd"
+    return 0
+}
+# kt_runner_group_watchdog FIFO FD [GRACE] — the FIRST command in the group's
+# subshell: ignore SIGTTOU/SIGTTIN, open the FIFO's read end, close the
+# inherited writer FD, start the watchdog on that read end. rc 0.
+# - TTOU/TTIN (review round 2, N1): the group is a BACKGROUND process group; on
+#   a `stty tostop` terminal its first write would stop it. Ignored, the write
+#   just proceeds (and the test files inherit the ignore).
+# - The read end is opened HERE, before the watchdog is spawned (N4): the open
+#   cannot block, the inherited read-write FD is a writer. A watchdog that
+#   opened the FIFO by path itself could do so after the runner had closed its
+#   writer and then block in open() forever. The watchdog only reads the fd.
+# - On EOF (the runner died without its trap) the watchdog ends its group the
+#   way kt_runner_group_stop does (critic P3b F3; it used to TERM once, no
+#   CONT, no KILL: a lost TERM or a TERM-ignoring member outlived it, a
+#   Ctrl-Z'ed group stayed frozen): it ignores TERM itself from then on, runs
+#   kt_runner_group_end on its group with itself as SELF (TERM+CONT once,
+#   fork-free wait, KILL after GRACE tenths of a second, default 30), exits.
+#   While it waits in `read` a TERM ends it as any member.
+kt_runner_group_watchdog() {
+    local __kt_fd="${2:-}" __kt_r __kt_g="${3:-30}" __kt_lp="$BASHPID"
+    trap '' TTOU TTIN
+    [[ -n "$__kt_fd" && "$__kt_fd" != *[!0-9]* ]] || return 0
+    if ! exec {__kt_r}<"$1"; then
+        exec {__kt_fd}>&-
+        return 0
+    fi 2>/dev/null
+    exec {__kt_fd}>&-
+    {
+        # Ctrl-Z (TSTP to the group) must not stop the watchdog: a run that is
+        # SIGKILLed while paused is then still ended (critic P3b F3)
+        trap '' TSTP
+        IFS= read -r -u "$__kt_r" __kt_l && exit 0
+        trap '' TERM
+        kt_runner_group_end "$__kt_lp" "$__kt_g" "$BASHPID"
+        exit 0
+    } >/dev/null 2>&1 &
+    exec {__kt_r}<&-
+    return 0
+}
+# kt_runner_group_suspend PID — the SIGTSTP trap of a shell that waits on the
+# background group PID leads (review round 2, N6). Ctrl-Z stops the terminal's
+# FOREGROUND group only; the run groups are background ones and kept running.
+# So: pass TSTP to the group (a group shell that leads a group of its own does
+# the same in turn), stop this shell, and on SIGCONT continue the group. The
+# caller sets a flag in the trap and `wait`s again: the trap interrupted it.
+kt_runner_group_suspend() {
+    local p="${1:-}" __kt_r
+    if [[ -n "$p" && "$p" != *[!0-9]* ]]; then
+        kill -TSTP -- "-$p" 2>/dev/null || kill -TSTP "$p" 2>/dev/null
+    fi
+    kill -STOP "$BASHPID"
+    if [[ -n "$p" && "$p" != *[!0-9]* ]]; then
+        kill -CONT -- "-$p" 2>/dev/null || kill -CONT "$p" 2>/dev/null
+        # a group CONT can be LOST for a member on the Git (cygwin) runtime
+        # under load (044 N6 flake, probe n6.sh: the worker group's leader
+        # stayed T, everything else ran on, the run never ended; a CONT by pid
+        # ended it): CONT by pid whatever /proc still shows stopped (<= 10
+        # rounds 0.1 s apart; a CONT to a running process does nothing)
+        for (( __kt_r = 0; __kt_r < 10; __kt_r++ )); do
+            kt_runner_group_members "$p" T
+            [[ -z "$REPLY" ]] && break
+            kill -CONT $REPLY 2>/dev/null
+            sleep 0.1
+        done
+    fi
+    return 0
+}
+# kt_runner_group_close FD — the normal end: release the watchdog, close FD.
+kt_runner_group_close() {
+    local __kt_fd="${1:-}"
+    [[ -n "$__kt_fd" && "$__kt_fd" != *[!0-9]* ]] || return 0
+    printf 'done\n' >&"$__kt_fd" 2>/dev/null
+    exec {__kt_fd}>&-
+    return 0
+}
+
+# kt_runner_iso_end — remove the run's isolation folder (the EXIT trap). Only
+# THIS process's kt_iso.<pid> (round 5, DT9): ktests.sh traps signals before
+# kt_runner_iso_begin, and an inherited KT_ISO_ROOT is never removed.
 kt_runner_iso_end() {
-    [[ -n "${KT_ISO_ROOT:-}" && "${KT_ISO_ROOT##*/}" == kt_iso.* ]] && rm -rf -- "$KT_ISO_ROOT"
+    [[ -n "${KT_ISO_ROOT:-}" && "${KT_ISO_ROOT##*/}" == "kt_iso.$$" ]] && rm -rf -- "$KT_ISO_ROOT"
     return 0
 }
 
@@ -659,6 +1020,17 @@ kt_runner_execute_single_test() {
         rm -rf -- "$__kt_fx"
         output_content+="${output_content:+$'\n'}[WARN] $base: fixture dir .tmp/${__kt_fx##*/} left behind (own EXIT trap?) - removed by the runner; register cleanup with kt_fixture_cleanup_register, never trap EXIT"
     done
+    # A private `.tmp/<file name>` (a hand-made mkdir, round 5 T11/DT11) left
+    # by this file: removed the same way, with its own WARN.
+    # Guarded (review R2): a file named `.sh` / `..sh` has the name "" / "." —
+    # that is `.tmp/` itself, never a private dir; a symlink is not followed.
+    local __kt_pn="${base%.sh}"
+    __kt_fx="$__kt_tdir/.tmp/$__kt_pn"
+    if [[ -n "$__kt_pn" && "$__kt_pn" != . && "$__kt_pn" != .. && "$__kt_pn" != */* \
+          && -d "$__kt_fx" && ! -L "$__kt_fx" ]]; then
+        rm -rf -- "$__kt_fx"
+        output_content+="${output_content:+$'\n'}[WARN] $base: private dir .tmp/${base%.sh} left behind - removed by the runner; use kt_fixture_tmpdir_create (removed at teardown)"
+    fi
 
     # Parse counters (a file without a counts line was folded to 1:0:1 above)
     kt_runner_parse_counts "$counts_line"
@@ -757,13 +1129,38 @@ kt_runner_execute_threaded() {
         return 0
     fi
 
-    # Create temporary directory for results
-    local results_dir
-    results_dir=$(mktemp -d) || {
+    # The results dir (ktests round 5, T9/DT9) lives in this run's isolation
+    # folder kt_iso.<pid> when ktests.sh made one, else it is named
+    # kt_iso.<pid>.results.* — either way the dead-pid sweep of the next
+    # kt_runner_iso_begin removes it after a SIGKILL. The run folder is taken
+    # only when it is THIS process's (never an inherited KT_ISO_ROOT).
+    local results_dir __kt_rbase="${TMPDIR:-/tmp}/kt_iso.$$.results"
+    if [[ -n "${KT_ISO_ROOT:-}" && "${KT_ISO_ROOT##*/}" == "kt_iso.$$" && -d "$KT_ISO_ROOT" ]]; then
+        __kt_rbase="$KT_ISO_ROOT/results"
+    fi
+    results_dir=$(mktemp -d "$__kt_rbase.XXXXXX") || {
         kt_test_error "Failed to create temporary directory for threaded execution"
         kt_runner_execute_sequential "${test_files[@]}"
         return $?
     }
+    # a results dir outside a run folder carries the owner marker itself (R6)
+    if [[ "$__kt_rbase" != "${KT_ISO_ROOT:-}/results" ]]; then
+        kt_runner_iso_owner; printf '%s\n' "$REPLY" > "$results_dir/.kt_owner" 2>/dev/null || :
+    fi
+
+    # TERM/INT/HUP while the workers run: stop the worker process group, remove
+    # the results dir and exit 128+N — the exit runs the caller's EXIT trap
+    # (bash 5.2 runs no EXIT trap on a signal by itself). The caller's own
+    # traps are restored on return. The workers run in a BACKGROUND process
+    # group this shell `wait`s on (review R1): a trap is deferred while a
+    # foreground child runs, so a TERM to this pid alone used to wait for the
+    # whole suite; `wait` returns at once on a trapped signal.
+    local __kt_old_traps __kt_wpid="" __kt_jc=0 __kt_wfd="" __kt_susp=0 __kt_wrc=0
+    __kt_old_traps="$(trap -p TERM INT HUP TSTP)"
+    trap '__kt_susp=1; kt_runner_group_suspend "$__kt_wpid"' TSTP
+    trap 'kt_runner_group_stop "$__kt_wpid"; rm -rf -- "$results_dir"; exit 143' TERM
+    trap 'kt_runner_group_stop "$__kt_wpid"; rm -rf -- "$results_dir"; exit 130' INT
+    trap 'kt_runner_group_stop "$__kt_wpid"; rm -rf -- "$results_dir"; exit 129' HUP
     
     # Actual number of workers to use
     local num_workers=$WORKERS
@@ -774,7 +1171,14 @@ kt_runner_execute_threaded() {
     # attributes and functions — on 5.2.37 an `export` of a name given as a
     # prefix assignment (`VERBOSITY=error kt_runner_execute_threaded …`) used
     # to outlive the call. The collector below reads only the result files.
+    # set -m only around the spawn: the subshell leads its own process group
+    # (kt_runner_group_stop kills it with xargs, the workers and their test
+    # files); stdin is /dev/null as for any background job.
+    kt_runner_group_open "$results_dir/.kt_watch" && __kt_wfd="$REPLY"
+    [[ $- == *m* ]] && __kt_jc=1
+    set -m
     (
+        kt_runner_group_watchdog "$results_dir/.kt_watch" "$__kt_wfd"
         # Execute a single test and save its results
         run_test() {
             local test_file="$1"
@@ -803,18 +1207,35 @@ kt_runner_execute_threaded() {
                 run_test "$1" "$2/$(basename "$1").result"
             ' _ {} "$results_dir"
         else
-            # Manual parallel execution using background processes
+            # Manual parallel execution using background processes. The
+            # watchdog is a running job too (+1), and a bare `wait` would wait
+            # for it: wait for the workers by pid.
+            local __kt_cap=$num_workers __kt_wp=()
+            [[ -n "$__kt_wfd" ]] && __kt_cap=$(( num_workers + 1 ))
             for ((i=0; i<num_files; i++)); do
                 # Limit number of concurrent jobs
-                while [[ $(jobs -r | wc -l) -ge $num_workers ]]; do
+                while [[ $(jobs -r | wc -l) -ge $__kt_cap ]]; do
                     sleep 0.01
                 done
 
                 run_test "${test_files[$i]}" "$results_dir/${i}.result" &
+                __kt_wp+=($!)
             done
-            wait
+            wait "${__kt_wp[@]}"
         fi
-    )
+    ) < /dev/null &
+    __kt_wpid=$!
+    (( __kt_jc )) || set +m
+    # a TSTP trap interrupts the wait: wait again after the resume (N6)
+    while :; do
+        __kt_susp=0
+        wait "$__kt_wpid"; __kt_wrc=$?
+        (( __kt_susp )) || break
+    done
+    kt_runner_group_close "$__kt_wfd"
+    # the worker group must be empty too (round 5, P3b): a test file's leaked
+    # background process is named and stopped (strays.sh, sourced by ktests.sh)
+    if declare -F kt_strays_group_settle >/dev/null; then kt_strays_group_settle "$__kt_wpid" "${SUITE_NAME:-run} (threaded workers)" || :; fi
 
     # Collect and aggregate results
     local total_t=0 total_p=0 total_f=0
@@ -859,12 +1280,28 @@ kt_runner_execute_threaded() {
         output_content=$(cat "$result_file")
         kt_runner_filter_output "$output_content" "$counts_line" "$f"
     done
-    
+
+    # A file without a result file (review R6: its worker died, or the results
+    # dir was removed under the run) is 1:0:1 and FAILED by name, as a missing
+    # test file is — never a silently lower total. xargs names the files
+    # <basename>.result, the manual path <index>.result.
+    local __kt_i __kt_b
+    for (( __kt_i = 0; __kt_i < num_files; __kt_i++ )); do
+        __kt_b="${test_files[$__kt_i]##*/}"
+        [[ -f "$results_dir/$__kt_b.result" || -f "$results_dir/$__kt_i.result" ]] && continue
+        total_t=$((total_t + 1)); total_f=$((total_f + 1))
+        FAILED_TEST_FILES+=("$__kt_b")
+        kt_runner_filter_output "[FAIL] $__kt_b: no result file (its worker died or the results dir was removed during the run)" "" 1
+    done
+
     # Update global counters
     kt_runner_add_counts "$total_t" "$total_p" "$total_f"
     
-    # Cleanup
-    rm -rf "$results_dir"
+    # Cleanup, then the caller's TERM/INT/HUP traps back (trap - first: a
+    # signal the caller never trapped is default again)
+    rm -rf -- "$results_dir"
+    trap - TERM INT HUP TSTP
+    eval "$__kt_old_traps"
 }
 
 # ============================================================================

@@ -43,6 +43,8 @@ remaining_args=("$@")
 KTESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export KTESTS_LIB_DIR
 source "$KTESTS_LIB_DIR/ktest.sh"
+# kt_strays_group_settle (round 5, P3b): the end-of-run check of the run groups
+source "$KTESTS_LIB_DIR/tools/strays.sh"
 
 # Parse remaining command line arguments
 kt_runner_parse_args "${remaining_args[@]}"
@@ -71,16 +73,56 @@ if [[ "$VERBOSITY" == "info" ]]; then
 fi
 
 # The run's isolation folder (kbool `uses` U41, review R6): created once,
-# removed on exit; stale ones of dead runners are swept first
-kt_runner_iso_begin "${test_files[@]}"
+# removed on exit; stale ones of dead runners are swept first. TERM/INT/HUP
+# exit with 128+N so the EXIT trap runs (ktests round 5, T9/DT9: bash 5.2 runs
+# no EXIT trap on a signal by itself); a SIGKILLed run's folder (with its
+# threaded results dir) goes to the next run's dead-pid sweep.
+#
+# The run itself (review R1) is a BACKGROUND job in its own process group that
+# this shell `wait`s on: a trap is deferred while a foreground child runs, so a
+# TERM to this pid alone used to wait for the current test file (single mode)
+# or the whole suite (threaded). `wait` returns at once on a trapped signal;
+# the trap stops the group (the run's shell, its current test file; in
+# threaded mode the run's shell stops its own worker group the same way). A
+# SIGKILLed ktests.sh runs no trap: the group's FIFO watchdog stops it then.
+# Grace 5 s (kt_runner_group_stop and the watchdog): longer than the 3 s the run's shell gives
+# its own worker group, so it is not KILLed in the middle of that stop.
+__kt_run_pid="" __kt_run_wfd="" __kt_run_susp=0
 trap 'kt_runner_iso_end' EXIT
+trap 'kt_runner_group_stop "$__kt_run_pid" 50; exit 143' TERM
+trap 'kt_runner_group_stop "$__kt_run_pid" 50; exit 130' INT
+trap 'kt_runner_group_stop "$__kt_run_pid" 50; exit 129' HUP
+# Ctrl-Z (review round 2, N6): stop the run group and this shell; on resume
+# continue the group (kt_runner_group_suspend) and wait again
+trap '__kt_run_susp=1; kt_runner_group_suspend "$__kt_run_pid"' TSTP
+kt_runner_iso_begin "${test_files[@]}"
 
-# Execute all tests (pass TEST_FILTER so execution matches the displayed set)
-kt_runner_execute_tests "$SCRIPT_DIR" "$TEST_FILTER"
+kt_runner_group_open "$KT_ISO_ROOT/.kt_watch" && __kt_run_wfd="$REPLY"
+set -m
+(
+    kt_runner_group_watchdog "$KT_ISO_ROOT/.kt_watch" "$__kt_run_wfd" 50
 
-# Display final results
-echo ""
-kt_test_show_results "${FAILED_TEST_FILES[@]}"
+    # Execute all tests (pass TEST_FILTER so execution matches the displayed set)
+    kt_runner_execute_tests "$SCRIPT_DIR" "$TEST_FILTER"
 
-# Exit with appropriate code
-exit $?
+    # Display final results
+    echo ""
+    kt_test_show_results "${FAILED_TEST_FILES[@]}"
+) < /dev/null &
+__kt_run_pid=$!
+set +m
+while :; do
+    __kt_run_susp=0
+    wait "$__kt_run_pid"; __kt_run_rc=$?
+    (( __kt_run_susp )) || break
+done
+kt_runner_group_close "$__kt_run_wfd"
+# Nothing of the run's group may outlive the run (round 5, P3b): a test file's
+# background process (no cleanup) would stay in it after the normal end. The
+# watchdog leaves by itself; whatever else is still there is named in a
+# [WARN] line and stopped. No fork: /proc members (kt_runner_group_members),
+# empty twice in a row, fork-free `read -t` waits (P3b review round 2, F10).
+kt_strays_group_settle "$__kt_run_pid" "$SUITE_NAME" || :
+
+# Exit with the run's code
+exit $__kt_run_rc

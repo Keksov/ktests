@@ -132,6 +132,10 @@ if [[ "$s" == "$want"* && "$s" == *"$want2" ]]; then kt_test_pass "sees the deve
 
 kt_test_start "the run folder (R6): kt_runner_iso_begin sweeps kt_iso.<pid> folders of dead runners (also the old kt_iso.<pid>.<n> shape), keeps a live runner's, creates and exports KT_ISO_ROOT with one empty HOME folder per suite file (one mkdir); a file runs with HOME = KT_ISO_ROOT/<its name>; kt_runner_iso_end removes it [U41, R6]"
 RT2="$TMP/rt2"; mkdir -p "$RT2/kt_iso.999999" "$RT2/kt_iso.999998.123" "$RT2/kt_iso.$PPID" "$RT2/other"
+# ktests round 5 review R6: a dead runner's folder is swept when it carries this
+# bash install's owner marker, or (unmarked, the old shape) once a day old
+kt_runner_iso_owner; printf '%s\n' "$REPLY" > "$RT2/kt_iso.999999/.kt_owner"
+touch -d '2 days ago' "$RT2/kt_iso.999998.123"
 got="$(
     TMPDIR="$RT2"
     kt_runner_iso_begin "$FX/004_Home.sh"

@@ -199,7 +199,7 @@ export, measured). Probes: `scratchpad/critic4/{t6,t7}/`.
 
 # Round 5 (2026-10-15) — ktests leftovers and machine hygiene
 
-**Status: PLANNED, owner decisions taken (2026-10-15), critic folded (2026-10-16); no code.**
+**Status: DONE 2026-10-17 (committed, not pushed) — P3 (T8-T11, E1; review rounds R1-R8, N1-N6), 042/044 group-stop root cause (cygwin loses a group signal for a member in exec handover → TERM once + KILL after grace), P3b stray-process guard (tools/strays.sh + master-sweep check; critic rounds F1-F13, N1-N3); forkstorm workers die with their owner. Master sweep 5.2 8780 / 5.3 8781, 30/30, no leftovers. Ledger `round5`.**
 Owner 2026-10-15: "Приступай к оставшимся пунктам". Runs FIRST in round 5 (before
 kklass P13–P15 — `kklass/PLAN.md` "Round 5"). Ledger key `round5`.
 

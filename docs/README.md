@@ -126,6 +126,18 @@ runner removes it and prints
 standalone `bash FILE` wipes such a stale dir at its next setup (a dir created
 earlier by the same process is kept).
 
+The fixture base is made **absolute** at setup: a relative script dir (the
+`$(dirname "$0")` of a standalone `bash tests/NNN_X.sh`) is joined to the
+current directory (`$PWD`, or `pwd` when `$PWD` is unset or not absolute), so
+fixture paths mean the same thing from any cwd. `C:/…` and `C:\…` are
+absolute; a drive-relative `c:x` is a relative name to MSYS and joined like
+one. A test
+that needs a directory of its own takes it from `kt_fixture_tmpdir_create NAME`
+(inside the fixture dir, removed at teardown) — never a hand-made
+`<tests>/.tmp/<file>`: the runner removes such a dir after the file ran and
+prints `[WARN] <file>: private dir .tmp/<file> left behind …` (never for a file
+named `.sh` / `..sh`, nor through a symlink).
+
 ## Running Tests
 
 ```bash
@@ -192,6 +204,54 @@ trap at depth ≥ 1 and are ignored.
 A test file that does not exist is counted `1:0:1` and listed as FAILED in both
 execution modes. A fixture dir the file left behind (its EXIT trap was replaced)
 is removed by the runner with a `[WARN]` line — see Fixtures and Cleanup.
+
+A killed run cleans up after itself. `ktests.sh` keeps its run folder
+`${TMPDIR:-/tmp}/kt_iso.<pid>` (the files' HOMEs and the threaded runner's
+results dir `results.XXXXXX`) and removes it from its EXIT trap; TERM, INT and
+HUP exit with 128+N so that trap runs (bash 5.2 runs no EXIT trap on a signal
+by itself). The run is a background job in its own process group that
+`ktests.sh` waits on, and the threaded runner's workers are one more such
+group, so a signal to the runner's pid ALONE stops it at once (a trap would
+wait for a foreground child) and the trap stops the group: the current test
+file, xargs, the workers and their test files. The threaded runner restores
+the caller's traps when it returns. A group ignores SIGTTOU/SIGTTIN (a
+background group writing to a `stty tostop` terminal would stop). Stopping a
+group (`kt_runner_group_stop`, `kt_runner_group_end`): take a `/proc` snapshot
+of its members and of their descendants OUTSIDE it (a test file's `timeout N
+cmd` — GNU timeout makes its own process group — or a `set -m` subgroup), send
+TERM and CONT ONCE to the group (a second TERM would cut a test's cleanup
+short), wait — without forking — until its members are gone, then TERM+CONT
+ONCE the descendants still alive (not earlier: the run's shell stops its
+worker group itself, and a TERM from both cut the threaded test files'
+cleanups short), and after a grace KILL what is left (3 s for the threaded
+workers; 5 s for `ktests.sh`'s own group, so the run's shell is not KILLed in the middle of
+its own stop): a member that ignores TERM, or one whose TERM was lost — on the
+Git (cygwin) runtime a signal sent while a process is still exec'ing (e.g. a
+`sleep` forked moments before) is lost for it, and for tens of ms the group
+looks empty to `kill -0 -- -PGID` (the 042/044 sweep flake). So the members
+are read from `/proc/<pid>/pgid` too and KILLed by pid, and the group counts
+as gone only when every view is empty twice, 0.1 s apart. The leader is reaped
+only once it is gone (a cygwin process blocked in a FIFO open ignores even
+KILL). Each group also has a watchdog on a FIFO whose only writer is the
+runner (its read end is opened by the group's shell before the watchdog
+starts, so it never blocks in open): a SIGKILLed runner runs no trap, the
+watchdog sees EOF, ignores TERM from then on and ends its group the same way;
+it ignores SIGTSTP, so a paused (Ctrl-Z) run that is then SIGKILLed is ended
+too. Not covered: a process a dying member forks after the snapshot into a
+group of its own (it is reparented at once) — the master sweep's stray check
+is the net for that. Ctrl-Z (SIGTSTP) pauses the
+whole run — the runner passes it to its group and stops itself; `fg` (SIGCONT)
+continues the group (and CONTs by pid any member `/proc` still shows stopped:
+a group CONT can be lost on the Git runtime under load too). A SIGKILLed run leaves its
+`kt_iso.<pid>` — the next run's dead-pid sweep removes it; without a run folder
+(the runner functions called directly) the results dir is
+`kt_iso.<pid>.results.XXXXXX`, swept the same way. The sweep leaves the folder
+of another pid namespace alone until it is a day old (an owner marker
+`.kt_owner` = the source of the `/` mount: on MSYS two runtimes sharing a
+TMPDIR cannot see each other's pids, and a live run of the other one would be
+swept). A file of a threaded run
+whose result file is missing (its worker died, its results dir vanished) is
+counted `1:0:1` and listed as FAILED with `no result file`.
 
 A file is re-run (up to 3 attempts, 0.1 s apart) only when it left no END
 marker, no counts line, AND printed nothing or a cygwin fork failure (the
@@ -356,6 +416,8 @@ All existing test code continues to work:
 | Framework not found | Verify KTESTS_DIR path in common.sh |
 | Tests not discovered | Files must match `NNN_*.sh` pattern |
 | Cleanup not working / `[WARN] … left behind (own EXIT trap?)` | Remove the test's own `trap … EXIT`; register the cleanup with `kt_fixture_cleanup_register` |
+| `[WARN] SUITE: N process(es) of the run group … left after the run` | A test file started a background process and did not end it; the runner stopped it — kill (and `wait`) your own children before the file ends |
+| `[WARN] N stray process(es) found after …` (master sweep) | A suite left a process running whose parent is gone (a test file's background job, marker or not); it was stopped and the suite FAILS. Leftovers of a killed run: `bash ktests/tools/strays.sh list` / `stop` (unfiltered: orphans older than 120 min; `--older-than 0` for all), under each bash (`tools/README.md`) |
 | Windows issues | Framework handles CRLF automatically |
 
 ## File Naming Convention

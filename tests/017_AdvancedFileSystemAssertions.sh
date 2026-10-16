@@ -99,20 +99,17 @@ fi
 
 # Test with symbolic links
 kt_test_start "File assertions with symbolic links"
+# Exactly one verdict (ktests round 5, T8/DT8). ktests has no skip: where no
+# link can be made the test is one pass with a "symlinks unavailable" note;
+# a link that `ln -s` reported but that is not there is a FAIL.
 real_file=$(kt_fixture_tmpfile "realfile")
 link_file="$TMPDIR/linkfile"
-ln -s "$real_file" "$link_file" 2>/dev/null || {
-    # Fallback: create symlink in TMPDIR directly
-    link_file="$(basename "$real_file").link"
-    ln -s "$(basename "$real_file")" "$link_file" 2>/dev/null || {
-        kt_test_pass "Symbolic link test completed (system dependent)"
-        real_file="$link_file"  # For cleanup
-    }
-}
-if kt_assert_quiet kt_assert_file_exists "$link_file" "Symbolic link exists" >/dev/null 2>&1; then
+if ! ln -s "$real_file" "$link_file" 2>/dev/null; then
+    kt_test_pass "Symbolic link test: symlinks unavailable on this system (not checked)"
+elif kt_assert_quiet kt_assert_file_exists "$link_file" "Symbolic link exists" >/dev/null 2>&1; then
     kt_test_pass "Symbolic links are handled correctly"
 else
-    kt_test_pass "Symbolic link test completed (system dependent)"
+    kt_test_fail "ln -s succeeded but $link_file does not exist"
 fi
 
 # Test with hidden files

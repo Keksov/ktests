@@ -49,7 +49,21 @@ declare -gi _KT_BACKUP_SEQ=0
 kt_fixture_init_tmpdir() {
     local test_id="${1:-default}"
     local base_dir="${2:-./.tmp}"
-    
+
+    # An ABSOLUTE base (ktests round 5, T8/DT8): a standalone `bash tests/X.sh`
+    # passes a relative `$(dirname "$0")`; the fixture paths then depended on
+    # the cwd of whoever used them (MSYS `ln -s` resolves a relative target from
+    # the link's folder). No fork: $PWD is the cwd of this call — unless it is
+    # unset or not absolute (review R8), then `pwd` (a fork only then). Drive
+    # paths `C:/…` and `C:\…` are absolute; a drive-relative `c:x` is a plain
+    # relative name to MSYS (it creates ./c:x), so it is joined like one.
+    if [[ "$base_dir" != /* && "$base_dir" != [A-Za-z]:/* && "$base_dir" != [A-Za-z]:"\\"* ]]; then
+        local __kt_pwd="${PWD:-}"
+        [[ "$__kt_pwd" == /* ]] || __kt_pwd="$(pwd)"
+        base_dir="${base_dir#./}"
+        base_dir="${__kt_pwd%/}/$base_dir"
+    fi
+
     _KT_ID="$test_id"
     _KT_TMPBASE="$base_dir"
     

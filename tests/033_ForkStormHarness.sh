@@ -91,7 +91,8 @@ fi
 
 kt_test_start "the CLI start returns at once (workers hold no stdout), status sees it, stop cleans up"
 ST="$TMP/storm.pids"
-cli_out="$(timeout 60 "$BASH" "$FS" start 1 --state "$ST" 2>&1)"; crc=$?
+me=$BASHPID   # this shell, captured outside the $( ) below
+cli_out="$(timeout 60 "$BASH" "$FS" start 1 --state "$ST" --owner "$me" 2>&1)"; crc=$?
 cli_tag=""; [[ -f "$ST" ]] && read -r cli_tag < "$ST"
 status_out="$(timeout 60 "$BASH" "$FS" status --state "$ST" 2>&1)"
 stop_out="$(timeout 60 "$BASH" "$FS" stop --state "$ST" 2>&1)"; src=$?
@@ -101,6 +102,34 @@ if (( crc == 0 && src == 0 && left == 0 )) && [[ -n "$cli_tag" && ! -e "$ST" \
     kt_test_pass "start rc 0, status '1 of 1 alive', stop rc 0, 0 marked processes left"
 else
     kt_test_fail "start rc=$crc '$cli_out'; status '$status_out'; stop rc=$src '$stop_out'; left=$left state-file=$([[ -e "$ST" ]] && echo kept || echo gone)"
+fi
+
+kt_test_start "workers stop by themselves when their owner is SIGKILLed (no cleanup ran)"
+OST="$TMP/owner.tag"
+KT_STORM_FUNCS=10 "$BASH" -c 'source "$1"; kt_storm_start 2 || exit 1; printf "%s\n" "$KT_STORM_TAG" > "$2"; exec sleep 30' \
+    _ "$FS" "$OST" </dev/null >/dev/null 2>&1 &
+opid=$!
+otag=""
+for (( i = 0; i < 100; i++ )); do
+    [[ -s "$OST" ]] && { read -r otag < "$OST"; kt_storm_scan "$otag"; (( RESULT >= 2 )) && break; }
+    sleep 0.1
+done
+before=$RESULT
+kill -KILL "$opid" 2>/dev/null; wait "$opid" 2>/dev/null
+for (( i = 0; i < 100; i++ )); do
+    kt_storm_scan "$otag"; (( RESULT == 0 )) && break
+    sleep 0.1
+done
+after=$RESULT
+if [[ -n "$otag" ]] && (( before >= 2 && after == 0 )); then
+    kt_test_pass "2 workers running, 0 left ~$(( i / 10 )).$(( i % 10 )) s after the owner's SIGKILL"
+else
+    kt_test_fail "tag='$otag' running before=$before, left after the owner's SIGKILL=$after"
+fi
+# never leave a worker behind, whatever the verdict
+if [[ -n "$otag" ]]; then
+    _kt_storm_scan_pids "$otag"
+    for p in "${KT_STORM_FOUND[@]}"; do kill -KILL "$p" 2>/dev/null || :; done
 fi
 
 kt_test_log "033_ForkStormHarness.sh completed"

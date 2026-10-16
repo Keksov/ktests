@@ -19,9 +19,14 @@
 #   forkstorm.sh self-check [N] idle fork latency, then under an N-worker storm
 #                               (default 8), then stop and prove nothing leaked
 #   Options for start/stop/status: --state FILE (default: ktests/.tmp/forkstorm.pids)
+#   Option for start: --owner PID — the workers exit by themselves once PID is
+#   gone (default: the caller, $PPID; pass the real owner when `start` runs
+#   under a wrapper such as `$(timeout … forkstorm.sh start …)`)
 #
 # LIBRARY (source it; nothing runs on source):
-#   kt_storm_start N    start N workers; KT_STORM_PIDS / KT_STORM_TAG are set.
+#   kt_storm_start N [OWNER]  start N workers; KT_STORM_PIDS / KT_STORM_TAG are
+#                       set. The workers exit by themselves once OWNER (default:
+#                       the calling shell; CLI `start`: its caller) is gone.
 #                       rc 1 (and nothing started) when a storm is already
 #                       running anywhere in this runtime, unless
 #                       KT_STORM_ALLOW_OVERLAP=1 — two storms never overlap by
@@ -65,10 +70,14 @@ declare -g  KT_STORM_TAG=""
 # so a process whose command line merely MENTIONS this script is never counted.
 # shellcheck disable=SC2016
 # Arguments: $0 = marker, $1 = ballast function count, $2 = ballast file or '',
-# $3 = heartbeat dir or ''. Passed as ARGUMENTS, not through the environment, so
-# the tunables work whether or not the caller exported them.
+# $3 = heartbeat dir or '', $4 = owner pid. Passed as ARGUMENTS, not through
+# the environment, so the tunables work whether or not the caller exported them.
+# The worker exits by itself once its OWNER (the shell that ran kt_storm_start)
+# is gone: an owner killed without its cleanup (SIGKILL, a killed test run)
+# used to leave the storm spinning for hours (2026-10-16: 8 orphans, ~5 h).
+# `kill -0` is a builtin — no extra fork per iteration.
 _KT_STORM_WORKER='
-__fs_n="${1:-1000}"
+__fs_n="${1:-1000}" __fs_o="${4:-}"
 for (( __fs_i = 0; __fs_i < __fs_n; __fs_i++ )); do
     eval "__fs_f${__fs_i}() { local a=\$1 b=\$2; printf %s \"\$a\$b\"; }"
 done
@@ -76,7 +85,10 @@ if [[ -n "${2:-}" ]]; then source "$2" >/dev/null 2>&1 || :; fi
 trap "exit 0" TERM INT HUP
 x=$(:)
 if [[ -n "${3:-}" ]]; then : > "$3/$BASHPID"; fi
-while :; do x=$(:); done
+while :; do
+    x=$(:)
+    if [[ -n "$__fs_o" ]] && ! kill -0 "$__fs_o" 2>/dev/null; then exit 0; fi
+done
 '
 
 _kt_storm_marker() { printf -v REPLY 'forkstorm-worker:%s' "$1"; }
@@ -122,9 +134,12 @@ kt_storm_alive() {
     RESULT=$n
 }
 
-# kt_storm_start N -> rc 0, KT_STORM_PIDS / KT_STORM_TAG set
+# kt_storm_start N [OWNER] -> rc 0, KT_STORM_PIDS / KT_STORM_TAG set. OWNER =
+# the pid whose death stops the workers (default: this shell; the CLI `start`
+# passes its caller, $PPID, or --owner, since the CLI process exits at once).
 kt_storm_start() {
-    local n="${1:-}" i
+    local n="${1:-}" i owner="${2:-$BASHPID}"
+    [[ "$owner" =~ ^[0-9]+$ ]] || owner="$BASHPID"
     if [[ ! "$n" =~ ^[0-9]+$ ]]; then
         printf 'kt_storm_start: N must be a non-negative integer, got "%s"\n' "$n" >&2
         return 2
@@ -146,7 +161,7 @@ kt_storm_start() {
     local marker="$REPLY"
     for (( i = 0; i < n; i++ )); do
         "$BASH" -c "$_KT_STORM_WORKER" "$marker" "${KT_STORM_FUNCS:-1000}" \
-            "${KT_STORM_BALLAST:-}" "${KT_STORM_HEARTBEAT:-}" </dev/null >/dev/null 2>&1 &
+            "${KT_STORM_BALLAST:-}" "${KT_STORM_HEARTBEAT:-}" "$owner" </dev/null >/dev/null 2>&1 &
         KT_STORM_PIDS+=( "$!" )
     done
     return 0
@@ -207,12 +222,15 @@ _kt_storm_forklat() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     _fs_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     _fs_state="$_fs_dir/../.tmp/forkstorm.pids"
+    _fs_owner="$PPID"
     _fs_cmd="${1:-}"; shift || :
     _fs_args=()
     while (( $# > 0 )); do
         case "$1" in
             --state) _fs_state="${2:?--state needs a file}"; shift 2 ;;
             --state=*) _fs_state="${1#*=}"; shift ;;
+            --owner) _fs_owner="${2:?--owner needs a pid}"; shift 2 ;;
+            --owner=*) _fs_owner="${1#*=}"; shift ;;
             *) _fs_args+=( "$1" ); shift ;;
         esac
     done
@@ -237,7 +255,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
                 fi
             fi
             KT_STORM_TAG=""; KT_STORM_PIDS=()
-            kt_storm_start "${_fs_args[0]:-8}" || exit $?
+            kt_storm_start "${_fs_args[0]:-8}" "$_fs_owner" || exit $?
             printf '%s\n' "$KT_STORM_TAG" "${KT_STORM_PIDS[@]}" > "$_fs_state"
             printf 'forkstorm: started %s worker(s), tag %s, pids %s (state %s)\n' \
                 "${#KT_STORM_PIDS[@]}" "$KT_STORM_TAG" "${KT_STORM_PIDS[*]}" "$_fs_state"
