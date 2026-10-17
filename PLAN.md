@@ -230,3 +230,27 @@ kklass P13–P15 — `kklass/PLAN.md` "Round 5"). Ledger key `round5`.
 | **P3** | T8 (DT8), T9 (DT9), T10 (DT10), T11 (DT11), E1 (DE1) | ktests suite both bashes; 017 standalone = runner counts; a KILL scenario (threaded suite, a bench, a math-using test killed with TERM) then the next run leaves 0 new `tmp.*`/`kt_*`/`.math_fe_*`/`big/`; a full master sweep both bashes leaves no new entries in TMPDIR, HOME, cwd and no new `*/tests/.tmp/*` outside the runner's swept names (counted before/after); totals unchanged except new tests |
 
 Critic (2026-10-16, `scratchpad/critic_r5c/REPORT.md`): C1 (T8 standalone-only, absolute base), C2/C8 (T9 = the `tmp.*` source, 5.2 SIGTERM skips EXIT), C6 (T10 root cause fixed; T11 live leak), C7 (E1 dirs emptied by a cleaner — unattributable), C9 (gate needs a kill scenario and a `tests/.tmp` check).
+
+# Round 6 (2026-10-17)
+
+**Status: PLANNED, owner decision taken (2026-10-17); research `scratchpad/research_r6/REPORT.md`; no code.**
+The kklass items are planned in `kklass/PLAN.md` "Round 6". Ledger key `round6`.
+
+## R6.1 Findings
+
+| ID | Sev | Where | Symptom |
+|---|---|---|---|
+| S1 | low | `tools/strays.sh:288-302` (`_kt_strays_self_chain`), marker rule `:254-281` | `strays.sh list --all` lists one extra live row when its output is piped (`… \| while read`, `{ cat; }`, under `timeout`; `\| tail` sometimes): the fork made for the other side of the pipe still carries the caller tool shell's command line (repo path followed by space / `/` / `\` / end), is a SIBLING of strays.sh (not an ancestor), so the self-chain misses it and the repo-path marker matches. Never stopped (ORPHAN=no), but breaks the "list --all = none" check. |
+| O2 | done | machine /tmp | 2026-10-17 (owner): the 311 EMPTY `tmp.*` dirs in Git-bash /tmp were deleted one by one (each verified empty); the msys64 /tmp `Argv` probe dirs and `prog.awk` deleted. Both /tmp roots now hold 0 `tmp.*`. |
+
+## R6.2 Decision
+
+| # | Decision |
+|---|---|
+| DT12 | (owner 2026-10-17) S1: exclude un-started copies of the caller's own shells — a child of the caller's self-chain whose command line equals its parent's is excluded (one line in the roots loop; scan cost noise, 1.52 → 1.64 ms); test 045 case with the piped shapes. |
+
+## R6.3 Phase
+
+| phase | content | gate |
+|---|---|---|
+| **P4** | S1 (DT12) | 045 both bashes (new piped-caller case red first); ktests suite both bashes; `strays.sh list --all \| while read` shows none from a Bash-tool-shaped caller |

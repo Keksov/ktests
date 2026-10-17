@@ -410,8 +410,25 @@
         "id": "S1",
         "found": "2026-10-17 (kklass P14 critic)",
         "what": "strays.sh list --all (Git runtime) listed the caller tool shell bash -c (parent = caller shell, age 0, ORPHAN=no) — the self-chain exclusion still misses this shape; P3b worker could not reproduce it (review_round_3). Repro hint: Claude Bash tool command of the form bash -c \"...; bash ktests/tools/strays.sh list --all\" in Git bash 5.2.",
-        "status": "open"
+        "status": "moved to round6 P4"
       }
     ]
+  },
+  "round6": {
+    "status": "PLANNED (owner decision 2026-10-17)",
+    "plan": "PLAN.md # Round 6",
+    "findings": {
+      "S1": "strays list --all shows the piped fork of the caller shell (sibling, not ancestor)",
+      "O2": "done 2026-10-17: 311 empty tmp.* + msys64 Argv/prog.awk deleted (owner)"
+    },
+    "decisions": {
+      "DT12": "owner: exclude un-started copies of the caller own shells"
+    },
+    "phases": {
+      "P4": {
+        "name": "S1",
+        "status": "planned"
+      }
+    }
   }
 }
