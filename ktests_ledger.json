@@ -404,6 +404,14 @@
         ]
       }
     },
-    "critic": "scratchpad/critic_r5c/REPORT.md C1,C2,C6-C9"
+    "critic": "scratchpad/critic_r5c/REPORT.md C1,C2,C6-C9",
+    "open": [
+      {
+        "id": "S1",
+        "found": "2026-10-17 (kklass P14 critic)",
+        "what": "strays.sh list --all (Git runtime) listed the caller tool shell bash -c (parent = caller shell, age 0, ORPHAN=no) — the self-chain exclusion still misses this shape; P3b worker could not reproduce it (review_round_3). Repro hint: Claude Bash tool command of the form bash -c \"...; bash ktests/tools/strays.sh list --all\" in Git bash 5.2.",
+        "status": "open"
+      }
+    ]
   }
 }
