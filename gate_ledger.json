@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "project": "ktests gate — one command for the phase gate (ktests/tools/gate.sh)",
+  "created": "2026-10-19",
+  "updated": "2026-10-19",
+  "status": "planned — owner decisions DG1-DG8 taken, no code; base ktests e266334 (round 6 P4); owner 2026-10-19: commit the plan and start",
+  "plan": "GATE_PLAN.md",
+  "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
+  "motivation": {
+    "source": "all Bash/PowerShell calls in this project's agent transcripts, analysed 2026-10-19",
+    "transcripts": 86,
+    "shell_calls": 10943,
+    "by_subagents_pct": 90,
+    "harness_scripts_written": 632,
+    "harness_distinct_names": 501,
+    "msys64_bash_runs": 1530,
+    "timeout_wrappers": 1895,
+    "human_summary_greps": 312,
+    "counts_line_uses": 67,
+    "json_record_edits": 440
+  },
+  "decisions": {
+    "DG1": "owner 2026-10-19: standalone tool ktests/tools/gate.sh next to timing_check.sh / strays.sh; ktests.sh interface unchanged",
+    "DG2": "owner 2026-10-19: plain bash, no kbool/kkore/kklass dependency; fork-light",
+    "DG3": "owner 2026-10-19: runtimes one after another by default; --parallel opt-in",
+    "DG4": "owner 2026-10-19: every cell fully hermetic (own HOME/TMPDIR/.ckk/config dirs, kbool env scrubbed, neutral cwd); --warm shares one .ckk per runtime",
+    "DG5": "owner 2026-10-19: master sweep suite-job machinery moves to ktests/tools/suitejob.sh, used by tests/tests.sh and gate; master behaviour unchanged",
+    "DG6": "owner 2026-10-19: --changed = touched suites + reverse kk.uses dependents; kkore/kklass/ktests/tests/kbool.sh change -> all",
+    "DG7": "owner 2026-10-19: --rerun-failed N re-runs only failed files -> FLAKY verdict (off by default); ENV re-run once automatically",
+    "DG8": "owner 2026-10-19: human lines + cells.tsv (primary, read by --compare) + summary.json (ledger record)"
+  },
+  "phases": {
+    "G0": { "name": "probe: cross-runtime control (STOP file, -nt heartbeat, launcher death), path conversion, empty-cell cost", "status": "planned" },
+    "G1": { "name": "tools/suitejob.sh + tests/tests.sh on it; KT_SUMMARY_FILE in ktests.sh (nested-safe)", "status": "planned" },
+    "G2": { "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 048-050 + gate fixtures", "status": "planned" },
+    "G3": { "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 051-052", "status": "planned" },
+    "G4": { "name": "docs, brief template, final critic, round gate run with gate.sh", "status": "planned" }
+  },
+  "open": [
+    "G0 decides whether the -nt heartbeat is reliable on both runtimes (fallback: /proc/PID/winpid + ps -W every 30 s)",
+    "test numbers 048+ (round 6 P4 ended at 047 — confirmed at plan commit)"
+  ]
+}
