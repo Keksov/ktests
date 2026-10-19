@@ -3,11 +3,13 @@
 #
 # A test that installs its own `trap … EXIT` REPLACES kt_test_init's trap, so
 # kt_fixture_teardown never runs: its registered handlers are skipped and its
-# fixture dir tests/.tmp/<Name>.<file> stays behind. Rules now:
+# fixture dir tests/.tmp/<Name>.<file>.<pid> (per run since round 6 S2)
+# stays behind. Rules now:
 #   - the runner, after judging a file, removes a still-present
 #     <test dir>/.tmp/*.<file> and prints
 #     "[WARN] <file>: fixture dir .tmp/<dir> left behind (own EXIT trap?) …";
-#   - a standalone `bash FILE` wipes a stale fixture dir at the next setup
+#   - a standalone `bash FILE` wipes a stale fixture dir (its owner pid gone)
+#     at the next setup
 #     (one created earlier by the SAME process is kept);
 #   - no `trap` shim: a test registers cleanup with kt_fixture_cleanup_register.
 
@@ -90,7 +92,7 @@ for spec in "${KT038_CASES[@]}"; do
     nw="$(kt038_warns)"
     wline="$(grep -m1 '^\[WARN\]' "$R_OUT")"
     if [[ -z "$left" && "$nw" == "$warn" && "$R_COUNTS" == "$want" ]] \
-       && { (( warn == 0 )) || [[ "$wline" == "[WARN] $name.sh: fixture dir .tmp/TrapFx.$name left behind"* ]]; }; then
+       && { (( warn == 0 )) || [[ "$wline" == "[WARN] $name.sh: fixture dir .tmp/TrapFx.$name."[0-9]*" left behind"* ]]; }; then
         kt_test_pass "$name: left=[$left] warns=$nw $R_COUNTS"
     else
         kt_test_fail "$name: left=[$left] warns=$nw (want $warn) counts=$R_COUNTS (want $want) warn=[$wline]"
@@ -143,16 +145,23 @@ FIXEOF
 
 kt_test_start "standalone: an own-trap run leaves its dir; the next run wipes it at setup, a same-process re-setup keeps it"
 rm -rf "$FX/.tmp"
+# a legacy fixed-name dir (before round 6 S2) is wiped too
 mkdir -p "$FX/.tmp/Stale.standalone"
 echo stale > "$FX/.tmp/Stale.standalone/stale.txt"
 out1="$(cd "$FX" && KK_OUTPUT_COUNTS=0 KTESTS_LIB_DIR="$KTESTS_LIB_DIR" bash "$FX/standalone.sh" 2>&1)"
 left1="$(kt038_left)"
-echo stale > "$FX/.tmp/Stale.standalone/stale.txt"
+# run1 left its per-run dir and the dir's owner mark (the sibling
+# `<dir>.owner`); its owner is gone, so run2's setup wipes both
+d1="${left1%% *}"
+[[ -n "$d1" && -d "$FX/.tmp/$d1" ]] && echo stale > "$FX/.tmp/$d1/stale.txt"
 out2="$(cd "$FX" && KK_OUTPUT_COUNTS=0 KTESTS_LIB_DIR="$KTESTS_LIB_DIR" bash ./standalone.sh 2>&1)"
+left2="$(kt038_left)"
+d2="${left2%% *}"
 out1="${out1//$'\n'/ }"; out2="${out2//$'\n'/ }"
-if [[ "$out1" == "CLEAN KEPT own-trap" && "$out2" == "CLEAN KEPT own-trap" && "$left1" == "Stale.standalone" ]]; then
-    kt_test_pass "run1=[$out1] run2=[$out2] left after run1=[$left1]"
+if [[ "$out1" == "CLEAN KEPT own-trap" && "$out2" == "CLEAN KEPT own-trap" && "$d1" == Stale.standalone.[0-9]* \
+      && "$left1" == "$d1 $d1.owner" && "$d2" == Stale.standalone.[0-9]* && "$d2" != "$d1" && "$left2" == "$d2 $d2.owner" ]]; then
+    kt_test_pass "run1=[$out1] run2=[$out2] left after run1=[$left1], after run2=[$left2]"
 else
-    kt_test_fail "run1=[$out1] run2=[$out2] left after run1=[$left1] (want CLEAN KEPT own-trap, Stale.standalone)"
+    kt_test_fail "run1=[$out1] run2=[$out2] left after run1=[$left1], after run2=[$left2] (want CLEAN KEPT own-trap, one Stale.standalone.<pid> each)"
 fi
 rm -rf "$FX/.tmp"

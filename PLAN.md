@@ -233,7 +233,7 @@ Critic (2026-10-16, `scratchpad/critic_r5c/REPORT.md`): C1 (T8 standalone-only, 
 
 # Round 6 (2026-10-17)
 
-**Status: PLANNED, owner decision taken (2026-10-17); research `scratchpad/research_r6/REPORT.md`; no code.**
+**Status: P4 + review rounds DONE + COMMITTED 2026-10-19 (sweep 8932/8933) (+ critic r6b round: owner mark as sibling `<dir>.owner`, docs) — S1 per DT12 narrowed to the pipe fork (F4), S2 per-run fixture dirs (DT13), S3 standalone exit code (DT14); tests 045 +5 cases, NEW 046, 047, red first; research `scratchpad/research_r6/REPORT.md`.**
 The kklass items are planned in `kklass/PLAN.md` "Round 6". Ledger key `round6`.
 
 ## R6.1 Findings
@@ -241,16 +241,23 @@ The kklass items are planned in `kklass/PLAN.md` "Round 6". Ledger key `round6`.
 | ID | Sev | Where | Symptom |
 |---|---|---|---|
 | S1 | low | `tools/strays.sh:288-302` (`_kt_strays_self_chain`), marker rule `:254-281` | `strays.sh list --all` lists one extra live row when its output is piped (`… \| while read`, `{ cat; }`, under `timeout`; `\| tail` sometimes): the fork made for the other side of the pipe still carries the caller tool shell's command line (repo path followed by space / `/` / `\` / end), is a SIBLING of strays.sh (not an ancestor), so the self-chain misses it and the repo-path marker matches. Never stopped (ORPHAN=no), but breaks the "list --all = none" check. |
+| S2 | low | `ktest_fixtures.sh:76-84` (`kt_fixture_init_tmpdir`), `ktest_runner.sh:1018-1033` (leftover sweep) | (P4 critic F5, real defect) the fixture dir `tests/.tmp/<Test>.<file>` had no per-run part: a second run's setup wiped the first run's LIVE dir as "stale", and the runner swept `.tmp/*.<file>` of a run still at work — two concurrent runs of one file or one suite destroyed each other's dirs (critic: two concurrent `bash 027_….sh` → FAIL 2/3). |
+| S3 | info | `ktest.sh` `kt_test_init` (standalone EXIT trap) | (P4 critic info) a standalone test file exited 0 even with a `[FAIL]`; only the runner judged. |
 | O2 | done | machine /tmp | 2026-10-17 (owner): the 311 EMPTY `tmp.*` dirs in Git-bash /tmp were deleted one by one (each verified empty); the msys64 /tmp `Argv` probe dirs and `prog.awk` deleted. Both /tmp roots now hold 0 `tmp.*`. |
 
 ## R6.2 Decision
 
 | # | Decision |
 |---|---|
-| DT12 | (owner 2026-10-17) S1: exclude un-started copies of the caller's own shells — a child of the caller's self-chain whose command line equals its parent's is excluded (one line in the roots loop; scan cost noise, 1.52 → 1.64 ms); test 045 case with the piped shapes. |
+| DT12 | (owner 2026-10-17) S1: exclude un-started copies of the caller's own shells — a child of the caller's self-chain whose command line equals its parent's is excluded (one line in the roots loop; scan cost noise, 1.52 → 1.64 ms); test 045 case with the piped shapes. **Narrowed in the P4 review (F4):** the rule also hid the caller's OWN live `{ …; } &` / `( … ) &` job (same command line, child of the self chain); now only the fork whose fd 0 is the same pipe as strays.sh's fd 1 (`-p` + `-ef` on `/proc/P/fd/0`, no fork) is excluded; 045: the own jobs ARE listed. |
+| DT13 | (owner 2026-10-18) S2: concurrent runs must be safe — per-run fixture dirs `<Test>.<file>.<pid>` with an owner mark (the runtime) in the SIBLING file `<dir>.owner` — the fixture dir starts empty (critic r6b; the first draft put `.kt_owner` inside it); setup and the runner's sweep remove only a dir whose owner is gone (`kt_fixture_stale_dir`: the kt_iso dead-pid rules, incl. the 1-day age guard for the other runtime / an unmarked dir); the runner's leftover WARN kept. Test 046: concurrent standalone runs and concurrent suite runs (single, threaded) both pass and leave nothing. |
+| DT14 | (owner 2026-10-18) S3: a standalone test file exits 1 when any test in it failed (a non-zero status of its own is kept); the runner keeps judging by its counts line. Test 047: standalone rc vs runner verdict, incl. a file whose last test passes after an earlier FAIL. |
 
 ## R6.3 Phase
 
 | phase | content | gate |
 |---|---|---|
 | **P4** | S1 (DT12) | 045 both bashes (new piped-caller case red first); ktests suite both bashes; `strays.sh list --all \| while read` shows none from a Bash-tool-shaped caller |
+| **P4 review** | F4 (DT12 narrowed), S2 (DT13), S3 (DT14) — developed in a private copy of the five repos, applied to the live tree in one step | red first both bashes (045 own-jobs case, 046, 047); 045 x3 + ktests suite threaded and single both bashes; kklass suite both bashes; the concurrent-run test 046 |
+| **P4 review 2** | critic r6b: owner mark moved out of the fixture dir (sibling `<dir>.owner`); docs: sourced test file EXIT trap / exit status, threaded `BASH_FUNC_*` exports — private copy, applied in one step | 046 (new empty-dir case red first) + 045/047; ktests suite threaded and single both bashes; kklass suite both bashes; every timeout `-k 30` |
+| **P4 sweep flake** | 046 failed once in the 5.2 full-load master sweep (a runner WARN for a hold dir that outlived its owner): root cause = teardown `rm -rf` failing silently on a native handle without FILE_SHARE_DELETE (virus scanner) — not an isolation bug; teardown now retries (10 × 0.3 s), 046 got an isolation witness + a retry case | 046 red first (retry case) both bashes; 046 x10 under a fork storm both bashes; ktests suite threaded and single both bashes |

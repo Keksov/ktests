@@ -1012,12 +1012,19 @@ kt_runner_execute_single_test() {
     # A fixture dir of this file still present after its shell exited means
     # kt_test_init's EXIT trap did not run — the test replaced it with its own
     # `trap … EXIT` (round 3, T5/DT5) or the shell was killed. Remove it and
-    # say so; the file's verdict is not changed.
-    local __kt_fx __kt_tdir="${clean_file%/*}"
+    # say so; the file's verdict is not changed. Fixture dirs are per run,
+    # `<Name>.<file>.<pid>` (round 6, S2): only one whose owner is gone is
+    # removed (kt_fixture_stale_dir) — a concurrent run of the same file (two
+    # runs of one suite) keeps its live dir; the legacy `<Name>.<file>` too.
+    # The dir's owner mark, the sibling `<dir>.owner`, goes with it.
+    local __kt_fx __kt_tdir="${clean_file%/*}" __kt_fb="${base%.sh}"
     [[ "$__kt_tdir" == "$clean_file" ]] && __kt_tdir="."
-    for __kt_fx in "$__kt_tdir/.tmp/"*".${base%.sh}"; do
-        [[ -d "$__kt_fx" ]] || continue
-        rm -rf -- "$__kt_fx"
+    for __kt_fx in "$__kt_tdir/.tmp/"*".$__kt_fb" "$__kt_tdir/.tmp/"*".$__kt_fb."[0-9]*; do
+        [[ -d "$__kt_fx" && ! -L "$__kt_fx" ]] || continue
+        if [[ "$__kt_fx" != *".$__kt_fb" ]]; then
+            kt_fixture_stale_dir "$__kt_fx" "${__kt_fx%".$__kt_fb."*}.$__kt_fb." || continue
+        fi
+        rm -rf -- "$__kt_fx" "$__kt_fx.owner"
         output_content+="${output_content:+$'\n'}[WARN] $base: fixture dir .tmp/${__kt_fx##*/} left behind (own EXIT trap?) - removed by the runner; register cleanup with kt_fixture_cleanup_register, never trap EXIT"
     done
     # A private `.tmp/<file name>` (a hand-made mkdir, round 5 T11/DT11) left
@@ -1194,7 +1201,7 @@ kt_runner_execute_threaded() {
             } > "$result_file"
         }
 
-        export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture
+        export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture kt_fixture_stale_dir kt_fixture_owner_mark
         # KT_ERROR_COUNTS: a missing file's counts line in a worker (T4)
         export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE KT_ERROR_COUNTS
 

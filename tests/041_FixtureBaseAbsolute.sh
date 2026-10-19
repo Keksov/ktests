@@ -34,9 +34,9 @@ FIXEOF
 kt_test_start "a relative script dir gives an ABSOLUTE fixture dir, removed at teardown [T8]"
 out="$(cd "$FX" && KK_OUTPUT_COUNTS=1 bash tests/probe.sh 2>&1)"
 fixdir="$(printf '%s\n' "$out" | sed -n 's/^FIXDIR=//p')"
-want="$(cd "$FX" && pwd)/tests/.tmp/Probe.probe"
+want="$(cd "$FX" && pwd)/tests/.tmp/Probe.probe"   # + .<pid> (per-run dir, round 6 S2)
 left="$(cd "$FX/tests" && ls -A .tmp 2>/dev/null)"
-if [[ "$fixdir" == "$want" && "$out" == *"__COUNTS__:1:1:0"* && -z "$left" ]]; then
+if [[ "$fixdir" == "$want".[0-9]* && "${fixdir#"$want".}" != *[!0-9]* && "$out" == *"__COUNTS__:1:1:0"* && -z "$left" ]]; then
     kt_test_pass "$fixdir"
 else
     kt_test_fail "fixdir='$fixdir' want='$want' left=[$left] out=[${out//$'\n'/ | }]"
@@ -48,7 +48,7 @@ source "$1"
 kt_fixture_setup "Rel.x" "tests"
 printf "%s" "$(kt_fixture_tmpdir)"
 kt_fixture_teardown' _ "$LIB/ktest.sh" 2>&1)"
-if [[ "$out" == "$(cd "$FX" && pwd)/tests/.tmp/Rel.x" && ! -e "$FX/tests/.tmp/Rel.x" ]]; then
+if [[ "$out" == "$(cd "$FX" && pwd)/tests/.tmp/Rel.x."[0-9]* && ! -e "$out" ]]; then
     kt_test_pass "$out"
 else
     kt_test_fail "got '$out'"
@@ -65,6 +65,7 @@ for how in 'unset PWD' 'PWD=zz'; do
     got+="$(cd "$FX" && G="$fxabs" bash -c "source \"\$1\"; $KT041_GUARD; $how"'
 kt_fixture_setup "Pw.x" "tests"; printf "%s|" "$(kt_fixture_tmpdir)"; kt_fixture_teardown' _ "$LIB/ktest.sh" 2>&1)"
 done
+got="$(sed -E 's/Pw\.x\.[0-9]+/Pw.x/g' <<< "$got")"   # per-run .<pid> (S2)
 if [[ "$got" == "$fxabs/tests/.tmp/Pw.x|$fxabs/tests/.tmp/Pw.x|" ]]; then
     kt_test_pass "both: $fxabs/tests/.tmp/Pw.x"
 else
@@ -79,6 +80,7 @@ for b in "$2/tests" "$3\\tests" "c:rel"; do
     kt_fixture_setup "Dr.x" "$b"; printf "%s|" "$_KT_TMPDIR"; kt_fixture_teardown
 done' _ "$LIB/ktest.sh" "$mixed" "$win" "$KT041_GUARD" 2>&1)"
 want="$mixed/tests/.tmp/Dr.x|$win\\tests/.tmp/Dr.x|$fxabs/c:rel/.tmp/Dr.x|"
+got="$(sed -E 's/Dr\.x\.[0-9]+/Dr.x/g' <<< "$got")"   # per-run .<pid> (S2)
 if [[ "$got" == "$want" ]]; then
     kt_test_pass "$got"
 else

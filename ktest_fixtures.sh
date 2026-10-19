@@ -70,26 +70,102 @@ kt_fixture_init_tmpdir() {
     # Ensure base directory exists
     [[ ! -d "$_KT_TMPBASE" ]] && mkdir -p "$_KT_TMPBASE"
     
-    # Create test-specific directory. One that already exists and was not
-    # created by THIS process is stale — left by an earlier standalone run
-    # whose teardown never ran (a test's own `trap … EXIT`, a killed shell):
-    # wipe it, so the leak is bounded to one dir per file (round 3, T5/DT5;
-    # under the runner, the runner removes such a dir itself).
-    _KT_TMPDIR="$_KT_TMPBASE/$test_id"
-    if [[ -d "$_KT_TMPDIR" ]]; then
-        local __kt_d __kt_own=0
-        for __kt_d in "${_KT_CREATED_TMPDIRS[@]}"; do
-            [[ "$__kt_d" == "$_KT_TMPDIR" ]] && { __kt_own=1; break; }
-        done
-        (( __kt_own )) || rm -rf -- "$_KT_TMPDIR"
-    fi
+    # Create the test-specific directory: PER RUN, `<test_id>.<pid>` (ktests
+    # round 6, S2): two concurrent runs of one file — two standalone runs, two
+    # runs of one suite — each get their own; a fixed `<test_id>` was wiped by
+    # the other run's setup and by the other runner's leftover sweep. A second
+    # setup with the same id in THIS process keeps its dir.
+    local __kt_d __kt_r __kt_n=0
+    for __kt_d in "${_KT_CREATED_TMPDIRS[@]}"; do
+        # `<id>.$$` or `<id>.$$.<n>` exactly
+        [[ "$__kt_d" == "$_KT_TMPBASE/$test_id.$$"* ]] || continue
+        __kt_r="${__kt_d#"$_KT_TMPBASE/$test_id.$$"}"
+        [[ -z "$__kt_r" || ( "$__kt_r" == .[0-9]* && "${__kt_r#.}" != *[!0-9]* ) ]] || continue
+        _KT_TMPDIR="$__kt_d"
+        [[ -d "$_KT_TMPDIR" ]] || mkdir -p "$_KT_TMPDIR"
+        if [[ ! -f "$_KT_TMPDIR.owner" ]]; then
+            kt_fixture_owner_mark
+            printf '%s\n' "$REPLY" > "$_KT_TMPDIR.owner" 2>/dev/null
+        fi
+        kt_test_debug "Reusing test temp directory: $_KT_TMPDIR"
+        return 0
+    done
+    # Stale dirs of this id (round 3, T5/DT5: a run whose teardown never ran —
+    # its own `trap … EXIT`, a killed shell) are wiped here with their owner
+    # mark, so the leak stays bounded: see kt_fixture_stale_dir. The legacy
+    # fixed name too, and a mark whose dir is gone (the dir is made first).
+    [[ -d "$_KT_TMPBASE/$test_id" && ! -L "$_KT_TMPBASE/$test_id" ]] && rm -rf -- "$_KT_TMPBASE/$test_id"
+    for __kt_d in "$_KT_TMPBASE/$test_id."[0-9]*; do
+        if [[ "$__kt_d" == *.owner ]]; then
+            [[ -f "$__kt_d" && ! -e "${__kt_d%.owner}" ]] && rm -f -- "$__kt_d"
+            continue
+        fi
+        kt_fixture_stale_dir "$__kt_d" "$_KT_TMPBASE/$test_id." && rm -rf -- "$__kt_d" "$__kt_d.owner"
+    done
+    # `<id>.<pid>`; taken (the other runtime's live process with this pid:
+    # its pids are not ours) -> `<id>.<pid>.<n>`. The owner mark is a SIBLING
+    # file `<dir>.owner` (critic r6b): the fixture dir itself stays empty.
+    _KT_TMPDIR="$_KT_TMPBASE/$test_id.$$"
+    while [[ -e "$_KT_TMPDIR" || -e "$_KT_TMPDIR.owner" ]] && (( __kt_n < 50 )); do
+        _KT_TMPDIR="$_KT_TMPBASE/$test_id.$$.$(( ++__kt_n ))"
+    done
     mkdir -p "$_KT_TMPDIR"
-    
+    kt_fixture_owner_mark
+    printf '%s\n' "$REPLY" > "$_KT_TMPDIR.owner" 2>/dev/null
+
     _KT_CREATED_TMPDIRS+=("$_KT_TMPDIR")
     
     kt_test_debug "Initialized test temp directory: $_KT_TMPDIR"
     
     return 0
+}
+
+# kt_fixture_owner_mark — REPLY = the owner mark a fixture dir's sibling
+# `<dir>.owner` holds: the source of the `/` mount, i.e. the pid namespace (C:/bin/Git vs
+# C:/bin/msys64 — two cygwin runtimes whose pids cannot see each other; the
+# same mark as kt_runner_iso_owner). "none" without /proc/mounts. No fork;
+# read once per process.
+declare -g _KT_FX_OWNER_MARK=""
+kt_fixture_owner_mark() {
+    local a b c
+    if [[ -z "$_KT_FX_OWNER_MARK" ]]; then
+        if [[ -r /proc/mounts ]]; then
+            while read -r a b c; do
+                [[ "$b" == / ]] && { _KT_FX_OWNER_MARK="$a"; break; }
+            done < /proc/mounts
+        fi
+        _KT_FX_OWNER_MARK="${_KT_FX_OWNER_MARK:-none}"
+    fi
+    REPLY="$_KT_FX_OWNER_MARK"
+}
+
+# kt_fixture_stale_dir DIR PREFIX — rc 0 when DIR (= PREFIX<pid>[.<n>], a
+# per-run fixture dir) is STALE: its owner — the pid in its name — is gone.
+# Same rules as the kt_iso dead-pid sweep: the owner is looked up with
+# `kill -0` only when DIR's mark (the sibling `DIR.owner`; an inside
+# `DIR/.kt_owner` of the first round-6 draft is read too) names THIS runtime;
+# a dir of the other runtime (its live run is invisible to `kill -0` here) or
+# one without a mark (legacy, or its mark not written yet) is stale only once
+# it is older than a day (one `find -mmin`, only for such a dir). rc 1 for
+# anything else (not a dir, a symlink, no pid in the name, a live owner). The
+# caller removes DIR and DIR.owner together.
+kt_fixture_stale_dir() {
+    local d="$1" pid mark=""
+    [[ -d "$d" && ! -L "$d" ]] || return 1
+    pid="${d#"$2"}"
+    [[ "$pid" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+    pid="${pid%%.*}"
+    if [[ -f "$d.owner" ]]; then
+        { IFS= read -r mark < "$d.owner"; } 2>/dev/null
+    elif [[ -f "$d/.kt_owner" ]]; then
+        { IFS= read -r mark < "$d/.kt_owner"; } 2>/dev/null
+    fi
+    kt_fixture_owner_mark
+    if [[ "$mark" == "$REPLY" ]]; then
+        kill -0 "$pid" 2>/dev/null && return 1
+        return 0
+    fi
+    [[ -n "$(command find "$d" -maxdepth 0 -mmin +1440 2>/dev/null)" ]]
 }
 
 # Get the test temporary directory
@@ -164,13 +240,33 @@ kt_fixture_teardown() {
         fi
     done
     
-    # Clean up temp directories
+    # Clean up temp directories. A removal that fails is retried (round 6,
+    # 046 under a full-load sweep): a NATIVE Windows handle opened without
+    # FILE_SHARE_DELETE — a virus scanner or the search indexer reading a file
+    # just written — makes `rm -rf` fail with "Device or resource busy" for as
+    # long as it is held; the dir then outlived this shell and the runner's
+    # sweep removed it with a misleading "own EXIT trap?" WARN. Up to 10 more
+    # tries 0.3 s apart (fork-free naps on a pty; only when a try failed).
+    local __kt_try __kt_w=""
     for tmpdir in "${_KT_CREATED_TMPDIRS[@]}"; do
-        if [[ -d "$tmpdir" ]]; then
-            rm -rf "$tmpdir" 2>/dev/null || true
+        if [[ -d "$tmpdir" || -e "$tmpdir.owner" ]]; then
+            rm -rf "$tmpdir" "$tmpdir.owner" 2>/dev/null || true
+            for (( __kt_try = 0; __kt_try < 10; __kt_try++ )); do
+                [[ -e "$tmpdir" || -e "$tmpdir.owner" ]] || break
+                if [[ -z "$__kt_w" ]]; then
+                    { exec {__kt_w}<>/dev/ptmx; } 2>/dev/null || __kt_w=x
+                fi
+                if [[ "$__kt_w" == x ]]; then
+                    sleep 0.3 || :
+                else
+                    read -t 0.3 -u "$__kt_w" _ 2>/dev/null || :   # set -e safe
+                fi
+                rm -rf "$tmpdir" "$tmpdir.owner" 2>/dev/null || true
+            done
             kt_test_debug "Cleaned up temp directory: $tmpdir"
         fi
     done
+    [[ -n "$__kt_w" && "$__kt_w" != x ]] && exec {__kt_w}>&-
     
     # Clear handlers and directories
     _KT_CLEANUP_HANDLERS=()

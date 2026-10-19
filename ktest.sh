@@ -110,7 +110,11 @@ kt_test_init() {
     if [[ -n "${KK_OUTPUT_COUNTS:-}" && "${KK_OUTPUT_COUNTS:-}" != "0" ]]; then
         trap 'kt_fixture_teardown; echo "__COUNTS__:$TESTS_TOTAL:$TESTS_PASSED:$TESTS_FAILED"' EXIT
     else
-        trap 'kt_fixture_teardown' EXIT
+        # standalone (`bash tests/X.sh`, round 6 S3, owner 2026-10-18): the
+        # exit status reflects the verdict — 1 when any test FAILED and the
+        # file would have exited 0; a non-zero status of its own is kept.
+        # Under the runner (KK_OUTPUT_COUNTS) the counts line judges instead.
+        trap '_KT_EXIT_RC=$?; kt_fixture_teardown; (( _KT_EXIT_RC == 0 && TESTS_FAILED > 0 )) && _KT_EXIT_RC=1; exit $_KT_EXIT_RC' EXIT
     fi
 }
 

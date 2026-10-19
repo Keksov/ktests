@@ -84,6 +84,14 @@ pid `KT_STRAYS_PPID/_AGE/_FLAG/_CMD/_START`), `kt_strays_stop`,
   the Windows level: `taskkill /F`, Task Manager, an agent's stopped
   background task keep the dead ppid) — and `sid != pid`. The caller's own
   tree (same root) is never detached. A live tree is never an orphan.
+* **Self** — the caller is never listed: `strays.sh` itself, its ancestors,
+  its own descendants, and the caller's un-started fork for the other side of
+  a pipe (`strays.sh list --all | while read …`, `| { cat; }`): a child of an
+  ancestor that still carries that ancestor's command line AND whose stdin is
+  the pipe `strays.sh` writes into. The caller's own background jobs
+  (`{ …; } &`, `( … ) &`) carry the same command line but are listed
+  (`ORPHAN=no`) — a leak made in the same call shows; an orphan with the
+  caller's command line is listed too (its parent is gone).
 * **Strict** (`--session`): every marker process of a detached tree is an
   orphan, of any age — the caller names its own session (the master sweep,
   the tests).

@@ -77,7 +77,10 @@
 #   its tool shell (the session leader) exits right after the call, so a
 #   bounded `( timeout N … ) &` run IS detached with a dead leader; it is
 #   left alone until it is older than the limit (or than N).
-# This process, its ancestors and its own descendants are never listed.
+# This process, its ancestors and its own descendants are never listed, nor
+# the caller's un-started fork for the other side of a pipe (`… | while read`:
+# a child of an ancestor with that ancestor's command line whose stdin is the
+# pipe this process writes into); the caller's own `( … ) &` jobs are listed.
 #
 # START TIME. /proc/PID/stat field 22 (starttime, ms since boot on cygwin) +
 # boot epoch (EPOCHREALTIME - /proc/uptime) — the same on both runtimes; the
@@ -347,6 +350,15 @@ kt_strays_scan() {
         root[$p]="$q"
         (( mine )) && ex[$p]=1
         pp="${_KTS_PP[$p]}"
+        # DT12: the caller's un-started fork for the other side of a pipe
+        # (`strays.sh list --all | while …`): a child of the self chain that
+        # still carries its parent's command line AND reads this process's
+        # stdout — its fd 0 is the same pipe as our fd 1 (`-p` + `-ef`: stat
+        # calls, no fork; cygwin shows a pipe as pipe:[N] with its own inode).
+        # The caller's own `( … ) &` / `{ …; } &` job has the same command
+        # line but not that stdin, so it is still listed (review F4).
+        [[ -n "${ex[$pp]+x}" && -n "${_KTS_CMD[$p]:-}" && "${_KTS_CMD[$p]}" == "${_KTS_CMD[$pp]:-}" \
+           && -p "/proc/$p/fd/0" && "/proc/$p/fd/0" -ef "/proc/$BASHPID/fd/1" ]] && ex[$p]=1
         [[ -n "${_KTS_PP[$pp]+x}" ]] && kids[$pp]+=" $p"
     done
     # each tree's class: no (live) / yes / young / live-session (see the header)

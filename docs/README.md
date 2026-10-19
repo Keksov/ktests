@@ -118,13 +118,28 @@ kt_fixture_cleanup_register "cleanup_service"
 **Never `trap … EXIT` in a test.** `kt_test_init` installs the EXIT trap that
 runs the fixture teardown — your registered handlers (e.g. the restores
 `kt_fixture_backup_file` registers) and the removal of the fixture dir
-`<tests>/.tmp/<Name>.<file>`. A test's own `trap … EXIT` REPLACES it, so none of
+`<tests>/.tmp/<Name>.<file>.<pid>`. A test's own `trap … EXIT` REPLACES it, so none of
 that runs. Register a handler instead (one that first `cd`s out of a directory
 it is about to remove). If a fixture dir is still there after a file ran, the
 runner removes it and prints
 `[WARN] <file>: fixture dir .tmp/<dir> left behind (own EXIT trap?) …`; a
 standalone `bash FILE` wipes such a stale dir at its next setup (a dir created
-earlier by the same process is kept).
+earlier by the same process is kept). The teardown retries a removal that
+failed (up to 10 × 0.3 s, fork-free): on Windows a native handle opened
+without FILE_SHARE_DELETE — a virus scanner reading a file just written —
+makes `rm -rf` fail with "Device or resource busy" while it is held; a dir
+that still outlives its shell is the runner's WARN above.
+
+**Concurrent runs** of one file or one suite (two terminals, two agents) are
+safe: the fixture dir is per run — `<Name>.<file>.<pid>` (the pid of the test
+file's shell), with an owner mark in the SIBLING file `<Name>.<file>.<pid>.owner`
+(the runtime: the source of the `/` mount) — the fixture dir itself starts
+empty. Setup and the runner's sweep remove only a dir whose owner is gone (dir
+and mark together): one of this runtime whose pid is dead (`kill -0`), or —
+the other runtime's pids are invisible here — one of the other runtime (or
+without a mark) once it is older than a day (`kt_fixture_stale_dir`). Use
+`kt_fixture_tmpdir` / `$_KT_TMPDIR`, never a computed `.tmp/<Name>.<file>`.
+A hand-made private `.tmp/<file>` (below) has no owner and is not protected.
 
 The fixture base is made **absolute** at setup: a relative script dir (the
 `$(dirname "$0")` of a standalone `bash tests/NNN_X.sh`) is joined to the
@@ -163,7 +178,25 @@ named `.sh` / `..sh`, nor through a symlink).
 
 # Help
 ./test_suite.sh -h
+
+# One file, standalone
+bash tests/001_X.sh; echo $?   # 1 when any test in it FAILED
 ```
+
+A test file run standalone exits **1 when any of its tests failed** (and it
+would otherwise have exited 0; a non-zero status of its own is kept) — the
+same verdict the runner reaches from the file's counts line. Under the runner
+(`KK_OUTPUT_COUNTS` set) the counts line judges and the exit status is not
+changed. A test file SOURCED into another shell (`source tests/X.sh`) installs
+the same EXIT trap in that shell: when that shell exits, the fixture teardown
+runs and its exit status becomes 1 if a test failed.
+
+The two runner modes give a test file slightly different environments: the
+threaded mode's workers get the runner helpers by `export -f`, so every test
+file and every child it starts sees them as `BASH_FUNC_*` environment
+variables (`run_test`, `kt_runner_*`, `kt_fixture_stale_dir`,
+`kt_fixture_owner_mark`, …); the single mode exports none. A test must not
+depend on either.
 
 ## How the Runner Judges a Test File
 

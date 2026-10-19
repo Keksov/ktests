@@ -415,19 +415,76 @@
     ]
   },
   "round6": {
-    "status": "PLANNED (owner decision 2026-10-17)",
+    "status": "P4 DONE, committed 2026-10-19 (not pushed)",
     "plan": "PLAN.md # Round 6",
     "findings": {
       "S1": "strays list --all shows the piped fork of the caller shell (sibling, not ancestor)",
-      "O2": "done 2026-10-17: 311 empty tmp.* + msys64 Argv/prog.awk deleted (owner)"
+      "O2": "done 2026-10-17: 311 empty tmp.* + msys64 Argv/prog.awk deleted (owner)",
+      "S2": "(critic r6 F5, low, real defect) fixture dir tests/.tmp/<Test>.<file> had no per-run part: kt_fixture_init_tmpdir wiped an existing dir it did not create and the runner swept .tmp/*.<file> after each file -> two concurrent runs of one file / one suite destroyed each other's live dirs (critic: two concurrent bash 027_… -> FAIL 2/3)",
+      "S3": "(critic r6 info -> owner 2026-10-18) a standalone test file exited 0 even with a [FAIL]"
     },
     "decisions": {
-      "DT12": "owner: exclude un-started copies of the caller own shells"
+      "DT12": "owner: exclude un-started copies of the caller own shells; narrowed in the P4 review (F4): only the fork that READS strays.sh's stdout (fd 0 is the same pipe as strays.sh's fd 1)",
+      "DT13": "owner 2026-10-18: concurrent runs must be safe -> per-run fixture dirs <Test>.<file>.<pid> with an owner mark; only a dir whose owner is gone is wiped/swept (kt_iso dead-pid rules incl. the 1-day age guard for the other runtime); the runner's leftover WARN kept",
+      "DT14": "owner 2026-10-18: a standalone test file exits 1 when any test in it failed; the runner keeps judging by its counts line"
     },
     "phases": {
       "P4": {
         "name": "S1",
-        "status": "planned"
+        "status": "done (committed 2026-10-19)",
+        "changes": {
+          "tools/strays.sh": "kt_strays_scan roots loop (DT12, one line + comment): a child of the self chain (ex[ppid] set) whose non-empty command line equals its parent's is an un-started fork of an ancestor (the other element of a pipe the caller made) -> ex[pid]=1; header self-exclusion sentence extended",
+          "tests/045_StrayGuard.sh": "NEW 4 cases: a `bash -c \"cd '$ROOT' && …\"` caller (repo path followed by `/` in its command line) running `strays.sh list --all --match N-pipe` piped into `| while IFS= read -r l; do echo …; done`, `| { cat; }`, and `timeout 60 strays.sh … | while …` -> 'strays: none'; an ORPHAN with the same command line as the live caller (a fork of an earlier run of the same text, parent exited, ppid 1) is still listed by the piped caller (`list --all --session self`): ORPHAN=yes and the only row",
+          "tools/README.md": "new bullet 'Self': what is never listed (strays.sh, ancestors, own descendants, the un-started pipe fork of an ancestor) and that an orphan with the caller's command line is still listed"
+        },
+        "red_first": "045 with HEAD strays.sh: 5.2 32/36 (4 FAIL: while/group/timeout each listed 1 row `bash -c cd '/c/projects/kkbot/kbool' && bash '…/strays.sh' lis…` ORPHAN=no, ppid = the caller; same-cmdline case rows=2), 5.3 33/37 (same 4 FAIL). Direct repro from the Bash tool shell (`list --all | while read`, `| { cat; }`) listed the tool shell's fork before, nothing of mine after. Mutation probe (exclude any process whose command line equals ANY self-chain member's): the same-cmdline orphan disappears ('strays: none') -> the orphan case is red for a too-broad rule; the DT12 rule lists it (yes)",
+        "gates": "045 via runner x3: 5.2 36/36 x3 (single, single, threaded), 5.3 37/37 x3 (single, threaded, single); ktests suite threaded 5.2 511/511, 5.3 512/512, 0 FAIL, 0 [WARN]; strays.sh list --all: nothing of the worker in either runtime after every step (only the parallel kklass worker's live runs, ORPHAN=no). Master sweep not run (supervisor)",
+        "review_round": {
+          "critic": "scratchpad/critic_r6/REPORT.md F4, F5 + info (standalone rc)",
+          "process": "developed in a private copy of the five repos (scratchpad/w_r6p4/tree), green there, then applied to the live ktests in one step (cp + mv, 11 files, 2026-10-19 09:58), gates rerun on the live tree",
+          "F4": {
+            "finding": "DT12 also hid the caller's OWN live `{ …; } &` / `( … ) &` job (same cmdline, child of the self chain): list --all missed a leak made in the same call",
+            "fix": "tools/strays.sh kt_strays_scan roots loop: the DT12 rule additionally needs `-p /proc/P/fd/0` and `/proc/P/fd/0 -ef /proc/$BASHPID/fd/1` (stat calls, no fork). Probe both runtimes: the pipe reader's fd 0 -ef the writer's fd 1 = y, a background job's fd 0 (/dev/null) = n, a different pipe = n; readlink shows pipe:[8589945828]-style distinct inodes",
+            "test": "045 NEW case: a marker caller runs `{ loop; } &` (stdin /dev/null) and `: | { loop; } &` (stdin another pipe), then `strays.sh list --all | { echo pids; while read …; }`: both jobs listed ORPHAN=no, the reader (pid recorded from inside) not listed; the 3 piped shapes and the same-cmdline orphan case still green",
+            "red_first": "045 with the round-1 rule: 5.2 36/37, 5.3 37/38 (the new case: 'strays: none', both jobs missing); fixed rule 37/37, 38/38",
+            "docs": "tools/README.md 'Self' bullet + strays.sh header: the pipe fork is excluded only when its stdin is strays.sh's output pipe; the caller's own background jobs are listed"
+          },
+          "S2": {
+            "fix": "ktest_fixtures.sh kt_fixture_init_tmpdir: the dir is <id>.<pid> ($$ of the test file shell; <id>.<pid>.<n> when that name is taken — the other runtime's pids overlap ours) with .kt_owner = kt_fixture_owner_mark (the `/` mount source, as kt_runner_iso_owner; read once, no fork); a second setup of the same id in the same process reuses its dir; at setup the legacy fixed <id> and every stale <id>.<pid>[.<n>] are wiped. New kt_fixture_stale_dir DIR PREFIX: stale = own runtime mark + `kill -0 pid` fails; other runtime or no mark -> stale only when older than a day (one find -mmin, only then); symlinks, non-pid names never. ktest_runner.sh leftover sweep: .tmp/*.<file> (legacy) and .tmp/*.<file>.<pid>[.n] removed only when kt_fixture_stale_dir says so (a concurrent run's live dir is kept), same WARN; the threaded workers get kt_fixture_stale_dir + kt_fixture_owner_mark via export -f (without it the threaded sweep silently kept every leftover — 038 threaded caught it: left 2, warns 0)",
+            "test": "NEW 046_ConcurrentFixtureRuns.sh (5 cases): two concurrent standalone runs of one hold file (token in its fixture dir, both announce, hold 0.5 s, token must be its own) both pass rc 0, nothing left; two concurrent runs of one suite via ktests.sh, single and threaded: rc 0/0, no FAIL/WARN, nothing left; setup wipes a dead-owner dir, a dead-owner .1 dir and the legacy fixed name, keeps a live-owner dir, the other runtime's young dir, another id's dir and a non-pid name; kt_fixture_stale_dir matrix (live kept, foreign young kept, dead stale, unmarked young kept). 038/041 pins updated to <id>.<pid> (WARN text names the per-run dir; standalone stale wipe: run1's own-trap leftover is wiped by run2)",
+            "red_first": "046 with the HEAD library: 5.2 0/5, 5.3 0/5 (standalone: one run's token gone; suite single and threaded: one run FAILs 'token of Hold.001_hold is []'; the rules cases); fixed 5/5 both",
+            "docs": "docs/README.md Fixtures: per-run dir, owner mark, the stale rules, 'use kt_fixture_tmpdir, never a computed .tmp/<Name>.<file>', a hand-made private .tmp/<file> is not protected",
+            "limits": "the T11 private-dir sweep (.tmp/<file name>, hand-made, no owner) is unchanged — a concurrent run's live private dir can still be removed; a dead owner's pid reused by an unrelated live process keeps its dir until the pid is free (no WARN meanwhile)"
+          },
+          "S3": {
+            "fix": "ktest.sh kt_test_init standalone EXIT trap (no KK_OUTPUT_COUNTS): `_KT_EXIT_RC=$?; kt_fixture_teardown; (( _KT_EXIT_RC == 0 && TESTS_FAILED > 0 )) && _KT_EXIT_RC=1; exit $_KT_EXIT_RC`; the runner branch is unchanged",
+            "test": "NEW 047_StandaloneExitCode.sh (5 cases, each standalone rc vs kt_runner_execute_single_test verdict): all pass -> 0/pass; FAIL then PASS (last test passes) -> 1/fail; PASS then FAIL -> 1/fail; FAIL + own `exit 0` -> 1/fail; PASS + own `exit 3` -> 3 kept/fail (aborted)",
+            "red_first": "047 with the HEAD ktest.sh: 5.2 2/5, 5.3 2/5 (rc 0 for the three FAIL files); fixed 5/5 both",
+            "docs": "docs/README.md Running Tests: standalone exit status"
+          },
+          "private_gates": "private tree: ktests 5.2 threaded 522/522 + single 522/522, 5.3 threaded 523/523; kklass 5.2 846/846; private .tmp dirs empty",
+          "review_round_2": {
+            "critic": "scratchpad/critic_r6b/REPORT.md: F4, F5/S2, S3 closed; new low + 2 doc items",
+            "S2b": {
+              "finding": "(low) the owner mark .kt_owner sat INSIDE the user's fixture dir: `ls -A \"$(kt_fixture_tmpdir)\"` showed it, a test asserting an empty dir / counting entries saw an extra file",
+              "fix": "ktest_fixtures.sh: the mark is the SIBLING file `<dir>.owner` (written after the mkdir); kt_fixture_stale_dir reads the sibling, else an inside `.kt_owner` of the first round-6 draft (stale rules unchanged); setup wipes a stale dir together with its sibling and removes a sibling whose dir is gone; the `<id>.<pid>.<n>` claim also skips a name whose sibling exists; teardown removes dir + sibling (one rm); ktest_runner.sh leftover sweep removes the sibling with the dir",
+              "test": "046 NEW case: a fresh fixture dir is empty (`ls -A` prints nothing), its sibling holds the mark, teardown leaves base/.tmp empty; the rules cases now use sibling marks plus a first-draft inside mark (own runtime + dead pid -> wiped/stale; other runtime -> kept) and a sibling without its dir (removed); 038 standalone case expects `<dir> <dir>.owner` left by an own-trap run and both wiped by the next run",
+              "red_first": "046 with the round-2 library: 5.2 3/6, 5.3 3/6 (fresh dir lists [.kt_owner]; sibling marks not read; got=… cat: …/R.x.<pid>.owner missing); fixed 6/6 both",
+              "docs": "docs/README.md: Concurrent runs paragraph (sibling mark, dir starts empty, dir+mark removed together); NEW: a SOURCED test file installs the same EXIT trap in the sourcing shell and sets its exit status (1 if a test failed); threaded mode exports BASH_FUNC_* runner helpers (run_test, kt_runner_*, kt_fixture_stale_dir, kt_fixture_owner_mark …) into test files and their children, single mode none — a test must not depend on either"
+            },
+            "process": "private copy scratchpad/w_r6p4/tree2 (ktests threaded 5.2 523/523, 5.3 524/524; kklass 5.2 851/851; .tmp empty), applied to live 2026-10-19 12:28 (cp + mv: ktest_fixtures.sh, ktest_runner.sh, docs/README.md, tests/038, tests/046); every timeout with -k 30",
+            "gates": "live tree (after the 12:28 apply; every timeout -k 30): 045 via runner x3: 5.2 37/37 x3, 5.3 38/38 x3; ktests suite (incl. 046 6/6, 047 5/5) 5.2 threaded 523/523 + single 523/523, 5.3 threaded 524/524 + single 524/524; kklass suite 5.2 851/851, 5.3 851/851; 0 [WARN] in every log; ktests and kklass tests/.tmp empty after; strays.sh list --all none in both runtimes at the end. Master sweep not run (supervisor)"
+          },
+          "sweep_flake_046": {
+            "found": "2026-10-19 supervisor master sweep, bash 5.2, full load: 046 suite case FAIL — both runs passed, one printed `[WARN] 001_hold.sh: fixture dir .tmp/Hold.001_hold.174282 left behind (own EXIT trap?)`; 5.3 sweep green; 046 alone 3/3",
+            "investigation": "private copy, instrumented (teardown/sweep/retry logging): 046 x10 under an owner-tied 8-worker fork storm and 3 concurrent full threaded suites + storm (5.2): no failure, no teardown leftover. A killed first attempt retried by the runner does NOT give the WARN (the retry's setup wipes the dead attempt's dir). A WARN needs a dir whose owner is dead at the sweep, i.e. a dir that outlived its owner's teardown. Probe: a NATIVE handle without FILE_SHARE_DELETE (powershell [IO.File]::Open(...,'Read','Read')) on a file in the dir -> `rm -rf` fails 'Device or resource busy', dir kept, removed fine after release; cygwin handles and a child's cwd in the dir do not block. A virus scanner / the search indexer reading the token file just written under full load is such a handle; teardown's `rm -rf … 2>/dev/null || true` failed silently, the shell exited, the sweep removed the dir (owner dead: correct) with the misleading WARN.",
+            "verdict": "not an isolation bug: the sweep removes only dirs whose owner pid is dead; the mutant 'sweep without owner check' makes 046 report GONE/FAIL",
+            "fix": "ktest_fixtures.sh kt_fixture_teardown: a removal that failed is retried up to 10 x 0.3 s (fork-free pty naps opened only when needed; set -e safe). 046: the hold fixture registers an isolation witness (its dir must be PRESENT at its own teardown, else GONE); the suite/standalone cases require no FAIL, both teardowns 'present', nothing left, and accept a runner WARN only for a dir whose owner saw it present (an owner-side removal failure beyond the retries) — a live dir taken by the other run still fails. NEW 046 case: teardown with an `rm` shim failing twice, under set -e -> calls=3, nothing left (red with the previous library: calls=1, dir + mark left; 5.2 6/7, 5.3 6/7). docs/README.md: the retry",
+            "gates": "private tree4 (same code as applied): 046 x10 under an owner-tied 8-worker fork storm 5.2 10/10 (7/7 each), 5.3 10/10; live (applied 13:53, cp + mv: ktest_fixtures.sh, tests/046, docs/README.md): 046 x3 under storm 5.2 7/7 x3; ktests suite 5.2 threaded 524/524 + single 524/524, 5.3 threaded 525/525 + single 525/525, 0 [WARN]; every timeout -k 30; master sweep not run"
+          },
+          "gates": "live tree (after the apply): 045 via runner x3: 5.2 37/37 x3 (single, threaded, single), 5.3 38/38 x3; ktests suite 5.2 threaded 522/522 + single 522/522, 5.3 threaded 523/523 + single 523/523; kklass suite 5.2 851/851, 5.3 851/851; 0 [WARN] in every log; tests/.tmp of ktests and kklass empty after; critic repro (two concurrent standalone kklass 027_AutocompilationFirstLoad.sh, 3 rounds): 5.2 and 5.3 rc 0/0, 0 FAIL every round; 046 (concurrent standalone + concurrent suite single/threaded) green inside every suite run. strays.sh list --all both runtimes at the end: see report. Master sweep not run (supervisor)"
+        },
+        "final_gate": "master sweep 2026-10-19: 5.2 8932 / 5.3 8933, 30/30 both (first sweep: 046 failed once on 5.2 under load -> teardown retry fix, then green)"
       }
     }
   }

@@ -461,6 +461,79 @@ else
     kt_test_fail "${oc//$'\n'/ | }"
 fi
 
+# S1 (round 6, DT12): a caller whose command line carries a marker (here the
+# repo path followed by `/`, as an agent's tool shell running `cd REPO && …`)
+# PIPES the CLI's output: the pipeline's other element is a FORK of the caller
+# (a compound consumer stays one for its life) — a sibling of strays.sh, not an
+# ancestor, with the caller's command line. It was listed as a live row.
+for shape in while group timeout; do
+    kt_test_start "list --all from a marker caller piping its output ($shape) shows no row for the caller's own fork"
+    rm -f "$TMP/pipe.out"
+    case "$shape" in
+        while)   c="bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
+        group)   c="bash '$ST' list --all --match '$N-pipe' 2>&1 | { cat; } > '$TMP/pipe.out'" ;;
+        timeout) c="timeout 60 bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
+    esac
+    bash -c "cd '$ROOT' && $c" </dev/null >/dev/null 2>&1
+    op="$(cat "$TMP/pipe.out" 2>/dev/null)"
+    if [[ "$c" == *"$ROOT/"* && "$op" == "strays: none"* ]]; then
+        kt_test_pass "$op"
+    else
+        kt_test_fail "${op//$'\n'/ | }"
+    fi
+done
+
+# ... but the caller's OWN live background jobs carry the same command line and
+# are children of the self chain too: they are listed (ORPHAN=no) — a leak made
+# in the same call must show (review F4). One `{ …; } &` (stdin /dev/null) and
+# one `: | { …; } &` (stdin a pipe, but not the one strays.sh writes into);
+# the pipe reader itself (it records its pid) is not listed.
+kt_test_start "list --all from a marker caller: its own '{ …; } &' jobs ARE listed (ORPHAN=no), its pipe reader is not"
+rm -f "$TMP/own.out" "$TMP/own.pids"
+c="{ eval \"\$KT045_LOOP\"; } </dev/null >/dev/null 2>&1 & J1=\$!; : | { eval \"\$KT045_LOOP\"; } >/dev/null 2>&1 & J2=\$!; bash '$ST' list --all --match '$N-own' 2>&1 | { echo \"\$J1 \$J2 \$BASHPID\" > '$TMP/own.pids'; while IFS= read -r l; do echo \"\$l\"; done; } > '$TMP/own.out'; kill -KILL \$J1 \$J2 2>/dev/null"
+bash -c "cd '$ROOT' && $c" </dev/null >/dev/null 2>&1
+oo="$(cat "$TMP/own.out" 2>/dev/null)"
+read -r J1 J2 JR < "$TMP/own.pids" 2>/dev/null
+f1=""; f2=""; fr=""
+[[ -n "${J1:-}" ]] && kt045_row "$oo" "$J1" && f1="$REPLY"
+[[ -n "${J2:-}" ]] && kt045_row "$oo" "$J2" && f2="$REPLY"
+[[ -n "${JR:-}" ]] && kt045_row "$oo" "$JR" && fr="$REPLY"
+if [[ -n "${JR:-}" && "$f1" == no && "$f2" == no && -z "$fr" ]]; then
+    kt_test_pass "job $J1: $f1, job $J2 (piped stdin): $f2, reader $JR not listed"
+else
+    kt_test_fail "job1=${J1:-} [$f1] job2=${J2:-} [$f2] reader=${JR:-} [$fr] | ${oo//$'\n'/ | }"
+fi
+kt045_cleanup
+
+# ... and the exclusion never hides a real orphan: one with the SAME command
+# line as the live caller (a fork of an earlier run of the same text whose
+# parent exited) is still listed, while the caller's own fork is not
+kt_test_start "an orphan with the same command line as the live caller is still listed (only the caller's own fork is excluded)"
+rm -f "$TMP/same.out"
+c=": kt_iso-$N-same; if [[ -n \${KT045_SAME_ORPH:-} ]]; then ( eval \"\$KT045_LOOP\" ) </dev/null >/dev/null 2>&1 & exit 0; fi; bash '$ST' list --all --session self --match '$N-same' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/same.out'"
+KT045_SAME_ORPH=1 bash -c "$c" </dev/null >/dev/null 2>&1
+P_SAME=""
+for (( i = 0; i < 50; i++ )); do
+    kt045_pids "$N-same"
+    for p in $REPLY; do
+        pp=""; { read -r pp < "/proc/$p/ppid"; } 2>/dev/null
+        [[ "$pp" == 1 ]] && P_SAME="$p"
+    done
+    [[ -n "$P_SAME" ]] && break
+    sleep 0.1
+done
+bash -c "$c" </dev/null >/dev/null 2>&1
+os="$(cat "$TMP/same.out" 2>/dev/null)"
+nrow=0
+while IFS= read -r l; do [[ "$l" =~ ^\ *[0-9]+\  ]] && (( ++nrow )); done <<< "$os"
+if [[ -n "$P_SAME" && "$nrow" == 1 ]] && kt045_row "$os" "$P_SAME" && [[ "$REPLY" == yes ]]; then
+    kt_test_pass "orphan $P_SAME (ppid 1, the caller's command line): ORPHAN=yes, the only row"
+else
+    kt_test_fail "orphan=[$P_SAME] rows=$nrow | ${os//$'\n'/ | }"
+fi
+[[ -n "$P_SAME" ]] && kill -KILL "$P_SAME" 2>/dev/null
+kt045_cleanup
+
 kt_test_start "the unfiltered age limit defaults to 120 min (longer than a full sweep)"
 hlp="$(bash "$ST" --help 2>&1)"
 if [[ "${KT_STRAYS_OLDER_DEFAULT:-}" == 120 && "$hlp" == *"120"* ]]; then
