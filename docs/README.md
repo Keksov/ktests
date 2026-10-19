@@ -398,6 +398,33 @@ value=$(kt_config_get "debug")            # Get config value
 -h, --help              Show help message
 ```
 
+Environment of the runner (`ktests.sh`):
+
+```bash
+KT_SUMMARY_FILE=PATH    # write a machine summary of the run to PATH (for tools: ktests/tools/gate.sh)
+```
+
+`KT_SUMMARY_FILE` is read once at the start and unset before anything else
+runs — no test file, worker or nested `ktests.sh` sees it. At exit the file is
+written atomically (`PATH.tmp.<pid>` + `mv`; PATH's directory must exist; a
+relative PATH is taken from the caller's cwd). Line 1 is
+`TOTAL PASSED FAILED RC` (RC = the runner's exit status), then one
+`file NNN_Name.sh` line per failed test file, as the results block lists
+them:
+
+```
+4 2 2 1
+file 001_a.sh
+file 003_c.sh
+```
+
+A run that did not reach its normal end writes `0 0 0 RC` and one
+`error REASON` line: `usage` (no SCRIPT_DIR, a bad option, `-h`),
+`no-test-files`, `interrupted` (TERM/INT/HUP; RC 128+N), `no-results` (the
+run's shell was killed from outside), `exit` (any other exit). So a missing
+file means the runner itself died (SIGKILL, a crash). Unset or empty: nothing
+is written and nothing else changes. `tests/048_SummaryFile.sh` pins it.
+
 ## Variables
 
 ```bash

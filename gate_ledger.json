@@ -106,15 +106,57 @@
       "review": "supervisor 2026-10-20: diff coherent; reproduced env loss across runtimes and rc 0 of a signal-killed cross-runtime child; accepted without remarks"
     },
     "G1": {
-      "name": "tools/suitejob.sh + tests/tests.sh on it; KT_SUMMARY_FILE in ktests.sh (nested-safe)",
-      "status": "planned"
+      "name": "tools/suitejob.sh + tests/tests.sh on it; KT_SUMMARY_FILE in ktests.sh (nested-safe); tests 048-049",
+      "status": "done",
+      "date": "2026-10-20",
+      "base": "kbool d926100, ktests a69c634",
+      "changes": [
+        "ktests/tools/suitejob.sh (new, 235 lines): kt_suitejob_init/discover/run/break/tstp/signal/strays + KT_SUITEJOB_* state; sources strays.sh beside it; header documents API and globals",
+        "tests/tests.sh (kbool root): discovery + loop + summary on suitejob.sh (process_dir, _kt_master_strays, job start/wait loop, signal stop moved out); _kt_master_signal keeps its messages and calls kt_suitejob_signal + kt_suitejob_strays",
+        "ktests/ktests.sh:10-77,118,131,160-166,184-188,204-206: KT_SUMMARY_FILE read+unset at the top, early TERM/INT/HUP + EXIT traps only when set, part file from the run shell ($KT_ISO_ROOT/.kt_summary.$$), final write temp+mv; unset = unchanged behaviour (run shell ends with exit $rc of kt_test_show_results)",
+        "ktests/tests/045_StrayGuard.sh:400: fake root also copies tools/suitejob.sh (the master sources it); no assertion changed",
+        "ktests/tests/048_SummaryFile.sh (new, 12 tests)",
+        "ktests/tests/049_SuiteJob.sh (new, 4 tests)",
+        "ktests/tools/README.md: suitejob.sh section; master paragraph points to it",
+        "ktests/docs/README.md: Environment of the runner: KT_SUMMARY_FILE format and early-exit rules",
+        "ktests/GATE_PLAN.md: status line, 4.3 format, 4.6 G1 notes, 5 G1 row + test renumbering (G2 050-052, G3 053-054), 7/8 050->052"
+      ],
+      "summary_file": {
+        "format": "line 1 `TOTAL PASSED FAILED RC` (PASSED capped at TOTAL), then `file NAME` per failed test file (basename, as kt_test_show_results lists them, only when FAILED > 0)",
+        "early_exit": "`0 0 0 RC` + `error REASON`: usage (no SCRIPT_DIR / option parser exit), no-test-files, interrupted (TERM/INT/HUP, RC 128+N, also before the run traps), no-results (run shell killed from outside), exit (other); missing file = the runner died",
+        "atomic": "PATH.tmp.<pid> + mv -f; relative PATH joined to $PWD; dir must exist"
+      },
+      "tests": {
+        "048_SummaryFile": "passing suite single+threaded; failing suite (2 failed files) single+threaded; no-test-files; bad option -> usage; nested ktests run inside a test file single+threaded (test file sees <unset>, outer file intact); TERM mid-run single+threaded (rc 143, error interrupted, nothing left); unset/empty -> no file and identical output; relative path",
+        "049_SuiteJob": "discover = old process_dir order on a fixture tree (root tests/, hidden dirs, .git, a dir under tests/, space in name, upper/lower case); run: rc/own pgid/TTOU ignored/INT default/stdin/set -m restored; USR1 trap + kt_suitejob_break ends the wait, kt_suitejob_signal empties the group (TERM-ignoring member KILLed); strays: window + MATCH narrowing, label attribution incl. before-first-job, stop, non-matching and pre-window processes untouched",
+        "red_first": "048 vs HEAD copy: 11/12 FAIL (only the unset case passes); 049 vs HEAD copy: 0/4; unmodified 045 vs the new master: 5/37 FAIL (fake root lacks suitejob.sh)"
+      },
+      "gate": {
+        "ktests_suite_5.2.37": "540/540 (524 + 16)",
+        "ktests_suite_5.3.9": "541/541 (525 + 16)",
+        "045_048_049_5.3.9": "54/54",
+        "045_5.2.37": "37/37",
+        "equivalence": "HEAD copy (git archive) vs live, KT_MASTER_SUITES kcl/tstopwatch (61), kcl/tqueuestack (98), kcl/tregex (246), both bashes: identical after path normalisation only; fixture root (failing suite, sleep-leaking suite, ok suite) + TERM during a slow suite: identical on 5.2; on 5.3 TERM identical, leak run differs only in which check reports the orphan (after b_leak vs after c_ok) - a pre-existing race of the orphan becoming visible, measured head 3/32 vs live 4/32 on 5.3, 1/10 vs 1/10 on 5.2; attribution, verdict, rc identical; TSTP/CONT mid-suite identical both bashes",
+        "master_sweep": "not run by the worker (supervisor: baseline 30 suites, 8934 on 5.2 / 8935 on 5.3)"
+      },
+      "notes": [
+        "045 could not stay byte-unmodified: its fake root copies ktests/*.sh and only tools/strays.sh; the master must source tools/suitejob.sh (DG5 location) - one cp line added",
+        "kt_suitejob_signal does not wait for KILLed members to leave the group (as before in the master); kill -0 -- -PGID can see the group for a moment after it returns - 049 polls up to 2 s; G2 may settle with kt_strays_group_settle",
+        "kt_suitejob_run checks the break flag before each wait (a USR1 between fork and wait is honoured); only the instant between that check and wait can miss it - G2 watchdog should repeat its USR1 while the job runs"
+      ],
+      "review": "supervisor 2026-10-20: diff read (suitejob.sh moves the master code 1:1; KT_SUMMARY_FILE inert when unset; 045 only copies suitejob.sh into its fake root); accepted without remarks",
+      "supervisor_gate": {
+        "sweep_5_2": "30/30 suites, 8950 tests (baseline 8934 + 16 ktests), every other suite identical to the round 6 final sweep",
+        "sweep_5_3": "8951 tests (8935 + 16), 29/30: ktests 045 tmochild case failed once under sweep load; 045 standalone 3/3 green, ktests suite rerun 541/541 green",
+        "strays": "none, both runtimes"
+      }
     },
     "G2": {
-      "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 048-050 + gate fixtures",
+      "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 050-052 + gate fixtures",
       "status": "planned"
     },
     "G3": {
-      "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 051-052",
+      "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 053-054",
       "status": "planned"
     },
     "G4": {
@@ -123,9 +165,10 @@
     }
   },
   "open": [
-    "test numbers 048+ (round 6 P4 ended at 047 — confirmed at plan commit)",
+    "test numbers: G1 took 048-049; G2 050-052, G3 053-054",
     "G2: --nohup opt-out of the launcher parent watch (G0 amendment 6)",
-    "G2/050: cover TERM, SIGKILL, taskkill /F, parent kill and taskkill /T in both directions",
-    "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)"
+    "G2/052: cover TERM, SIGKILL, taskkill /F, parent kill and taskkill /T in both directions",
+    "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)",
+    "found_in_G1 (5.3, full sweep load, 2026-10-20, first time seen in any sweep log): 045 \"unfiltered: a tree rooted at timeout 8 ...\" — kt_strays_stop sent TERM (grace 3 s used) then KILL by pid 20x over 2 s, the timeout root + its TERM-ignoring child were still alive -> \"2 process(es) LEFT\", rc 1. Identity check passed (signals were sent), so SIGKILL delivery itself lagged > 2 s under load. Matters for gate: a false \"could NOT be stopped\" makes a cell STRAY. Proposal: kt_strays_stop KILL phase polls until gone up to ~10 s (fork-free), and reports LEFT only after that; G2 worker to take it as a ktests fix with a test, or a separate item"
   ]
 }

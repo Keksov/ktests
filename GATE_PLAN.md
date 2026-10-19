@@ -1,6 +1,6 @@
 # ktests gate — one command for the phase gate (2026-10-19)
 
-**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19), no code; G0 measured (§8, reviewed 2026-10-20).**
+**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049.**
 Ledger: [`gate_ledger.json`](gate_ledger.json). Workflow as in the kklass rounds:
 one Opus worker per phase → supervisor review against the live tree (critic on
 G2 and at the end) → ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 →
@@ -203,7 +203,10 @@ removed (the `kt_iso` dead-pid rules, incl. the other-runtime age guard).
 ### 4.3 Results without parsing prose
 
 `ktests.sh` gains `KT_SUMMARY_FILE=PATH`: at the end of a run it writes
-`total passed failed` and one `file NNN_Name.sh` line per failed file. It reads
+`total passed failed rc` and one `file NNN_Name.sh` line per failed file (G1:
+an exit before the normal end writes `0 0 0 rc` + `error usage|no-test-files|
+interrupted|no-results|exit`, atomically, so a missing file = the runner
+died; `docs/README.md`). It reads
 the variable once at start and **unsets it before any test file runs** —
 ktests' own suite starts nested runners (fixtures) that must not overwrite it
 (the C7 nested-marker lesson). The segment additionally counts `[FAIL]` and
@@ -249,20 +252,28 @@ Moved from `tests/tests.sh`, no behaviour change: `kt_suitejob_discover ROOT`
 `kt_suitejob_strays LABEL` (the `_kt_master_strays` body: scan, 1 s recheck,
 report with the running suite, stop). `tests/tests.sh` becomes discovery +
 loop + summary over these; `045_StrayGuard.sh` pins the master behaviour and
-must stay green unmodified.
+must stay green unmodified. G1 (done): plus `kt_suitejob_init SINCE [MATCH]`
+(the stray window + the KT_STRAYS_MATCH narrowing as parameters),
+`kt_suitejob_break` (a caller's USR1 trap ends the wait: `kt_suitejob_run`
+returns 1, `KT_SUITEJOB_PID` still names the job, the caller calls
+`kt_suitejob_signal`) and `kt_suitejob_tstp` (the TSTP trap body); state in
+`KT_SUITEJOB_*` globals (header of the file, `tools/README.md`). 045 needed
+one fixture line — its fake root copied only `strays.sh` into `ktests/tools`,
+the master now sources `suitejob.sh` too; no assertion changed.
 
 ## 5. Phases
 
 | phase | content | gate |
 |---|---|---|
 | **G0** probe (no product code) | measure on both runtimes: launcher→segment rc propagation; STOP file and `-nt` heartbeat latency; launcher killed by SIGKILL / `taskkill /F` / TERM → segment notices ≤ 30 s and leaves nothing; `cygpath` of HOME/TMPDIR across runtimes; cost of an empty cell (sandbox create + scrub + remove). Report → plan amendments here (§4.1 may change) | supervisor review of the report |
-| **G1** shared code | `tools/suitejob.sh` + `tests/tests.sh` on it (DG5); `KT_SUMMARY_FILE` in `ktests.sh` (nested-safe) + test | ktests suite + **full master sweep both bashes, totals identical to before**; 045 unmodified |
-| **G2** gate core | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 048 (CLI/resolution), 049 (verdicts), 050 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
-| **G3** reports + selection | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 051 (reports/compare), 052 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
+| **G1** shared code | `tools/suitejob.sh` + `tests/tests.sh` on it (DG5); `KT_SUMMARY_FILE` in `ktests.sh` (nested-safe); tests 048 (summary file), 049 (suitejob.sh) | ktests suite + **full master sweep both bashes, totals identical to before**; 045 unmodified (G1: one fixture line, its fake root copies suitejob.sh too) |
+| **G2** gate core | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 050 (CLI/resolution), 051 (verdicts), 052 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
+| **G3** reports + selection | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 053 (reports/compare), 054 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
 | **G4** adoption | `tools/README.md` gate section, `docs/README.md`; worker/critic brief template: "the gate is `gate.sh … all --compare LAST`; paste `summary.json` totals into the ledger"; final **critic** over G1–G3; the round's own closing gate is run with `gate.sh` | owner: commit / push |
 
-Test numbers 048+ assume round 6 P4 ends at 047 (`046`, `047` untracked now);
-the G2 worker re-checks before creating files.
+Test numbers: round 6 P4 ended at 047; G1 took 048 (SummaryFile) and 049
+(SuiteJob), so G2 has 050–052 and G3 053–054 (the G2 worker re-checks
+before creating files).
 
 ## 6. Acceptance (the whole plan)
 
@@ -296,14 +307,14 @@ the G2 worker re-checks before creating files.
   start time too).
 - **Tree kills** (`taskkill /F /T`, possibly an agent's TaskStop) terminate
   the launcher, the segment and every forked child without a trap; only an
-  exec'd watchdog survives to stop the cell (§4.1). Test 050 must cover it
+  exec'd watchdog survives to stop the cell (§4.1). Test 052 must cover it
   in both directions.
 - **Parent killed at Windows level**: the launcher survives it; without the
   parent watch (§4.1) the gate runs on unseen to its end.
 - **Noisy fork counting on 5.2**: other tools' Git-bash shells live in the
   same runtime (G0: a foreign `curl`+`sleep` poll loop forked ~2/s), so a
   runtime-wide pid-counter proof of "no fork" is only valid on an idle
-  runtime; 050's zero-fork check attributes forks by ppid instead.
+  runtime; 052's zero-fork check attributes forks by ppid instead.
 - **Nested runners**: ktests' own suite starts ktests.sh/master inside test
   files; `KT_SUMMARY_FILE` and any `KT_GATE_*` must not leak into them (unset
   at start, test in G1).
@@ -354,5 +365,5 @@ recovery), §4.2 (fork-free scrub recipe, its `BASH_FUNC` gap, no `cygpath`
 needed for `/c/…`, locale from the spec), §7 (fallback measured and dropped,
 tree kill, parent kill, noisy 5.2 fork counting). No measurement argues
 against DG1–DG8. Open for G2: the `--nohup` opt-out of the parent watch;
-050 covers TERM, SIGKILL, `taskkill /F`, parent kill and `taskkill /T` in
+052 covers TERM, SIGKILL, `taskkill /F`, parent kill and `taskkill /T` in
 both directions.

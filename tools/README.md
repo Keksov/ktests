@@ -1,4 +1,4 @@
-# ktests/tools — load tools for timing tests, and the stray-process guard
+# ktests/tools — load tools for timing tests, the stray-process guard, the suite-job library
 
 A timing assertion is only as stable as the slowest thing inside its timed
 window. On MSYS/cygwin that is a **fork**: a bash forks in ~15 ms when the
@@ -129,7 +129,48 @@ keeps its default SIGINT; the suite wrappers `exec` ktests.sh), checks once
 more and exits 128+N. `KT_MASTER_SUITES=TEXT` runs only the suites whose path contains TEXT. And `ktests.sh` checks at the normal end of a run that its run
 group — and the threaded worker group — is empty (fork-free): a test file's
 leftover background process is named in a `[WARN]` line and stopped.
-`tests/045_StrayGuard.sh` pins all of it.
+`tests/045_StrayGuard.sh` pins all of it. The master's suite-job machinery (discovery,
+the job per suite, signals, the stray check) is `suitejob.sh` (below).
+
+## suitejob.sh
+
+The suite-job machinery of the master sweep, a library shared by
+`tests/tests.sh` and (from gate G2) `tools/gate.sh` (GATE_PLAN DG5, §4.6).
+Plain bash, no kbool; it sources `strays.sh` beside it. Source it, then:
+
+```bash
+kt_suitejob_init "$START" "${KT_STRAYS_MATCH:-}"   # stray window (EPOCHREALTIME) + optional narrowing
+kt_suitejob_discover "$ROOT"                      # KT_SUITEJOB_SUITES: every DIR/tests/tests.sh, master order
+trap kt_suitejob_tstp TSTP                         # Ctrl-Z suspends the job group with the caller
+trap kt_suitejob_break USR1                        # (G2 segment) a signal that ends the wait
+kt_suitejob_run "$LABEL" bash "$suite" "$@"       # rc 0: ended, status in KT_SUITEJOB_RC; rc 1: broken
+kt_suitejob_signal 143                             # stop the running job: TERM+CONT group, 15 s grace, KILL
+kt_suitejob_strays "$LABEL"                        # rc 1: strays reported with their label, stopped, recorded
+```
+
+* **Discovery** — the master's walk: depth first, at each level the dir's own
+  `tests/tests.sh` (not the root's), then its non-hidden subdirectories in
+  glob order.
+* **The job** — a background job under `set -m`: a process group of its own
+  (`KT_SUITEJOB_PID` = its pgid), default SIGINT (a `&` job without job
+  control would start with INT ignored, untrappable), TTOU/TTIN ignored, the
+  caller's stdin. The caller `wait`s, so a trapped signal is handled at once.
+  A trap may run the stop path and exit (the master's TERM/INT/HUP) or call
+  `kt_suitejob_break`: `kt_suitejob_run` returns 1 with the job still running
+  (`KT_SUITEJOB_PID` set) and the caller calls `kt_suitejob_signal`.
+* **Stop** — TERM + CONT to the group once, a fork-free grace while the
+  leader lives (`KT_SUITEJOB_GRACE` tenths, default 150), KILL to the group,
+  reap. Traps are the caller's (the master ignores TERM/INT/HUP first).
+* **Strays** — `kt_strays_scan --session self --since START [--match TEXT]`;
+  a hit is looked at again 1 s later, then each process is listed with the
+  label that was running when it started (`KT_SUITEJOB_BEFORE` before the
+  first job), stopped, and recorded (`KT_SUITEJOB_STRAY_ROWS`,
+  `KT_SUITEJOB_STRAY_LABELS`) for the caller's summary.
+
+The header of `suitejob.sh` lists every global. `tests/049_SuiteJob.sh` pins
+the library (discovery order = the old walk, the job's group/signals/stdin,
+the USR1 break and stop, the narrowed stray check); `045_StrayGuard.sh` pins
+the master on top of it.
 
 ## timing_check.sh
 

@@ -397,7 +397,7 @@ fi
 F="$TMP/root"
 mkdir -p "$F/ktests/tools" "$F/tests" "$F/a_leaky/tests" "$F/b_clean/tests" "$F/c_nonmark/tests"
 cp "$LIB"/*.sh "$F/ktests/"
-cp "$ST" "$F/ktests/tools/"
+cp "$ST" "$LIB/tools/suitejob.sh" "$F/ktests/tools/"   # the master sources both (gate G1)
 cp "$ROOT/tests/tests.sh" "$F/tests/tests.sh"
 printf '%s\n' '#!/bin/bash' \
     "bash -c '(exec -a kt_iso-$N-leak bash -c \"\$KT045_LOOP\") </dev/null >/dev/null 2>&1 & exit'" \
