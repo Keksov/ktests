@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": "ktests gate — one command for the phase gate (ktests/tools/gate.sh)",
   "created": "2026-10-19",
-  "updated": "2026-10-19",
+  "updated": "2026-10-20",
   "status": "planned — owner decisions DG1-DG8 taken, no code; base ktests e266334 (round 6 P4); owner 2026-10-19: commit the plan and start",
   "plan": "GATE_PLAN.md",
   "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
@@ -30,14 +30,102 @@
     "DG8": "owner 2026-10-19: human lines + cells.tsv (primary, read by --compare) + summary.json (ledger record)"
   },
   "phases": {
-    "G0": { "name": "probe: cross-runtime control (STOP file, -nt heartbeat, launcher death), path conversion, empty-cell cost", "status": "planned" },
-    "G1": { "name": "tools/suitejob.sh + tests/tests.sh on it; KT_SUMMARY_FILE in ktests.sh (nested-safe)", "status": "planned" },
-    "G2": { "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 048-050 + gate fixtures", "status": "planned" },
-    "G3": { "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 051-052", "status": "planned" },
-    "G4": { "name": "docs, brief template, final critic, round gate run with gate.sh", "status": "planned" }
+    "G0": {
+      "name": "probe: cross-runtime control (STOP file, -nt heartbeat, launcher death), path conversion, empty-cell cost",
+      "status": "done",
+      "date": "2026-10-19/20",
+      "results": {
+        "rc_cross_runtime": "exit 0-4,64,126-130,137,143,255 exact both directions; child killed by a signal -> rc 0 cross-runtime (128+N same runtime)",
+        "kill_on_stub": "never runs a trap; 5.2->5.3 TERM/KILL = TerminateProcess; 5.3->5.2 TERM ignored, KILL terminates; grandchildren orphaned; stub+wait linger until they exit (10.6 s / 24 s)",
+        "output_to_file": "line by line, 1-50 ms",
+        "env_cross_runtime": "9 vars arrive (HOME=child passwd default, MSYSTEM, PATH converted, PWD, SHLVL, SYSTEMDRIVE, SYSTEMROOT, TERM, WINDIR); custom vars, BASH_FUNC_*, TMPDIR, TMP, TEMP, USERPROFILE, ProgramData, COMSPEC, locale lost",
+        "args_cross_runtime": "unconverted; /tmp differs per runtime; /c/... == C:/... in both",
+        "scrub_builtin": "0 forks; 1.5 ms (5.3) / 4.8 ms (5.2); non-importable BASH_FUNC_a b%% / c/d%% / e=f%% survive and reach children",
+        "cygpath_ms": "24-27",
+        "stop_latency_ms": {
+          "tick_0_5": "15-405",
+          "tick_1": "94-874"
+        },
+        "watchdog_idle_forks": 0,
+        "chld_trap_interrupts_read_t": false,
+        "usr1_breaks_wait": "at once (rc 158)",
+        "mtime": "sub-ms resolution; `: > f` updates mtime even when empty; cross-runtime visible",
+        "heartbeat": {
+          "protocol": "hb rewritten every 5 s; watchdog 1 s tick: hb -nt mark -> rewrite mark, else miss++; stale = 30 consecutive misses",
+          "max_write_gap_s": 5.12,
+          "max_age_alive_s": 5,
+          "stale_after_last_write_s": "30.3-31.3",
+          "false_positives": 0,
+          "load": "idle, forkstorm 8+8 and 16+16 in both runtimes"
+        },
+        "launcher_death_s": {
+          "term": "STOP +0.9, group empty +1.0, launcher exit +1.0-1.5",
+          "sigkill": "hb stale +30.2, group empty +30.2-30.3",
+          "taskkill_F": "hb stale +30.2, group empty +30.2-30.4",
+          "parent_taskkill": "NOT noticed (launcher survives); with parent watch +0.86 -> all gone +1.06",
+          "taskkill_tree": "segment + forked watchdog killed, cell left detached; with exec`d watchdog noticed +0.7-0.9, group empty +0.8-1.0",
+          "strays_left": "none in any fixed case, both runtimes"
+        },
+        "kill0_on_leaderless_pgid": "works (both)",
+        "winpid_liveness_from_other_runtime": {
+          "kill0": "blind",
+          "proc": "blind",
+          "ps_W_ms": "210-220",
+          "tasklist_ms": "228-246"
+        },
+        "cell_overhead_ms": {
+          "5.2.37": 72,
+          "5.3.9": 17,
+          "mkdir": 27,
+          "rm": "22-24",
+          "stray_scan": "1-4",
+          "note": "suite start-up ~0.8 s dominates; budget 2 s"
+        },
+        "segment_spawn_ms": {
+          "plain": "24-35",
+          "env_i_extra": "15-19"
+        }
+      },
+      "amendments": [
+        "4.1: segment rc trusted only with OUT/seg-N.result; rc 0 without it = CRASH (signal death reads as rc 0)",
+        "4.1: launcher never signals a segment and never blocks in wait on it: 1 s nap loop (result file + kill -0 stub, hb every 5th tick), then bounded wait",
+        "4.1: spec FILE confirmed; all paths C:/ or /c/; spec carries locale, USERPROFILE, COMSPEC, TZ, PATH tail; segment started via env -i + whitelist",
+        "4.1: heartbeat = printf EPOCHREALTIME > hb every 5 s; stale = 30 consecutive 1 s ticks without hb -nt mark (tick count, not clock)",
+        "4.1: segment main waits on the cell; watchdog = separate exec`d bash (builtins): STOP/stale -> USR1 to main; main gone (tree kill) -> watchdog stops the cell group, stray check, result=segment-killed",
+        "4.1: launcher watches its parent (kill -0 $PPID + saved /proc/$PPID/winpid) and treats loss as TERM; --nohup opt-out to decide in G2",
+        "4.2: fork-free scrub recipe (compgen -e / declare -Fx into a file + mapfile); BASH_FUNC gap closed by env -i; no cygpath needed for /c/ paths; locale from the spec",
+        "7: ps -W / tasklist fallback measured (210-250 ms) and dropped; new risks: taskkill /T, parent kill, noisy fork counting in the shared 5.2 runtime"
+      ],
+      "dg_conflicts": "none",
+      "files": [
+        "ktests/GATE_PLAN.md (4.1, 4.2, 7 edited; 8 added; status line)",
+        "ktests/gate_ledger.json (phases.G0)",
+        "scratch (not in tree): w_g0/p1..p7 probe scripts + *.out raw output, PROGRESS.md"
+      ],
+      "note": "W/REPORT.md not written: the subagent harness refuses report files; the report is in the worker final message",
+      "review": "supervisor 2026-10-20: diff coherent; reproduced env loss across runtimes and rc 0 of a signal-killed cross-runtime child; accepted without remarks"
+    },
+    "G1": {
+      "name": "tools/suitejob.sh + tests/tests.sh on it; KT_SUMMARY_FILE in ktests.sh (nested-safe)",
+      "status": "planned"
+    },
+    "G2": {
+      "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 048-050 + gate fixtures",
+      "status": "planned"
+    },
+    "G3": {
+      "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 051-052",
+      "status": "planned"
+    },
+    "G4": {
+      "name": "docs, brief template, final critic, round gate run with gate.sh",
+      "status": "planned"
+    }
   },
   "open": [
-    "G0 decides whether the -nt heartbeat is reliable on both runtimes (fallback: /proc/PID/winpid + ps -W every 30 s)",
-    "test numbers 048+ (round 6 P4 ended at 047 — confirmed at plan commit)"
+    "test numbers 048+ (round 6 P4 ended at 047 — confirmed at plan commit)",
+    "G2: --nohup opt-out of the launcher parent watch (G0 amendment 6)",
+    "G2/050: cover TERM, SIGKILL, taskkill /F, parent kill and taskkill /T in both directions",
+    "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)"
   ]
 }

@@ -1,6 +1,6 @@
 # ktests gate — one command for the phase gate (2026-10-19)
 
-**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19), no code.**
+**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19), no code; G0 measured (§8, reviewed 2026-10-20).**
 Ledger: [`gate_ledger.json`](gate_ledger.json). Workflow as in the kklass rounds:
 one Opus worker per phase → supervisor review against the live tree (critic on
 G2 and at the end) → ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 →
@@ -132,7 +132,39 @@ rewritten with a builtin redirection every 5 s; the segment's watchdog compares
 it with `-nt` against its own reference file, so no `stat` fork). Heartbeat
 older than 30 s = the launcher was killed (SIGKILL, `taskkill /F`, an agent's
 TaskStop) → the segment behaves as for STOP. Waits are `read -t` on a pty of
-its own (`_kt_strays_nap`). **G0 measures this before anything is built.**
+its own (`_kt_strays_nap`). **Measured in G0 (§8); the design is fixed as:**
+
+- **Spec file, mixed paths.** The environment does not cross runtimes (only
+  9 variables arrive — HOME is the child's passwd default, TMPDIR/USERPROFILE/
+  locale/exported functions are lost) and arguments are passed unconverted
+  (`/tmp` is a different folder per runtime). The spec path and every path in
+  it are `C:/…` (or `/c/…`), never `/tmp`, `/home`, `/usr`; the spec carries
+  everything the cell needs from the caller (locale `LANG`/`LC_*`,
+  `USERPROFILE`, `COMSPEC`, `TZ`, the PATH tail). The segment is started with
+  `env -i` + a whitelist, so a same-runtime segment is as clean as a
+  cross-runtime one.
+- **Launcher.** Never signals a segment (cross-runtime `kill` is a
+  TerminateProcess or nothing, depending on the direction, never a trap) and
+  never trusts its rc alone (a segment killed by a signal reads as **rc 0**):
+  the segment's `OUT/seg-N.result` is the verdict, rc 0 without it = CRASH.
+  It does not block in `wait` on the segment (the stub stays alive while the
+  segment's orphans live): a loop of 1 s naps checks the result file and
+  `kill -0` on the stub, rewrites `hb` (`printf '%s\n' "$EPOCHREALTIME" > hb`)
+  every 5th tick, then a bounded `wait`. It **watches its own parent** each
+  tick (`kill -0 $PPID` + `/proc/$PPID/winpid` equal to the value read at
+  start): a parent killed at Windows level leaves the launcher alive and
+  heartbeating, so parent loss = TERM (STOP path); a deliberately detached run
+  opts out (`--nohup`, G2).
+- **Segment.** Its main shell `wait`s on the cell job (no tick latency at a
+  cell's end). The **watchdog is a separate, exec'd bash**
+  (`( exec bash gate.sh --watchdog … ) &`, once per segment, builtins only,
+  tick 1 s): STOP seen, or 30 consecutive ticks without `hb -nt mark` (mark
+  rewritten whenever hb is fresh; a tick count, not a clock difference) →
+  `kill -USR1` to the segment main, whose trap breaks `wait` at once and takes
+  the `kt_suitejob_signal` path. Segment main gone (a `taskkill /T` tree kill
+  terminates launcher, segment and every *forked* child, but not exec'd
+  processes) → the watchdog stops the cell group itself, runs the stray
+  check and writes `result` = `segment-killed`.
 
 ### 4.2 Hermetic cell (DG4)
 
@@ -141,15 +173,24 @@ the target bash before `exec`:
 
 - `HOME`, `TMPDIR`, `USERPROFILE` → the cell's home/tmp (mixed `C:/…` paths
   passed in, converted once with `cygpath -u` in the target runtime — the two
-  runtimes map `/tmp` to different Windows folders); `ProgramData` and
+  runtimes map `/tmp` to different Windows folders; G0: `/c/…` is the same in
+  both, so a spec that holds `/c/…` needs no `cygpath` at all, and a
+  `/tmp`-relative OUT is converted once by the launcher, `cygpath -m`);
+  `ProgramData` and
   `__KK_CFG_ETC` → the empty `etc`; `KKLASS_CKK_DIR` → `ckk` (`--warm`: one per
   segment);
 - unset every exported variable with a prefix `KBOOL_ KKLASS_ KK_ __KK KT_ _KT_`
   except what gate sets, plus `BASH_ENV ENV VERBOSE_KKLASS CDPATH GLOBIGNORE`,
   and every exported function (`BASH_FUNC_*`) — the `set -a` child lesson (U1a
-  R14);
+  R14). Fork-free (G0: 0 forks, 1.5–5 ms): `compgen -e > F` and
+  `declare -Fx > F` into a file in the cell's `tmp`, `mapfile < F`, `unset` /
+  `unset -f` — never `$( )`. Entries bash cannot import (`BASH_FUNC_a b%%`,
+  `BASH_FUNC_c/d%%`) are invisible to builtins and reach every child; the
+  segment's `env -i` start (§4.1) is what removes them;
 - keep PATH (target bash dir first), `SYSTEMROOT WINDIR COMSPEC`, the locale as
-  the caller has it (030 LocaleContract owns locale behaviour, gate does not);
+  the caller has it (030 LocaleContract owns locale behaviour, gate does not) —
+  taken from the spec, not inherited: across runtimes none of them but PATH,
+  SYSTEMROOT and WINDIR arrive;
 - cwd = `cwd/` (neutral) or the suite's `tests/` dir (`--cwd suite`); stdin
   `/dev/null`.
 
@@ -246,10 +287,23 @@ the G2 worker re-checks before creating files.
 
 ## 7. Risks
 
-- **Cross-runtime control** (§4.1) is the one unmeasured mechanism — G0 first;
-  fallback if `-nt` heartbeats prove unreliable on one runtime: the segment
-  polls the launcher's Windows pid via `/proc/<pid>/winpid` + `ps -W` once per
-  30 s (one fork per 30 s, outside timing windows as far as the runner allows).
+- **Cross-runtime control** (§4.1) — measured in G0 (§8): STOP and the `-nt`
+  heartbeat are reliable on both runtimes, idle and under 16+16 fork-storm
+  workers (25 s margin to a false positive). The fallback is not needed:
+  `kill -0` and `/proc` cannot see the other runtime's pid at all; only
+  `ps -W` (~210 ms) or `tasklist` (~240 ms), one fork + exec per check, would
+  — kept as a diagnostic only (a Windows pid is reused; it would need the
+  start time too).
+- **Tree kills** (`taskkill /F /T`, possibly an agent's TaskStop) terminate
+  the launcher, the segment and every forked child without a trap; only an
+  exec'd watchdog survives to stop the cell (§4.1). Test 050 must cover it
+  in both directions.
+- **Parent killed at Windows level**: the launcher survives it; without the
+  parent watch (§4.1) the gate runs on unseen to its end.
+- **Noisy fork counting on 5.2**: other tools' Git-bash shells live in the
+  same runtime (G0: a foreign `curl`+`sleep` poll loop forked ~2/s), so a
+  runtime-wide pid-counter proof of "no fork" is only valid on an idle
+  runtime; 050's zero-fork check attributes forks by ppid instead.
 - **Nested runners**: ktests' own suite starts ktests.sh/master inside test
   files; `KT_SUMMARY_FILE` and any `KT_GATE_*` must not leak into them (unset
   at start, test in G1).
@@ -258,3 +312,47 @@ the G2 worker re-checks before creating files.
 - **Duration**: a full two-runtime gate is ~66 min; agents run it with
   `run_in_background` and watch `progress.txt`; `--parallel` (~35 min) is for
   orientation runs only (DG3).
+
+## 8. G0 measurements (2026-10-19)
+
+Probe scripts and raw output: the G0 worker's scratch dir (`w_g0/`, not in
+the tree). Both directions (5.2→5.3, 5.3→5.2) and same-runtime as control;
+numbers agree across directions unless noted. "No fork" proofs: cygwin pids
+are sequential per runtime, so `: & a=$!; …; : & b=$!` bounds the forks in
+between (calibrated: `$(:)` = 1, builtins = 0); on 5.2 attributed by ppid.
+
+| # | fact | numbers |
+|---|---|---|
+| 1 | cross-runtime `exit N` | exact for 0–4, 64, 126–130, 137, 143, 255 |
+| 1 | child killed by a signal, cross-runtime | **rc 0** (same runtime: 128+N) |
+| 1 | launcher `kill` on the cross-runtime stub | no trap ever; 5.2→5.3 TERM/KILL = TerminateProcess; 5.3→5.2 TERM ignored, KILL terminates; the child's own children orphaned; stub + `wait` linger until those orphans exit (10.6 s / 24 s) |
+| 1 | child output to a file | arrives line by line, 1–50 ms |
+| 2 | env across runtimes | only HOME (child's passwd default), MSYSTEM, PATH (converted), PWD, SHLVL, SYSTEMDRIVE, SYSTEMROOT, TERM, WINDIR; lost: custom vars, `BASH_FUNC_*`, TMPDIR, TMP, TEMP, USERPROFILE, ProgramData, COMSPEC, locale |
+| 2 | arguments across runtimes | unconverted (`/tmp/x` names another folder; `/c/…` = `C:/…` in both) |
+| 2 | builtin scrub (`compgen -e`/`declare -Fx` → file → `mapfile`, `unset`) | 0 forks, 1.5 ms (5.3) / 4.8 ms (5.2); non-importable `BASH_FUNC_a b%%` etc. survive it |
+| 2 | `cygpath` | present in both; 24–27 ms a call |
+| 3 | STOP detection | tick 0.5 s: 15–405 ms; tick 1 s: 94–874 ms; writer runtime irrelevant |
+| 3 | idle watchdog forks | 0 (both runtimes, 20–40 ticks) |
+| 3 | `CHLD` trap vs `read -t` | does not interrupt it (cell end seen 720–745 ms late at tick 1 s) |
+| 3 | trapped `USR1` vs `wait` | breaks it at once (rc 158) |
+| 4 | mtime | sub-ms resolution; `: > f` updates it (also when empty); cross-runtime visible |
+| 4 | heartbeat 5 s, 1 s ticks, stale = 30 missed ticks | max write gap 5.02–5.12 s, max age while alive ≤ 5.0 s (idle, storm 8+8, 16+16), stale 30.3–31.3 s after the last write, 0 false positives |
+| 5 | launcher TERM | STOP seen +0.9 s, cell group empty +1.0 s, all gone, launcher exits with the result +1.0–1.5 s |
+| 5 | launcher SIGKILL / `taskkill /F` | hb stale +30.2 s, group empty +30.2–30.4 s, nothing left |
+| 5 | launcher's parent `taskkill /F` | launcher lives on, nothing noticed; with the parent watch: +0.86 s → STOP, all gone +1.06 s |
+| 5 | `taskkill /F /T` on the launcher | segment + forked watchdog terminated, exec'd cell left detached; with an exec'd watchdog: noticed +0.7–0.9 s, group empty +0.8–1.0 s, nothing left |
+| 5 | `kill -0 -- -PGID` | sees a group whose leader has exited (both) |
+| 6 | other runtime's Windows pid alive? | `kill -0`, `/proc`: blind; `ps -W` 210–220 ms; `tasklist` 228–246 ms |
+| 7 | cell overhead (mkdir 5 dirs + scrub + group start + stray scan + rm) over the bare suite, best of 5 | 72 ms (5.2), 17 ms (5.3); mkdir 27, rm 22–24, scan 1–4 ms; the suite's own start-up (~0.8 s) dominates |
+| 7 | segment spawn | 24–35 ms; via `env -i` +15–19 ms |
+
+Amendments applied above: §4.1 (spec file with mixed paths and the
+caller's locale etc.; segment started via `env -i`; launcher never signals,
+never trusts rc alone, does not block in `wait`, watches its parent; segment
+main `wait`s, exec'd watchdog with USR1, tick-count heartbeat, tree-kill
+recovery), §4.2 (fork-free scrub recipe, its `BASH_FUNC` gap, no `cygpath`
+needed for `/c/…`, locale from the spec), §7 (fallback measured and dropped,
+tree kill, parent kill, noisy 5.2 fork counting). No measurement argues
+against DG1–DG8. Open for G2: the `--nohup` opt-out of the parent watch;
+050 covers TERM, SIGKILL, `taskkill /F`, parent kill and `taskkill /T` in
+both directions.
