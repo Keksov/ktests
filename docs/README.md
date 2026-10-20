@@ -416,7 +416,15 @@ them:
 4 2 2 1
 file 001_a.sh
 file 003_c.sh
+env 003_c.sh
 ```
+
+`env NAME` lines (after the `file` lines) name the failed files that died of
+a cygwin fork failure: the runner's retry rule (no END marker, no counts
+line, a capture matching `KT_ENV_FORK_FAILURE_RE`, re-run up to 3 times) gave
+up on them. A file that ran to its end is never `env`, whatever its `[FAIL]`
+messages say — the runner decides what is ENV, not a grep of the output
+(`tools/gate.sh` turns such a run into its ENV verdict).
 
 A run that did not reach its normal end writes `0 0 0 RC` and one
 `error REASON` line: `usage` (no SCRIPT_DIR, a bad option, `-h`),

@@ -3,7 +3,7 @@
   "project": "ktests gate — one command for the phase gate (ktests/tools/gate.sh)",
   "created": "2026-10-19",
   "updated": "2026-10-20",
-  "status": "planned — owner decisions DG1-DG8 taken, no code; base ktests e266334 (round 6 P4); owner 2026-10-19: commit the plan and start",
+  "status": "in progress — G0, G1 done; G2 done 2026-10-20 (uncommitted, awaiting review + critic); base ktests e266334 (round 6 P4)",
   "plan": "GATE_PLAN.md",
   "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
   "motivation": {
@@ -153,7 +153,97 @@
     },
     "G2": {
       "name": "gate core: CLI, suite resolution, launcher/segment/cell, hermetic env, verdicts, progress, exit codes, OUT rotation; tests 050-052 + gate fixtures",
-      "status": "planned"
+      "status": "done",
+      "date": "2026-10-20",
+      "base": "kbool 103bbfd, ktests 2d6d6c8",
+      "changes": [
+        "ktests/tools/strays.sh kt_strays_stop: the KILL phase runs by the clock - re-sent to the identity-checked targets until gone or KT_STRAYS_KILL_MS (default 10000; 0.1 s apart for 2 s, then 0.25 s), LEFT only after that (was 20 rounds 0.1 s apart); header + README",
+        "ktests/tests/045_StrayGuard.sh: + 1 case (KILL lag: two Windows-suspended targets via PowerShell NtSuspendProcess, one resumed during the KILL phase -> gone, one never -> LEFT after the 6 s window; cleanup resumes them by Windows pid)",
+        "ktests/tools/gate.sh (new, ~1130 lines): launcher (kt_gate_parse/root/resolve/bashes/out/rotate/repos/spec/segment_run/collect/main), segment (kt_gate_segment_main, _kt_gate_seg_env/attempt/cell/result/emit/scan_log), watchdog (kt_gate_watchdog, _kt_gate_wd_killed); header documents CLI, outputs, verdicts, exit codes, processes, OUT, test knobs",
+        "ktests/tests/gate_fixtures/ (new): mkroot.sh + pass, fail, hang, leak, env, envx, warn, crash, probe stored as NAME/suite (never NAME/tests/tests.sh: the master's discovery never finds them; kt_suitejob_discover on the kbool root = 30 suites before and after)",
+        "ktests/tests/050_GateCli.sh (new, 14 tests), 051_GateVerdicts.sh (new, 12), 052_GateSignals.sh (new, 15)",
+        "ktests/tools/README.md: gate.sh section first; strays Stop bullet (KILL by the clock)",
+        "ktests/GATE_PLAN.md: status line; 4.1/4.2/4.3 'G2 as built'; 5 G2 row; 7 SIGKILL lag risk"
+      ],
+      "design_changes": [
+        "4.1: a same-runtime segment gets a session of its own (setsid on MSYS2, perl POSIX::setsid on Git for Windows - no setsid there): its --session self stray checks must never see the caller's other detached processes (the ktests runner's sibling test files when 050-052 run a gate, an agent's jobs)",
+        "4.1: PATH crosses via the environment (cygwin converts it), not via the spec; the spec carries LANG/LC_*/TZ/COMSPEC/SYSTEMROOT/WINDIR/... ",
+        "4.1: the per-cell timeout is the watchdog's third request (seg-N.cur 'run IDX DEADLINE'): no timeout binary, no fork; requests = reason in seg-N.why + USR1 repeated every tick until seg-N.ack holds the same reason; a late timeout USR1 of the previous cell is acked and the wait resumed",
+        "4.1: segment-killed stops by session (kt_strays_stop --session self --since SEGMENT_START: TERM at each tree root, ktests.sh stops its group, KILL after), no pgid needed",
+        "4.1 measured: a tree kill of the LAUNCHER does not reach the segment (env/setsid exec chain cuts the Windows parent link), in every direction; the segment stops on the stale heartbeat. The watchdog's own path is exercised by a tree kill of the SEGMENT (its winpid in seg-N.pid)",
+        "4.1: lines: segment appends seg-N.lines, the launcher is the single writer of stdout/progress.txt (1 s relay); the cross-runtime stub runs in a process group of its own (set -m) so a terminal Ctrl-C reaches the launcher only",
+        "4.2: deny-by-default env (env -i start + unset all exported vars but PATH/PWD/SHLVL + all exported functions, fork-free; export only the whitelist from the spec); OLDPWD unset per cell; MSYSTEM=MINGW64 is added by both runtimes to every process started without it (cannot be removed, not the caller's)",
+        "4.3: CRASH also for summary 'error REASON' and for a missing summary after rc 0; INTERRUPTED for cells the gate stopped (counted apart); a stray found only by the final check turns its cell STRAY afterwards; __GATE__ fail field = FAIL + CRASH",
+        "launcher: a segment killed from outside while the launcher lives -> [WARN], FAIL, rc 1; a lost parent -> 143"
+      ],
+      "nohup": "implemented: --nohup turns the parent watch off, and so does nohup (SIGHUP ignored on entry). Reason: the watch cannot tell a parent killed at the Windows level from one that exited normally (both kill -0 failures); a run detached on purpose loses its parent by design and would stop itself at once. run_in_background keeps the parent alive: no flag needed",
+      "fixtures": {
+        "pass": "PASS 3/3, rc 0",
+        "warn": "PASS 1/1 warn=1, rc 0",
+        "env": "attempt 1 ENV (fork: retry signature) -> re-run -> PASS 2/2, attempts=2, attempt1 + log.1.txt/summary.1/fails.1.txt kept, rc 0",
+        "envx": "ENV after the retry, rc 3, __GATE__:ENV",
+        "fail": "FAIL 2/5 with its 3 [FAIL] lines, rc 1",
+        "hang": "TIMEOUT at --timeout 4 (4.2-4.5 s), group stopped, nothing left",
+        "leak": "STRAY (suite 1/1 passed), the detached sleep listed with the cell and stopped",
+        "crash": "CRASH, no summary (rc 137), log tail shown",
+        "probe": "PASS 9/9 from a clean and a polluted caller (same runtime and across), nothing of the caller in the cell env, locale kept"
+      },
+      "tests": {
+        "050_GateCli": "14: help; 11 usage errors; 11 G3 options refused; resolution (all/ids/last component/order/duplicates); unknown+ambiguous rc 2 before any run, no OUT; --out non-empty / --root missing; a run's header/lines/summary/__GATE__; progress.txt/FINISHED/marker/argv; spec (/c paths, cells, args, LC_ALL/TZ, no HOME/TMPDIR/KT_); sandbox removed / --keep; KT_GATE_BASHES; --nohup + nohup; rotation (dead owners only, other-runtime guard); nothing left",
+        "051_GateVerdicts": "12: every fixture's verdict/line/result/exit code; ENV retry recorded; hermeticity clean vs polluted caller (fake HOME + USERPROFILE with debug = quiet, KBOOL_HOME, KBOOL_CONFIG, BASH_ENV, VERBOSITY, CDPATH, GLOBIGNORE, VERBOSE_KKLASS, KKLASS_CKK_DIR, exported gfx_caller_fn + kk.uses); cross-runtime probe; nothing left",
+        "052_GateSignals": "15: TERM, SIGKILL, taskkill /F, parent taskkill /F, taskkill /F /T of the launcher, taskkill /F /T of the segment, x (R->other, other->R) + same-runtime SIGKILL and tree kill; each: done <= 60 s (measured 1.5-7.5 s with KT_GATE_HB_TICKS=6), INTERRUPTED mark, cell 1 PASS result, cell 2 INTERRUPTED result, nothing left in either runtime; zero forks of the segment main / watchdog while the cell ran (ppid-attributed sampling, 133-168 samples / 3 s, both directions)",
+        "045_new_case": "red vs HEAD strays.sh: LEFT after 34 s (round count ignores the clock window; with a suspended target each round costs ~1 s of /proc cmdline commune); new: 18 s, A gone, B LEFT, rc 1"
+      },
+      "gate": {
+        "syntax": "bash -n on 5.2 and 5.3: gate.sh, strays.sh, 045, 050-052, mkroot.sh, every fixture file",
+        "045": "5.2 38/38 (86 s), 5.3 39/39 (86 s)",
+        "050_051_052": "5.2 14/14 + 12/12 + 15/15 (28 + 34 + 125 s), 5.3 14/14 + 12/12 + 15/15 (29 + 33 + 127 s)",
+        "ktests_suite": "final tree: 5.2.37 582/582 (540 + 1 new 045 case + 14 + 12 + 15; 204 s), 5.3.9 583/583 (541 + 42; 206 s)",
+        "three_suites_gate": "gate.sh --bash 5.2 --bash 5.3 kcl/tstopwatch kcl/tqueuestack kcl/tregex: PASS, 61/98/246 per runtime = the direct runs (61, 98, 246 on both), __GATE__:PASS:6:6:0:0:0:0:0:810:810; from the 5.2 launcher 46.1 s wall (direct sum 20.5 + 19.9 s), from the 5.3 launcher 49.0 s",
+        "overhead": "per cell over the bare suite (slope of 1 vs 6 cells of the pass fixture, best of 2/3): 480 ms (5.2), 311 ms (5.3); fixed per run 0.85-1.05 s (launcher setup incl. git, bash probe, segment start, the 1 s relay tick); budget 2 s per cell. Real suites run 0.2-0.9 s longer in a cell than directly (cold .ckk per cell: DG4; --warm is G3)",
+        "fixture_discovery": "kt_suitejob_discover on the kbool root: 30 suites, none under gate_fixtures",
+        "strays": "none in either runtime after every step",
+        "not_run": "gate.sh all and the master sweep (supervisor)"
+      },
+      "review_round_1": {
+        "date": "2026-10-20",
+        "source": "Opus critic (probes in scratchpad critic_g2) + supervisor reproduction of F1",
+        "items": {
+          "R1": "fixed: segment started via env --default-signal=INT,QUIT -i (also the rescue watchdog); red: sigs fixture FAIL 0/2 'trap -- '' SIGINT' same-runtime (cross was fine), green both runtimes and both launchers; 051 case (same + cross)",
+          "R2": "fixed: launcher resets set +aefuC +o pipefail/posix, shopt -u failglob nullglob dotglob nocaseglob nocasematch extglob globstar, unset CDPATH GLOBIGNORE (before sourcing anything); ./ for relative --out/--root; default OUT by atomic mkdir with -2.. suffix (F14); explicit --out: parent mkdir -p, leaf atomic mkdir, else existing dir checked EMPTY on the resolved path with dotglob+nullglob (F8: ..x counts), claimed by a noclobber marker; 050 cases: CDPATH decoy untouched + --root via CDPATH refused, SHELLOPTS/BASHOPTS exported, ..x/.x not empty, default OUT name + CREATED=1",
+          "R3": "fixed: rotation only under ${TMPDIR:-/tmp}/kt-gate; marker v2 'kt-gate 2 PID WINPID START CREATED RUNTIME'; removable only if CREATED=1, owner dead (same runtime kill -0; other runtime FINISHED/INTERRUPTED or > 24 h) and complete (every seg-N.spec has seg-N.result) or > 2 h (F15); 050 cases: explicit --out never rotates, default-root matrix (alive owner, not created, v1 marker, incomplete young/old, other runtime young)",
+          "R4": "fixed: ktest_runner records ENV_TEST_FILES (retry rule gave up: no END, no counts, capture matches KT_ENV_FORK_FAILURE_RE; threaded via a .result.env marker), ktests.sh writes 'env NAME' lines (header + docs/README.md), 048 +2 cases (single/threaded: env line for a fork death, none for a [FAIL] message about forks); gate: ENV = FAIL + (env lines | raw signature line), raw = not a [FAIL]/[PASS]/[WARN] line nor a message continuation, the runner's 'source aborted' line counted; fixtures env/envx now print cygwin's raw dofork line on stderr; new fixture failsig (message mentions 'fork: retry') -> FAIL rc 1",
+          "R5": "fixed: CRASH + raw signature, or no summary at rc 125-127 -> ENV with the one retry; fixture envcrash (first run: raw dofork line + SIGKILL, second passes) -> PASS attempts=2, attempt1 'ENV ... crash with a fork failure'",
+          "R6": "fixed: watchdog writes seg-N.wdpid and touches seg-N.wdhb each tick; segment checks a live watchdog before every cell (respawn once, else status no-watchdog -> launcher [WARN], exit 1); launcher watches wdhb (HB_TICKS) and starts a rescue gate.sh --watchdog (pid/sid/start from seg-N.pid, up to 3); same-runtime: launcher signals the segment directly (why=stop + USR1) once when STOP_WAIT runs out; killed path guarded by a lock dir and uses the segment's sid; per-watchdog mark file; 052 cases: watchdog KILLed during a hang cell -> rescue -> TIMEOUT enforced; watchdog KILLed + launcher TERM -> rescue stops the cell, result written, nothing left (both in R->other and same runtime)",
+          "R7": "fixed: the NtSuspendProcess case removed from 045; replaced by a seam (driver wraps _kt_strays_signal: KILLs held for LAG ms, the real function still runs for the identity-checked count): A lag 3 s in a 6 s window -> stopped rc 0, nothing reported; B never -> LEFT with its pid after >= 7 s, rc 1, target really alive (cleanup ends it); red vs HEAD strays.sh: both FAIL (gave up after 20 drops, ~6 s)",
+          "R8": "fixed: watchdog sends USR1 only while cur says 'run ...', a timeout only for 'run IDX'; segment re-reads/acks after writing idle; writes 'final' and acks before the final stray check",
+          "R9": "fixed: [FAIL] messages carry their continuation lines (5-line budget, fails.txt has all; a raw cygwin/bash fork line is never a continuation); the failed-file list is told apart by the summary's 'file NAME' names (spaces ok), regex fallback without a summary; failsig fixture: 3-line message shown, '002_a b.sh' not counted",
+          "R10": "fixed: summary 'error no-test-files' -> NOTRUN (own column in the per-runtime summary and result; PASS + NOTRUN = all -> PASS; all NOTRUN -> [WARN] nothing ran, exit 1); __GATE__ field order unchanged, NOTRUN in no field (documented)",
+          "R11": "fixed: spec OUT/ROOT/SELF in mixed C:/ form; segment/watchdog convert once with cygpath -u (KT_GATE_S_OUTM kept for USERPROFILE/ProgramData); the /c-form helper removed",
+          "R12": "fixed: _kt_gate_spawn closes the launcher's nap fd around every start (segment, rescue); probe dumps its fds: 0 1 2 255 (bash's own script fd); red: with the close removed fd 10 (/dev/ptmx) reached the cell",
+          "R13": "fixed: launcher traps TSTP -> '[WARN] suspending a gate is not supported', ignored; header/README; 050 case",
+          "R14": "fixed: 052 INT scenario (launcher started under set -m by the driver), every 052 leftover check also runs strays.sh list --all --match TMP/ in both runtimes; README: the 'no timeout wrapper needed' claim qualified"
+        },
+        "gate": {
+          "syntax": "bash -n on 5.2 and 5.3: gate.sh, strays.sh, ktest_runner.sh, ktests.sh, 045, 048, 050-052, mkroot.sh, every fixture file",
+          "ktests_suite": "final tree: 5.2.37 601/601 (276 s), 5.3.9 602/602 (279 s) = 582/583 + 045 +1 (seam cases 2, suspend case 1 removed) + 048 +2 + 050 +7 (21) + 051 +4 (16) + 052 +5 (20)",
+          "t045": "5.2 39/39, 5.3 40/40 (in the suites); red vs HEAD strays.sh: both seam cases FAIL",
+          "t052": "5.2 20/20 in 184 s (standalone), green in both suites",
+          "red_first": "R1 sigs fixture FAIL 0/2 same-runtime before the fix; R12 fd 10 (/dev/ptmx) in the cell with the close removed; R7 see t045; R4 048 env cases are new behaviour",
+          "three_suites_gate": "gate --bash 5.2 --bash 5.3 kcl/tstopwatch kcl/tqueuestack kcl/tregex: PASS 61/98/246 per runtime = direct, __GATE__:PASS:6:6:0:0:0:0:0:810:810, 41 s",
+          "thttpserver_gate": "gate --bash /usr/bin/bash --bash C:/bin/msys64/usr/bin/bash.exe kcl/thttpserver: PASS 497/497 on both = direct (497/497, 40 s each), __GATE__:PASS:2:2:0:0:0:0:0:994:994, 96 s (cells 51.7 s on 5.2, 39.9 s on 5.3)",
+          "strays": "none in either runtime after every step",
+          "not_run": "gate.sh all and the master sweep (supervisor)"
+        }
+      },
+      "critic": "Opus critic 2026-10-20: F1-F18 (HIGH F1 INT/QUIT ignored in same-runtime cells, F2 CDPATH -> rotation data loss, F3 rotation in explicit --out parents, F4 signature matched in [FAIL] text, F5 watchdog single point of failure, F7 045 suspended processes) -> remarks R1-R14, all fixed (review_round_1)",
+      "supervisor_review": "2026-10-20: reproduced F1 before (thttpserver 006 39/40 in gate vs 40/40 direct) and after (40/40 x3, both bashes); F2 CDPATH decoy untouched; one CRASH runner TERM at 12 s overlapped the worker final activity, 3 reruns green, not seen in the 60-cell gate",
+      "acceptance_6_1": {
+        "gate_all": "60 cells, 27 min (5.2 15m02s, 5.3 12m17s): 58 PASS, kklass FAIL 852/853 on both runtimes",
+        "master_sweep_same_tree": "30/30 both, 9011 (5.2) / 9012 (5.3)",
+        "per_suite_totals": "identical for all 30 suites on both runtimes (from cells/*/result vs sweep logs)",
+        "kklass_fail": "real hermeticity bug found by the gate: kklass tests 027/032/033 test the default $(pwd)/.ckk placement but did not unset a caller KKLASS_CKK_DIR (any developer with it exported failed them too); fixed in kklass tests (unset KKLASS_CKK_DIR), 3/3 with and without the variable on both bashes; kklass via gate 853/853 both"
+      }
     },
     "G3": {
       "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 053-054",
@@ -166,9 +256,16 @@
   },
   "open": [
     "test numbers: G1 took 048-049; G2 050-052, G3 053-054",
-    "G2: --nohup opt-out of the launcher parent watch (G0 amendment 6)",
-    "G2/052: cover TERM, SIGKILL, taskkill /F, parent kill and taskkill /T in both directions",
+    "closed_in_G2: --nohup opt-out of the launcher parent watch (implemented, see phases.G2.nohup)",
+    "closed_in_G2: 052 covers TERM, SIGKILL, taskkill /F, parent kill and taskkill /T (launcher and segment) in both directions",
+    "closed_in_G2: found_in_G1 kt_strays_stop KILL lag (KILL phase by the clock, KT_STRAYS_KILL_MS, 045 case)",
+    "G2 for the critic: the 052 zero-fork check samples /proc every ~20 ms (ppid attribution); a fork shorter than a sample can be missed - the watchdog and wait path are builtins by construction",
     "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)",
-    "found_in_G1 (5.3, full sweep load, 2026-10-20, first time seen in any sweep log): 045 \"unfiltered: a tree rooted at timeout 8 ...\" — kt_strays_stop sent TERM (grace 3 s used) then KILL by pid 20x over 2 s, the timeout root + its TERM-ignoring child were still alive -> \"2 process(es) LEFT\", rc 1. Identity check passed (signals were sent), so SIGKILL delivery itself lagged > 2 s under load. Matters for gate: a false \"could NOT be stopped\" makes a cell STRAY. Proposal: kt_strays_stop KILL phase polls until gone up to ~10 s (fork-free), and reports LEFT only after that; G2 worker to take it as a ktests fix with a test, or a separate item"
+    "found_in_G1 (5.3, full sweep load, 2026-10-20, first time seen in any sweep log): 045 \"unfiltered: a tree rooted at timeout 8 ...\" — kt_strays_stop sent TERM (grace 3 s used) then KILL by pid 20x over 2 s, the timeout root + its TERM-ignoring child were still alive -> \"2 process(es) LEFT\", rc 1. Identity check passed (signals were sent), so SIGKILL delivery itself lagged > 2 s under load. Matters for gate: a false \"could NOT be stopped\" makes a cell STRAY. Proposal: kt_strays_stop KILL phase polls until gone up to ~10 s (fork-free), and reports LEFT only after that; G2 worker to take it as a ktests fix with a test, or a separate item",
+    "closed_in_G2_review_1: ENV vs CRASH (R5 decided: CRASH with a raw fork line or rc 125-127 without summary = ENV); the watchdog SPOF (R6)",
+    "not_now (review R1 F13): a perl-free session fallback (\"$COMSPEC /d /c\"); today perl/setsid are present, else a [WARN] - without a session of its own two concurrent gates in one runtime could attribute each other's strays",
+    "found_in_G2 (runner, pre-existing): a suite path containing a quote makes the threaded runner report 'no result file' for every file; a suite dir name with a newline breaks the gate's progress line",
+    "found_in_G2 (fixed in the G2 commit): kklass tests 027/032/033 were not hermetic against an exported KKLASS_CKK_DIR",
+    "observation G2: a full gate (27 min for both runtimes) is much faster than the master sweep (~33 min PER runtime) on the same tree — not analysed; check in G4 whether the sweep pays for something gate skips or the cold .ckk/neutral cwd/one-session-per-segment explain it"
   ]
 }

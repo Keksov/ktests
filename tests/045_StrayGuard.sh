@@ -268,6 +268,63 @@ else
 fi
 kt045_cleanup
 
+# SIGKILL delivery lag (gate G2; seen under full-sweep load on 5.3 in G1: a
+# target KILLed 20x over 2 s was still alive -> a false "LEFT"). The KILL
+# phase of kt_strays_stop runs by the CLOCK (KT_STRAYS_KILL_MS). Proven
+# deterministically through a seam, no OS-level trick (review R7: a suspended
+# process would outlive a killed test, invisible to strays.sh): a driver
+# sources strays.sh and wraps _kt_strays_signal so that a KILL is "not
+# delivered" for LAG ms after the first one — the real function still runs
+# (with no signal), so the target is counted alive by the identity checks
+# (pid + /proc starttime) — then KILLs for real. A: the target "survives"
+# 3 s of KILLs inside a 6 s window -> stopped, rc 0, nothing reported (the
+# old 20 rounds gave up after ~2 s). B: never delivered, 4 s window -> LEFT
+# with its pid only after >= grace (3 s) + 4 s, rc 1; the target really
+# alive then, the cleanup ends it.
+printf '%s\n' 'source "$1"' \
+    'eval "$(declare -f _kt_strays_signal | sed "1s/^_kt_strays_signal/_kt045_real_signal/")"' \
+    'LAG=$3 FIRST="" DROPS=0' \
+    '_kt_strays_signal() {' \
+    '    if [[ "$1" == KILL ]]; then' \
+    '        _kt_strays_ms "$EPOCHREALTIME"; [[ -n "$FIRST" ]] || FIRST=$REPLY' \
+    '        if (( REPLY - FIRST < LAG )); then DROPS=$(( DROPS + 1 )); _kt045_real_signal "" "${@:2}"; return 0; fi' \
+    '    fi' \
+    '    _kt045_real_signal "$@"' \
+    '}' \
+    '_kt_strays_ms "$EPOCHREALTIME"; t0=$REPLY' \
+    'KT_STRAYS_KILL_MS=$4 kt_strays_stop --session self --match "$2"; rc=$?' \
+    '_kt_strays_ms "$EPOCHREALTIME"' \
+    'echo "rc=$rc ms=$(( REPLY - t0 )) drops=$DROPS left=[${KT_STRAYS[*]}]"' > "$TMP/lag.sh"
+kt045_lagger() {   # NAME -> REPLY = the pid of a TERM-ignoring orphan NAME
+    bash -c '(trap "" TERM; exec -a "$1" bash -c "trap \"\" TERM; $KT045_LOOP") </dev/null >/dev/null 2>&1 & exit' _ "$1"
+    for (( i = 0; i < 50; i++ )); do kt045_pid0 "$1"; [[ -n "$REPLY" ]] && break; sleep 0.1; done
+    REPLY="${REPLY%% *}"
+}
+kt_test_start "stop: KILL is re-sent by the clock — a target whose KILL takes 3 s to land is stopped inside a 6 s window, nothing reported"
+kt045_lagger "kt_iso-$N-lagA"; P_LA="$REPLY"
+sleep 0.3
+o="$(timeout 60 bash "$TMP/lag.sh" "$ST" "$N-lagA" 3000 6000 2>&1)"
+for (( i = 0; i < 20; i++ )); do kt045_alive "$P_LA" || break; sleep 0.1; done
+if [[ -n "$P_LA" && "$o" =~ ^rc=0\ ms=([0-9]+)\ drops=([0-9]+)\ left=\[\]$ ]] && (( BASH_REMATCH[1] >= 5900 && BASH_REMATCH[2] >= 5 )) \
+      && ! kt045_alive "$P_LA"; then
+    kt_test_pass "$o"
+else
+    kt_test_fail "target $P_LA alive=$(kt045_alive "$P_LA" && echo yes || echo no) | $o"
+fi
+kt045_cleanup
+kt_test_start "stop: a target whose KILL never lands is reported LEFT only after the wall-clock window (KT_STRAYS_KILL_MS), with its pid, rc 1"
+kt045_lagger "kt_iso-$N-lagB"; P_LB="$REPLY"
+sleep 0.3
+o="$(timeout 60 bash "$TMP/lag.sh" "$ST" "$N-lagB" 600000 4000 2>&1)"
+aB=no; kt045_alive "$P_LB" && aB=yes
+if [[ -n "$P_LB" && "$o" =~ ^rc=1\ ms=([0-9]+)\ drops=([0-9]+)\ left=\[$P_LB\]$ ]] && (( BASH_REMATCH[1] >= 6900 && BASH_REMATCH[1] <= 20000 )) \
+      && [[ "$aB" == yes ]]; then
+    kt_test_pass "$o (target still alive: the seam held its KILLs)"
+else
+    kt_test_fail "target $P_LB alive=$aB | $o"
+fi
+kt045_cleanup
+
 # A parent killed at the WINDOWS level (taskkill /F, Task Manager, an agent's
 # stopped background task): cygwin keeps the dead pid as the child's ppid —
 # no ppid 1. The root walk treats a parent missing from /proc like ppid 1

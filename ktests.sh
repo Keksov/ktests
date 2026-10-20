@@ -16,7 +16,13 @@
 #                   runner's exit status; PASSED capped at TOTAL as the
 #                   results block shows it), then one `file NAME` line per
 #                   failed test file (basenames, as the results block lists
-#                   them). A run that did not reach its normal end writes
+#                   them), then one `env NAME` line per failed file that
+#                   died of a cygwin fork failure (the runner's retry rule
+#                   gave up on it: no END marker, no counts, a capture that
+#                   matches KT_ENV_FORK_FAILURE_RE — never a file that ran
+#                   to its end, whatever its [FAIL] messages say; gate G2
+#                   review R4: the runner decides what is ENV). A run that
+#                   did not reach its normal end writes
 #                   `0 0 0 RC` and one `error REASON` line instead:
 #                   `usage` (no SCRIPT_DIR, or the option parser exited:
 #                   bad option, -h), `no-test-files` (nothing matched),
@@ -49,6 +55,7 @@ if [[ -n "$__kt_sum_file" ]]; then
         {
             printf '%s %s %s\n' "$t" "$p" "$f"
             (( f > 0 && ${#FAILED_TEST_FILES[@]} > 0 )) && printf 'file %s\n' "${FAILED_TEST_FILES[@]}"
+            (( ${#ENV_TEST_FILES[@]} > 0 )) && printf 'env %s\n' "${ENV_TEST_FILES[@]}"
         } > "${KT_ISO_ROOT:-${__kt_sum_file%/*}}/.kt_summary.$$" 2>/dev/null
         return 0
     }

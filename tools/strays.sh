@@ -12,8 +12,10 @@
 #   strays.sh stop [OPTS]           stop the orphans (ORPHAN=yes) and their
 #                       descendants (sub): TERM+CONT once to each tree's root,
 #                       a grace (3 s; 5.5 s when a root is a ktests.sh, whose
-#                       own group stop needs 5 s), then KILL survivors by pid;
-#                       rc 0 when none is left, rc 1 + the list
+#                       own group stop needs 5 s), then KILL survivors by pid,
+#                       re-sent until they are gone or KT_STRAYS_KILL_MS (ms,
+#                       default 10000: SIGKILL delivery lags under load) have
+#                       passed; rc 0 when none is left, rc 1 + the list
 #   OPTS: --session SID|self (only processes of that session — `self` = this
 #   shell's — and the STRICT rule, see below; the master sweep uses it),
 #   --since EPOCH (only processes started at/after EPOCH, seconds, a fraction
@@ -492,12 +494,14 @@ _kt_strays_adopt() {
 # orphaned ktests.sh then stops its own group, a test shell runs its cleanup
 # — a TERM re-sent every 0.1 s cut those short), a fork-free grace until all
 # are gone (3 s; 5.5 s when a root is a ktests.sh), then KILL by pid what
-# survives (and what was forked meanwhile), up to 20 rounds 0.1 s apart; reap.
-# rc 0 when none is left; else rc 1, KT_STRAYS = what is left.
+# survives (and what was forked meanwhile), re-sent until all are gone or
+# KT_STRAYS_KILL_MS (default 10000) have passed — SIGKILL delivery can lag
+# seconds under load; reap. rc 0 when none is left; else rc 1, KT_STRAYS =
+# what is left.
 kt_strays_stop() {
     local -a args=( "$@" ) roots=()
     local -A __kts_tgt=()
-    local p i t0 grace=3000
+    local p t0 kms grace=3000
     kt_strays_scan "${args[@]}"
     for p in "${KT_STRAYS[@]}"; do
         [[ "${KT_STRAYS_FLAG[$p]}" == yes || "${KT_STRAYS_FLAG[$p]}" == sub ]] || continue
@@ -521,12 +525,22 @@ kt_strays_stop() {
         (( RESULT == 0 )) && break
         (( _KTS_NOW_MS - t0 >= grace )) && break
     done
-    for (( i = 0; i < 20; i++ )); do
+    # KILL by wall clock, not by a round count (gate G2, found in G1): under
+    # full-sweep load SIGKILL DELIVERY lags — a target killed 20x over 2 s was
+    # still alive (its signal thread was not scheduled), and a false "LEFT"
+    # makes the caller's suite (a gate cell) STRAY. Re-send to the
+    # identity-checked targets until they are gone or KT_STRAYS_KILL_MS (ms,
+    # default 10000) have passed; 0.1 s apart for the first 2 s, then 0.25 s.
+    kms="${KT_STRAYS_KILL_MS:-10000}"
+    [[ "$kms" =~ ^[0-9]+$ ]] || kms=10000
+    _kt_strays_ms "$EPOCHREALTIME"; t0=$REPLY
+    while :; do
         _kt_strays_table
         _kt_strays_adopt
         _kt_strays_signal KILL
         (( RESULT == 0 )) && break
-        _kt_strays_nap 0.1
+        (( _KTS_NOW_MS - t0 >= kms )) && break
+        if (( _KTS_NOW_MS - t0 < 2000 )); then _kt_strays_nap 0.1; else _kt_strays_nap 0.25; fi
     done
     _kt_strays_nap_close
     # reap our own children (a no-op for an orphan: its parent is gone)

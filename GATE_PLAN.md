@@ -1,6 +1,6 @@
 # ktests gate — one command for the phase gate (2026-10-19)
 
-**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049.**
+**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049. G2 done 2026-10-20 + critic review round 1 (R1–R14), accepted: `gate all` = master sweep per suite on both runtimes (9011/9012); `tools/gate.sh`, `tests/gate_fixtures/`, tests 050–052, strays.sh KILL by the clock, the runner's `env NAME` summary lines (§4.1–4.3 "G2 as built", "Review round 1").**
 Ledger: [`gate_ledger.json`](gate_ledger.json). Workflow as in the kklass rounds:
 one Opus worker per phase → supervisor review against the live tree (critic on
 G2 and at the end) → ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 →
@@ -166,6 +166,66 @@ its own (`_kt_strays_nap`). **Measured in G0 (§8); the design is fixed as:**
   processes) → the watchdog stops the cell group itself, runs the stray
   check and writes `result` = `segment-killed`.
 
+**G2 as built (2026-10-20)** — the design above, with these changes (052
+pins each):
+
+- **A session of its own for a same-runtime segment** (`setsid` where it
+  exists — MSYS2 —, else `perl -MPOSIX` `setsid()` — Git for Windows has no
+  `setsid`; neither → a `[WARN]`). The stray checks are `--session self`: in
+  the caller's session they would see — and stop — the caller's other
+  detached processes (the ktests runner's sibling test files when 050–052 run
+  a gate, an agent's other jobs). A cross-runtime segment is a session leader
+  anyway.
+- **PATH crosses by the environment, not the spec**: cygwin converts it on
+  the way (a spec copy would name the other runtime's `/usr/bin`); the spec
+  carries the rest (locale `LANG`/`LC_*`, `TZ`, `COMSPEC`, `SYSTEMROOT`, …).
+- **The per-cell timeout is the watchdog's third request** (no `timeout`
+  binary, no fork): the segment writes `run IDX DEADLINE` to `seg-N.cur`;
+  the watchdog's requests are a reason in `seg-N.why` (`stop`, `stale`,
+  `timeout IDX`) plus USR1, repeated every tick until the segment writes the
+  same reason to `seg-N.ack`; a late `timeout` of the previous cell is
+  acknowledged and the wait resumed, never taken for a stop.
+- **`segment-killed` stops by session, not by pgid**: the watchdog runs
+  `kt_strays_stop --session self --since SEGMENT_START` — every detached
+  process of the segment's session, TERM once at each tree's root (the
+  cell's ktests.sh stops its own group), KILL after the grace — so it needs
+  no pgid (the cell's pgid is known only inside `kt_suitejob_run`).
+- **Measured in G2: a tree kill of the LAUNCHER does not reach the segment**
+  (both directions and same-runtime): the `env -i` / `setsid` exec chain cuts
+  the Windows parent link. The segment then stops by the stale heartbeat
+  (30 s; 6–7.5 s with the test knob `KT_GATE_HB_TICKS=6`). The watchdog's
+  own path is exercised by a tree kill of the SEGMENT (`taskkill /F /T` on
+  its Windows pid, written to `seg-N.pid`): stopped in 1.2–3.7 s.
+- **Lines**: the segment appends its cell lines to `seg-N.lines`; the
+  launcher is the one writer of stdout and `progress.txt` (relayed each 1 s
+  tick, only complete lines). A launcher killed without a trap leaves the
+  INTERRUPTED mark to the segment (stale heartbeat) or the watchdog.
+- **`--nohup`** (G0's open point) is implemented: it turns the parent watch
+  off, and so does `nohup gate.sh …` (SIGHUP ignored on entry). Why: the
+  watch cannot tell a parent killed at the Windows level from a parent that
+  exited normally — both are `kill -0` failures — and a run detached on
+  purpose (`nohup gate.sh … &`, `( gate.sh … & )` from a shell that then
+  exits) loses its parent by design; without the opt-out it would stop
+  itself at once. An agent's `run_in_background` keeps the parent alive and
+  needs no flag.
+- **A segment killed from outside while the launcher lives** (no result, or
+  `segment-killed` without a stop): `[WARN]`, verdict FAIL, exit 1; the
+  launcher goes on with the next runtime. A lost parent exits 143 (= TERM).
+- **Review round 1 (2026-10-20)**: spec paths are mixed `C:/…` (R11, any
+  mount prefix; the segment converts them once, `cygpath -u`); the watchdog
+  is no single point of failure (R6): it writes `seg-N.wdpid` and touches
+  `seg-N.wdhb` every tick; the segment checks a live watchdog before every
+  cell (started again once, else `no-watchdog`, exit 1); the launcher
+  watches `wdhb` as the segment watches `hb` and starts a rescue
+  `gate.sh --watchdog` for the segment's main (its pid, session and start in
+  `seg-N.pid`) when it is silent for HB_TICKS; in its own runtime it also
+  signals the segment directly when a stop is unanswered for
+  KT_GATE_STOP_WAIT. The watchdog sends USR1 only while a cell runs, a
+  timeout only for the cell that still runs (R8), the segment acknowledges
+  after `idle` and writes `final` before its last stray check (no nap cut
+  short). Ctrl-Z of the launcher is trapped and refused with a `[WARN]`
+  (R13): a stopped launcher would stop heartbeating.
+
 ### 4.2 Hermetic cell (DG4)
 
 Per cell: `OUT/cells/NNN/{home,tmp,etc,cwd,ckk}` + `log.txt` + `result`. Inside
@@ -194,11 +254,45 @@ the target bash before `exec`:
 - cwd = `cwd/` (neutral) or the suite's `tests/` dir (`--cwd suite`); stdin
   `/dev/null`.
 
+**G2 as built**: the environment is **deny-by-default**, a superset of the
+prefix scrub: the segment starts from `env -i`, then (fork-free, the recipe
+above) unsets every exported variable but `PATH`/`PWD`/`SHLVL` and every
+exported function, and exports only the caller's whitelisted variables from
+the spec (`LANG LANGUAGE LC_* TZ COMSPEC SYSTEMROOT WINDIR SYSTEMDRIVE
+PATHEXT TERM USERNAME NUMBER_OF_PROCESSORS PROCESSOR_ARCHITECTURE OS
+COMPUTERNAME`); per cell the gate's own (`HOME TMPDIR TMP TEMP USERPROFILE
+ProgramData __KK_CFG_ETC KKLASS_CKK_DIR KT_SUMMARY_FILE`; `OLDPWD` unset).
+Both runtimes add `MSYSTEM=MINGW64` to every process started without one —
+the runtime's, not the caller's. The ktests runner isolates each test file
+further (its own HOME / `__KK_CFG_ETC` under the cell's TMPDIR, USERPROFILE
+and ProgramData unset). 051 dumps a probe cell's environment from a polluted
+caller (fake HOME/USERPROFILE with `debug = quiet`, KBOOL_HOME, BASH_ENV,
+VERBOSITY, CDPATH, exported `kk.uses`) — nothing of it arrives, the locale
+does; same counts as from a clean caller, also across runtimes.
+
+*Review round 1:* the segment starts through `env
+--default-signal=INT,QUIT` (R1: a `&` start without job control handed the
+segment and every cell INT/QUIT as SIG_IGN — untrappable; kcl/thttpserver 006
+failed in a cell); the launcher's nap fd (a pty master) is closed for the
+segment (R12: the probe sees fds 0–2 and bash's own script fd); the launcher
+resets its own shell state at start — `set +aefuC`, `+o pipefail/posix`, the
+glob/case `shopt`s off, `CDPATH`/`GLOBIGNORE` unset (R2: an exported CDPATH
+redirected `cd -P OUT` into another, non-empty dir that a later rotation
+would have removed; failglob from BASHOPTS killed the launcher).
+
 A passed cell's sandbox is removed (log and result kept) unless `--keep`. OUT
-default: `${TMPDIR:-/tmp}/kt-gate/<stamp>-<pid>`; the last 10 runs are kept —
-only directories with gate's own marker whose owner pid is gone are ever
-removed (the `kt_iso` dead-pid rules, incl. the other-runtime age guard).
-`LAST` = the newest finished run under the same OUT root.
+default: `${TMPDIR:-/tmp}/kt-gate/<stamp>-<pid>`, made by an atomic `mkdir`
+(a taken name gets `-2`, `-3`, …: the other runtime has its own pids); an
+explicit `--out` is a new dir (atomic `mkdir` of the leaf) or an existing
+EMPTY one (checked on the resolved path, dot names included), claimed by an
+exclusive (`noclobber`) marker `kt-gate 2 PID WINPID START CREATED RUNTIME`.
+*Review round 1 (R3, F15) narrowed the rotation:* only under the default
+root, the last 10 runs are kept; an older dir is removed only when gate made
+it (CREATED=1), its owner is dead (the `kt_iso` dead-pid rules, incl. the
+other-runtime age guard) AND it is complete (every `seg-N.spec` has its
+`seg-N.result`) or older than 2 h — never a neighbour of an explicit `--out`
+(head/new tree copies, a `--compare` base). `LAST` = the newest finished run
+under the same OUT root.
 
 ### 4.3 Results without parsing prose
 
@@ -219,6 +313,34 @@ and no summary file: the runner itself broke) · FAIL · ENV (failed and the log
 matches the fork signature; re-run once, the second run decides) · FLAKY
 (failed, a `--rerun-failed` run of exactly the failed files, `-n` by their
 numbers, same mode, passed) · PASS. `warn=N` is a column, not a verdict.
+
+**G2 as built**: CRASH also when the summary file says `error REASON` (the
+runner stopped before its end: usage, no-test-files, interrupted, …) and
+when it is missing after rc 0 (a wrapper that never ran ktests.sh has no
+counts to PASS on). *Review round 1 (R4, R5, R10) replaced the next two
+sentences of the first build:* the RUNNER decides what is ENV — ktest_runner
+records the failed files its retry rule gave up on (no END marker, no counts,
+a capture matching the signature) and `ktests.sh` writes them as `env NAME`
+lines into the summary (048 pins it); the gate's own look at the log matches
+the signature only in RAW lines, never in a test's `[FAIL]`/`[PASS]`/`[WARN]`
+message or its continuation lines (ktests 035 talks about fork failures in
+its messages: that is a FAIL), the runner's own "source aborted" line
+included. ENV = a FAIL with `env` lines or a raw signature line, or a CRASH
+with a raw signature line or without a summary at rc 125–127 (the runner
+could not start) — the same retry, the second run decides. A summary
+`error no-test-files` is NOTRUN (not a failure; its own column; every cell
+NOTRUN = `[WARN] nothing ran`, exit 1; NOTRUN cells are in no field of the
+machine line, whose field order stays as documented). The fail lines shown
+under a FAIL are its messages with their continuation lines, 5 lines in all;
+the runner's list of failed files is told apart by the summary's `file`
+names (spaces allowed). A cell the
+gate itself stopped (STOP, stale heartbeat, segment killed) is INTERRUPTED,
+counted apart, never a suite verdict. The ENV retry runs in a fresh sandbox;
+attempt 1 stays as `log.1.txt`, `summary.1`, `fails.1.txt` and the result's
+`attempt1=` line. A stray found only by the segment's final check (window =
+the segment's start) turns the cell it started in to STRAY afterwards (an
+extra line). The machine line keeps the plan's fields; its `fail` counts
+FAIL + CRASH.
 
 ### 4.4 Reports (DG8)
 
@@ -267,7 +389,7 @@ the master now sources `suitejob.sh` too; no assertion changed.
 |---|---|---|
 | **G0** probe (no product code) | measure on both runtimes: launcher→segment rc propagation; STOP file and `-nt` heartbeat latency; launcher killed by SIGKILL / `taskkill /F` / TERM → segment notices ≤ 30 s and leaves nothing; `cygpath` of HOME/TMPDIR across runtimes; cost of an empty cell (sandbox create + scrub + remove). Report → plan amendments here (§4.1 may change) | supervisor review of the report |
 | **G1** shared code | `tools/suitejob.sh` + `tests/tests.sh` on it (DG5); `KT_SUMMARY_FILE` in `ktests.sh` (nested-safe); tests 048 (summary file), 049 (suitejob.sh) | ktests suite + **full master sweep both bashes, totals identical to before**; 045 unmodified (G1: one fixture line, its fake root copies suitejob.sh too) |
-| **G2** gate core | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 050 (CLI/resolution), 051 (verdicts), 052 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
+| **G2** gate core (done 2026-10-20, awaiting review) | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 050 (CLI/resolution), 051 (verdicts), 052 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
 | **G3** reports + selection | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 053 (reports/compare), 054 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
 | **G4** adoption | `tools/README.md` gate section, `docs/README.md`; worker/critic brief template: "the gate is `gate.sh … all --compare LAST`; paste `summary.json` totals into the ledger"; final **critic** over G1–G3; the round's own closing gate is run with `gate.sh` | owner: commit / push |
 
@@ -320,6 +442,19 @@ before creating files).
   at start, test in G1).
 - **Commit-charge ENV failures** (machine note 2026-10-14): ENV is a verdict,
   not a test bug; exit 3 tells the supervisor to re-run, not to fix.
+- **SIGKILL delivery lag** (found in G1, fixed in G2): `kt_strays_stop` sent
+  KILL 20× over 2 s and reported LEFT while the targets were merely not yet
+  scheduled — a false STRAY for a gate cell. The KILL phase now runs by the
+  clock (`KT_STRAYS_KILL_MS`, 10 s); 045 pins it through a seam (a wrapped
+  `_kt_strays_signal` holds the KILLs for a while; the identity checks still
+  run). The first build used a Windows-suspended target (`NtSuspendProcess`);
+  review round 1 (R7) removed it: a killed 045 would have left a suspended
+  process behind, forever, invisible to strays.sh (its cmdline read returns
+  the exe path while it is suspended).
+- **A lost watchdog** (review R6): the segment's watchdog enforces
+  `--timeout` and delivers STOP/stale; the launcher replaces a silent one by a
+  rescue (`seg-N.wdhb`), the segment refuses to start a cell without one.
+  The watchdog's segment-killed path is done by one watchdog (a lock dir).
 - **Duration**: a full two-runtime gate is ~66 min; agents run it with
   `run_in_background` and watch `progress.txt`; `--parallel` (~35 min) is for
   orientation runs only (DG3).

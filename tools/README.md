@@ -1,4 +1,92 @@
-# ktests/tools — load tools for timing tests, the stray-process guard, the suite-job library
+# ktests/tools — the phase gate, load tools for timing tests, the stray-process guard, the suite-job library
+
+## gate.sh — the phase gate
+
+One command instead of a hand-written harness (GATE_PLAN.md): run suites
+under one or more bash runtimes, every suite as a hermetic **cell**, one line
+per cell, a summary per runtime, one machine line.
+
+```bash
+G=ktests/tools/gate.sh
+B52=C:/bin/Git/usr/bin/bash.exe B53=C:/bin/msys64/usr/bin/bash.exe
+bash $G --bash $B52 --bash $B53 all                          # the phase gate (~66 min)
+bash $G --bash $B53 kcl/tstringlist kklass --timeout 900     # some suites, one runtime
+KT_GATE_BASHES="$B52;$B53" bash $G kcl/tregex -- -n 1-12    # default runtimes; args to every tests.sh
+bash $G --root "$SCRATCH/head" --out "$SCRATCH/g_head" kklass # a tree copy, an OUT of your choice
+```
+
+**Agents**: start it with `run_in_background`, watch `tail OUT/progress.txt`
+(OUT is the second header line; every line goes there too), read the last
+line: `__GATE__:VERDICT:cells:pass:fail:flaky:env:timeout:stray:passed:total`
+(`fail` = FAIL + CRASH cells; NOTRUN cells are in no field). `--timeout`
+bounds each cell — enforced by the segment's watchdog, which the launcher
+replaces by a rescue watchdog when it goes silent (and the segment refuses to
+start a cell without one); a killed gate (TaskStop, SIGKILL, `taskkill`, a
+dead parent) stops its cells by itself. A `timeout N` wrapper around the
+whole gate is still a sound outer bound for unattended runs: it adds nothing
+the gate needs, it only caps the wall time.
+
+Suites: `all`, ids (`kkore`, `kcl` = kcl/tests, `kcl/tstringlist`) or a
+unique last component (`tstringlist`); unknown/ambiguous → rc 2 before
+anything runs. Options: `--bash PATH` (repeatable; runtimes one after
+another), `--mode threaded|single`, `--workers N`, `--cwd neutral|suite`,
+`--timeout SEC` (per cell, default 1800), `--root DIR`, `--out DIR` (new, or
+empty — dot names count; claimed by an exclusive marker), `--keep` (keep
+passed cells' sandboxes), `--nohup`, `-- ARGS`. G3 options (`--compare`,
+`--rerun-failed`, `--changed`, `--repeat`, `--parallel`, `--fail-fast`,
+`--warm`, `--mode/--cwd both`) are usage errors for now. Ctrl-Z is not
+supported (a `[WARN]`, ignored). The caller's exported `SHELLOPTS`,
+`BASHOPTS`, `CDPATH`, `GLOBIGNORE` change nothing (the launcher resets them).
+
+| verdict (worst wins) | meaning | exit |
+|---|---|---|
+| STRAY | the cell left a process (found after the cell or at the segment's end, stopped) | 1 |
+| TIMEOUT | stopped at `--timeout` (its group: TERM, 15 s, KILL) | 1 |
+| NOTRUN | the suite has no test file (summary `error no-test-files`): not a failure, a column of its own | 0 (1 if every cell is NOTRUN: `[WARN] nothing ran`) |
+| CRASH | no summary from the runner (`KT_SUMMARY_FILE`), or `error REASON` in it | 1 |
+| FAIL | the suite failed; the first 5 lines of its `[FAIL]` messages under the line | 1 |
+| ENV | the machine, not the test — re-run once in a fresh sandbox, the 2nd run decides (both kept): a FAIL whose summary has `env NAME` lines (the runner saw a file die of a fork failure) or whose log has a RAW fork-failure line (never a test's own `[FAIL]`/`[PASS]`/`[WARN]` message); a CRASH with such a raw line or without a summary at rc 125–127 | 3 if left |
+| PASS | `warn=N` is a column (the log's `[WARN]` lines), not a verdict | 0 |
+| INTERRUPTED | the gate was stopped while the cell ran | 128+N |
+
+Exit 2 = usage, 4 = reserved (FLAKY, G3), 128+N = interrupted (TERM 143,
+INT 130, HUP 129; a lost parent 143). A segment killed from outside, or one
+whose watchdog could not be started again (`no-watchdog`) → [WARN], exit 1.
+
+**Processes** (two cygwin runtimes cannot signal or see each other): the
+*launcher* (as started) writes a spec per runtime (`OUT/seg-N.spec`, mixed
+`C:/…` paths, the caller's locale/TZ/COMSPEC…), starts one *segment* per
+runtime (`env --default-signal=INT,QUIT -i`: INT/QUIT stay trappable in every
+cell; a session of its own; no inherited fd), never signals it —
+`OUT/seg-N.result` is its verdict — relays its lines, rewrites `OUT/hb` every
+5 s, watches its own parent (parent gone = TERM; `--nohup` or `nohup gate.sh`
+turns that off for a run detached on purpose) and the watchdog's
+`OUT/seg-N.wdhb` (silent 30 s → a rescue watchdog). The *segment* (`gate.sh
+--segment`) runs its cells through `suitejob.sh` (`kt_suitejob_run`: a
+job-control group, `wait` — no fork while a cell runs), checks before each
+cell that a watchdog lives, and the stray check after each cell and at its
+end; its exec'd *watchdog* (`gate.sh --watchdog`, builtins, 1 s tick) sends
+USR1 — only while a cell runs, repeated until acknowledged — on `OUT/STOP`
+(launcher TERM/INT/HUP), on a stale heartbeat (launcher killed: 30 ticks) and
+at the running cell's deadline; when the segment itself is killed (a tree
+kill) the watchdog stops the cells and writes `segment-killed`. A *cell* runs
+with its own HOME, TMPDIR/TMP/TEMP, USERPROFILE, ProgramData, `__KK_CFG_ETC`,
+`KKLASS_CKK_DIR`, cwd (`OUT/cells/NNN/…`), stdin `/dev/null`, fds 0–2,
+`KT_SUMMARY_FILE`, and nothing else of the caller's environment
+(deny-by-default; locale etc. from the spec).
+
+**Outputs** in OUT (default `${TMPDIR:-/tmp}/kt-gate/STAMP-PID`, made by an
+atomic mkdir; only under that default root are old runs rotated: the newest
+10 gate-marked dirs stay, an older one is removed only when gate made it, its
+owner is dead and it is complete or older than 2 h — never a neighbour of an
+explicit `--out`): `progress.txt`, `FINISHED` (the machine line) or
+`INTERRUPTED` (who stopped it), `argv.txt`, `cells/NNN/{result,log.txt,
+summary,fails.txt,strays.txt}` (+ `log.1.txt` etc. of an ENV first attempt;
+`result` = KEY=VALUE, G3's cells.tsv columns), `seg-N.{spec,log,result}`.
+Tests: `tests/050_GateCli.sh`, `051_GateVerdicts.sh` (every fixture of
+`tests/gate_fixtures/`, hermeticity), `052_GateSignals.sh` (TERM, INT,
+SIGKILL, `taskkill /F`, parent kill, `taskkill /T` of launcher and segment,
+the watchdog killed, both directions, no fork in the segment).
 
 A timing assertion is only as stable as the slowest thing inside its timed
 window. On MSYS/cygwin that is a **fork**: a bash forks in ~15 ms when the
@@ -109,7 +197,12 @@ pid `KT_STRAYS_PPID/_AGE/_FLAG/_CMD/_START`), `kt_strays_stop`,
   0.1 s cut those short), a fork-free grace until all are gone (3 s; 5.5 s
   when a root is a ktests.sh), then KILL by pid what survives — including
   children forked meanwhile — with the start time checked, so a reused pid is
-  never hit.
+  never hit. The KILL is re-sent until the targets are gone or
+  `KT_STRAYS_KILL_MS` (default 10000) have passed — by the clock, not a round
+  count: under full-sweep load SIGKILL *delivery* lags seconds (gate G1/G2:
+  20 KILLs over 2 s, still alive → a false "LEFT"); 045 pins it through a
+  seam (a wrapped `_kt_strays_signal` holds the KILLs for a while — no
+  OS-level suspend: a killed test must never leave a suspended process).
 * **Runtimes** — Git-bash 5.2 and MSYS2 5.3 are separate cygwin runtimes:
   `strays.sh` sees (and stops) only the processes of the bash that runs it.
   Run it once under each.

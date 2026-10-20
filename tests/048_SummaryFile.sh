@@ -68,6 +68,16 @@ out=\"\$(env -u KTESTS_LIB_DIR bash '$LIB/ktests.sh' '$TMP/ok' Inner 2>&1)\"
 kt_test_start nested
 [[ \"\$out\" == *'Total tests: 3'* ]] && kt_test_pass nested || kt_test_fail \"\$out\""
 kt048_file nest 002_m 'kt_test_start m; kt_test_pass m'
+# envy (gate G2 review R4): 002 dies of a (simulated) fork failure — cygwin's
+# raw line, then the shell is gone without its END marker and counts (KILL:
+# no EXIT trap) — so the runner's retry rule gives up on it: `env 002_die.sh`;
+# 003 runs to its end and FAILs with a message that only TALKS about a fork
+# failure: a failure of the test, no `env` line
+kt048_file envy 001_ok 'kt_test_start ok; kt_test_pass ok'
+kt048_file envy 002_die 'kt_test_start d
+echo "      0 [main] bash 4242 dofork: child -1 - CreateProcessW failed for bash.exe, errno 11" >&2
+kill -KILL $$'
+kt048_file envy 003_msg 'kt_test_start m; kt_test_fail "expected the message: bash: fork: retry: Resource temporarily unavailable"'
 # slow: a test file that blocks until it is stopped (owner-tied: it ends when
 # this file's shell is gone)
 kt048_file slow 001_s "kt_test_start s
@@ -111,6 +121,13 @@ for mode in single threaded; do
     kt_test_start "failing suite ($mode): counts, rc 1 and both failed files by name"
     kt048_run "bad.$mode" bad -m "$mode"
     if [[ "$RC" == 1 && "$SUM" == "4 2 2 1|file 001_a.sh|file 003_c.sh" && "$OUT" == *"[FAIL]"*"001_a.sh"* ]]; then
+        kt_test_pass "$SUM"
+    else
+        kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
+    fi
+    kt_test_start "fork-failure death ($mode): 'env NAME' for the file the retry rule gave up on, none for a [FAIL] message about forks"
+    kt048_run "envy.$mode" envy -m "$mode"
+    if [[ "$RC" == 1 && "$SUM" == "3 1 2 1|file 002_die.sh|file 003_msg.sh|env 002_die.sh" ]]; then
         kt_test_pass "$SUM"
     else
         kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"

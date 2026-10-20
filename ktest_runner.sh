@@ -35,6 +35,11 @@ declare -ga TESTS_TO_RUN=()
 
 # Array of failed test file names
 declare -ga FAILED_TEST_FILES=()
+# The failed files that died of a cygwin fork failure (gate G2, review R4):
+# the runner's retry rule gave up on them — no END marker, no counts line, a
+# capture matching KT_ENV_FORK_FAILURE_RE after the last attempt. A subset of
+# FAILED_TEST_FILES; ktests.sh writes them to KT_SUMMARY_FILE as `env NAME`.
+declare -ga ENV_TEST_FILES=()
 
 # Constants for error handling
 readonly KT_ERROR_COUNTS="__COUNTS__:1:0:1"
@@ -893,7 +898,8 @@ kt_runner_iso_end() {
 # Sets: output_content, counts_line, count_total, count_passed, count_failed
 kt_runner_execute_single_test() {
     local test_file="$1"
-    
+    count_env=0
+
     [[ ! -f "$test_file" ]] && {
         output_content=""
         kt_runner_set_error_counts
@@ -1004,6 +1010,13 @@ kt_runner_execute_single_test() {
         # Brief backoff to let transient resource pressure (e.g. fork limits) ease.
         (( __kt_attempt < __kt_max_attempts )) && sleep 0.1
     done
+    # the retry rule gave up on a fork failure: the file is ENV (count_env=1,
+    # the caller lists it in ENV_TEST_FILES). Only then — a file that ran to
+    # its END and failed is a verdict of the test, whatever its messages say.
+    if [[ -z "$_kt_scan_end" && -z "$counts_line" && -n "$output_content" \
+          && "$output_content" =~ $KT_ENV_FORK_FAILURE_RE ]]; then
+        count_env=1
+    fi
 
     # Fold an abort verdict (missing END, source rc, unclosed test, bash fatal
     # diagnostic) into counts_line and output_content.
@@ -1109,6 +1122,7 @@ kt_runner_execute_sequential() {
         if ((count_failed > 0)); then
             local clean_file=$(kt_runner_clean_filename "$test_file")
             FAILED_TEST_FILES+=("$(basename "$clean_file")")
+            (( count_env )) && ENV_TEST_FILES+=("$(basename "$clean_file")")
         fi
         
         # Filter and display output
@@ -1194,11 +1208,12 @@ kt_runner_execute_threaded() {
             # Use common execution function
             kt_runner_execute_single_test "$test_file"
 
-            # Save results to file
+            # Save results to file (a fork-failure death: a marker beside it)
             {
                 echo "$counts_line"
                 echo "$output_content"
             } > "$result_file"
+            (( count_env )) && : > "$result_file.env"
         }
 
         export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture kt_fixture_stale_dir kt_fixture_owner_mark
@@ -1276,10 +1291,10 @@ kt_runner_execute_threaded() {
             local failed_name="${result_file##*/}"
             failed_name="${failed_name%.result}"
             if [[ "$failed_name" =~ ^[0-9]+$ ]] && [[ $failed_name -lt ${#test_files[@]} ]]; then
-                FAILED_TEST_FILES+=("$(basename "${test_files[$failed_name]}")")
-            else
-                FAILED_TEST_FILES+=("$failed_name")
+                failed_name="$(basename "${test_files[$failed_name]}")"
             fi
+            FAILED_TEST_FILES+=("$failed_name")
+            [[ -e "$result_file.env" ]] && ENV_TEST_FILES+=("$failed_name")
         fi
 
         # Show output with filtering
@@ -1328,7 +1343,7 @@ kt_runner_execute_tests() {
 
     # Reset counters before execution
     kt_test_reset_counts
-    FAILED_TEST_FILES=()
+    FAILED_TEST_FILES=() ENV_TEST_FILES=()
 
     # Find test files. A non-empty filter must apply to what actually RUNS —
     # previously the filter only shaped the displayed list while execution
