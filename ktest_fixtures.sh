@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_fixtures.sh - Fixture and resource management for tests
 # Provides temporary directory management, setup/teardown, and cleanup coordination
 #

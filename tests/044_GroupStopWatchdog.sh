@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GroupStopWatchdog (ktests round 5, P3 review round 2: N1, N4; 2026-10-16).
 #
 # Since review R1 the run and the threaded workers are BACKGROUND process

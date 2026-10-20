@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # forkstorm.sh — a FORK storm: N sibling bash processes that fork in a tight
 # loop (`x=$(:)`), the load that makes timing assertions flaky on MSYS/cygwin.
 #

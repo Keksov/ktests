@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gate.sh — the phase gate (ktests/GATE_PLAN.md): run test suites under one or
 # more bash runtimes, every suite as a hermetic CELL of its own, and report a
 # line per cell, a summary per runtime and one machine line.

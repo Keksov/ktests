@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_source.sh - Helper to source ktest.sh reliably in all contexts
 # Usage: source "$(dirname "$0")/../ktest_source.sh"
 #

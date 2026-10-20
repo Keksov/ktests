@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # strays.sh — find and stop STRAY processes of the kbool test machinery: test
 # runners, test files, fork-storm workers and their children whose owner is
 # gone. On 2026-10-16 a killed test/load run left 8 fork-storm workers and a

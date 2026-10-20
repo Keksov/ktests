@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Counter management and manipulation functions
 
 # Only source if framework not already loaded

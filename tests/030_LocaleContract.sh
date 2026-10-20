@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # LocaleContract — the test corpus runs under UTF-8 (kcl decision D6,
 # review 2026-09-06, finding X-LOCALE: TSH-04 / tregex T3).
 #

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Core framework initialization and sourcing
 
 # Only source if framework not already loaded

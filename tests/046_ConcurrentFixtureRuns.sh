@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ConcurrentFixtureRuns (ktests round 6, S2; 2026-10-18). The fixture dir was
 # `<tests>/.tmp/<Name>.<file>` — the same for every run of a file: a second
 # run's setup wiped the first run's LIVE dir as "stale" and the runner's

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_assertions.sh - Assertion helpers for testing
 # Provides common assertion patterns for testing shell functions
 #

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GateCli (gate G2). ktests/tools/gate.sh's command line: options and their
 # values (the G3 options' too), suite resolution (all / id / unique
 # last component; unknown and ambiguous are usage errors, rc 2, before

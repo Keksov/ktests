@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Integration tests: Full test framework workflow
 
 # Only source if framework not already loaded
@@ -14,7 +14,7 @@ INTEGRATION_DIR=$(kt_fixture_tmpdir_create "integration_tests")
 # Create a comprehensive test file
 kt_test_start "Create integration test file"
 cat > "$INTEGRATION_DIR/001_FullIntegration.sh" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 source "$(cd "$(dirname "$0")/../../.." && pwd)/ktests/ktest.sh"
 kt_test_init "FullIntegration" "$(dirname "$0")"
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Framework information and help functions
 
 # Only source if framework not already loaded

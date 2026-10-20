@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest.sh - Main testing framework orchestrator
 # This is the entry point that loads all testing framework components
 #

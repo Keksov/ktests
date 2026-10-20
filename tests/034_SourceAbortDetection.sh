@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SourceAbortDetection (ktests fix plan T1 / P0, 2026-10-01).
 #
 # A test file that dies part-way used to be reported GREEN with a silently

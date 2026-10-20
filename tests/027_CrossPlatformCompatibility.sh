@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Cross-platform compatibility tests for the testing framework
 
 # Only source if framework not already loaded

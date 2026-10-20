@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Test runner argument parsing
 
 # Only source if framework not already loaded

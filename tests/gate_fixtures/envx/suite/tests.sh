@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gate fixture "envx" (ktests/tests/gate_fixtures, gate G2) — a suite wrapper as
 # every kbool suite has one; mkroot.sh copies this dir to ROOT/envx/tests/ (or
 # ROOT/ID/tests: the ktests library is looked up upwards)

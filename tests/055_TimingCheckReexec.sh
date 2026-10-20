@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TimingCheckReexec (gate G4, found_in_G0; review round 1 R1):
 # tools/timing_check.sh --bash B runs itself again under B as a CHILD started
 # with `env -i`, which gets what it needs from a spec file in a private dir

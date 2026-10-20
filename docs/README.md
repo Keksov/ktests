@@ -319,7 +319,7 @@ cannot run your registered handlers then).
 ## Example Test
 
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 init_test_tmpdir "001"

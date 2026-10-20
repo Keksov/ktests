@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # RetryRuleAndSignatures (ktests fix plan T1 / P0, 2026-10-01).
 #
 # The runner re-runs a test file ONLY when it left no END marker, no counts

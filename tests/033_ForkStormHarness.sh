@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ForkStormHarness — tools/forkstorm.sh, the load generator for timing tests.
 #
 # A timing assertion with a fork inside its window is only as stable as the

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_core.sh - Core testing framework
 # Provides fundamental logging, counters, and test result tracking
 # 

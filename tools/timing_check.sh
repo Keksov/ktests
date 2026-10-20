@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # timing_check.sh — run test files (or a whole suite) repeatedly under a fork
 # storm and report the pass rate: the load generator for timing assertions.
 #

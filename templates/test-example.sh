@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # test-example.sh - Example test file using KK testing framework
 #
 # This template shows how to structure a test file using the framework.

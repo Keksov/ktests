@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Simple test that should pass
 
 # Only source if framework not already loaded

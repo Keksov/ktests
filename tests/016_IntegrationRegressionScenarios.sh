@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Integration tests: Regression scenarios and edge cases
 
 # Only source if framework not already loaded

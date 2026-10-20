@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Integration tests: Parallel test execution and result aggregation
 
 # Only source if framework not already loaded
@@ -15,7 +15,7 @@ PARALLEL_DIR=$(kt_fixture_tmpdir_create "parallel_tests")
 kt_test_start "Create multiple test files for parallel execution"
 for i in {1..5}; do
     cat > "$PARALLEL_DIR/$(printf '%03d' $i)_ParallelTest.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "\$(cd "\$(dirname "\$0")/../../.." && pwd)/ktests/ktest.sh"
 KT__FILE="\$(basename "\${BASH_SOURCE[0]}")"
 kt_test_init "ParallelTest$i" "\$(dirname "\$0")"

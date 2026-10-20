@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GateSelection (gate G3). Which cells ktests/tools/gate.sh runs:
 #   --changed (DG6, GATE_PLAN 4.5) on a SCRATCH git fixture — a root repo with
 #   a fake kcl/ tree (units ua, ub = `kk.uses ua`, ud; test files that use

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FixtureDirPerFile (kcl review P8-F2, owner decision 2026-09-09).
 #
 # The per-file fixture directory used to be `<tests>/.tmp/<name passed to
@@ -18,7 +18,7 @@ TMP="$(kt_fixture_tmpdir)"
 mkdir -p "$TMP/suite"
 for f in alpha beta; do
 cat > "$TMP/suite/probe_$f.sh" <<'FIXEOF'
-#!/bin/bash
+#!/usr/bin/env bash
 source "$KTEST_SOURCE_PATH"
 kt_test_init "SameName" "$(dirname "$0")"
 kt_test_start "probe"

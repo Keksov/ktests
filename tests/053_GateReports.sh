@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GateReports (gate G3). ktests/tools/gate.sh's reports (GATE_PLAN 4.4, DG8):
 # OUT/cells.tsv (the header, one row per planned cell, no tab/newline in a
 # value) and OUT/summary.json (valid JSON — checked with node — with the

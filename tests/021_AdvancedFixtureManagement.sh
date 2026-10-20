@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Advanced fixture management functions
 
 # Only source if framework not already loaded

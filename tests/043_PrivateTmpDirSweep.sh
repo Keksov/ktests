@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PrivateTmpDirSweep (ktests round 5, T11 / DT11, 2026-10-16).
 #
 # Eight kcl tstringhelper files made a private `<tests>/.tmp/<file name>` with

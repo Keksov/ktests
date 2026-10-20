@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # 015_IntegrationReportGeneration.sh
 # Integration test: Report generation and result display

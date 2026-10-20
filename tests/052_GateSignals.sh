@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GateSignals (gate G2). ktests/tools/gate.sh when it is stopped or killed
 # from outside while a cell runs (GATE_PLAN 4.1, 6.4): TERM to the launcher,
 # SIGKILL, `taskkill /F` (no trap: the segment sees the heartbeat go stale),

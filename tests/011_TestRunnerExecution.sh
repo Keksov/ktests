@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Test runner execution
 
 # Only source if framework not already loaded
@@ -13,7 +13,7 @@ INTEGRATION_TMPDIR=$(kt_fixture_tmpdir)
 # Create a sample test file
 kt_test_start "Create sample test file"
 cat > "$INTEGRATION_TMPDIR/001_SampleTest.sh" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 source "$(cd "$(dirname "$0")/../../.." && pwd)/ktests/ktest.sh"
 kt_test_init "SampleTest" "$(dirname "$0")"
 kt_test_start "Sample test assertion"

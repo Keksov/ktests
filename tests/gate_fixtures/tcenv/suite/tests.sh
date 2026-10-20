@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # fixture "tcenv" (test 055, tools/timing_check.sh --bash): what the suite
 # wrapper sees when timing_check runs it in its --bash child — the caller's
 # allowlisted / --pass-env variables, path values in the C:/ spelling

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Numeric assertion checks
 
 # Only source if framework not already loaded

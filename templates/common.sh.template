@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # common.sh - Shared setup code for <MODULE_NAME> tests
 #
 # This template provides the standard setup for test suites using the

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FileScopeReturn (ktests round 3, T2 / DT2, 2026-10-02).
 #
 # A file-scope `return 1` BETWEEN tests ends the file early with source rc 1 —

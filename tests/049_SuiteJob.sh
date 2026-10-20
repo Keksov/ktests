@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SuiteJob (gate G1, DG5). ktests/tools/suitejob.sh holds the master sweep's
 # suite-job machinery, shared by tests/tests.sh and ktests/tools/gate.sh:
 # kt_suitejob_discover (the master's process_dir walk), kt_suitejob_run (a

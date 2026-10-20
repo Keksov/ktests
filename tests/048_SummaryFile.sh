@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SummaryFile (gate G1, GATE_PLAN §4.3). `KT_SUMMARY_FILE=PATH ktests.sh …`
 # writes a machine summary of the run, so a tool (ktests/tools/gate.sh) needs
 # no parsing of the human output: line 1 `TOTAL PASSED FAILED RC`, then one

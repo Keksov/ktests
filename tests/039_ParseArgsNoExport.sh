@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ParseArgsNoExport (ktests round 4, T7 / DT7, 2026-10-05).
 #
 # kt_runner_parse_args used to end with

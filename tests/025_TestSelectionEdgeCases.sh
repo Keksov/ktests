@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Test selection parsing edge cases and error scenarios
 
 # Only source if framework not already loaded

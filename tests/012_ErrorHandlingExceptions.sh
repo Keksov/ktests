@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Error handling and exception scenarios
 
 # Only source if framework not already loaded

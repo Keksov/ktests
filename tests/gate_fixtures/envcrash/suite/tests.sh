@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gate fixture "envcrash" (gate G2 review R5): the FIRST run (no marker) is a
 # runner that dies of a fork failure — cygwin's raw line, then gone without a
 # summary: CRASH with the signature = ENV, re-run once; the second run passes

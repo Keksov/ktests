@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # OwnExitTrapCleanup (ktests round 3, T5 / DT5, 2026-10-02).
 #
 # A test that installs its own `trap … EXIT` REPLACES kt_test_init's trap, so

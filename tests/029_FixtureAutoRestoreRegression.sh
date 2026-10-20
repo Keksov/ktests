@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FixtureAutoRestoreRegression - guards P4.1: the auto-restore-on-teardown handler
 # used to never fire (registered name had a trailing space that declare -F could
 # not match) and a PID-only handler name collided across multiple backups.

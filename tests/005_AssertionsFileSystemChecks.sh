@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: File system assertion checks
 
 # Only source if framework not already loaded

@@ -72,7 +72,7 @@ ktests/
 
 ### Simplest Test
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 test_start "My first test"
@@ -82,7 +82,7 @@ kt_assert_equals "hello" "hello" "Values match"
 
 ### Test with Fixtures
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 init_test_tmpdir "001"

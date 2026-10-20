@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # suitejob.sh — run test suites as jobs of their own: the suite-job machinery
 # of the master sweep (tests/tests.sh), moved here in gate G1 (DG5) so that the
 # master and ktests/tools/gate.sh share one implementation. A library: source

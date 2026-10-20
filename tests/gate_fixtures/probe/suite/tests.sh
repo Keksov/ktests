@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gate fixture "probe" (gate G2): the hermetic cell seen from inside. This
 # wrapper dumps the CELL's environment (what the gate gave it, before the
 # ktests runner isolates each test file further) next to itself — the fixture

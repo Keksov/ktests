@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # StrayGuard (ktests round 5, P3b; 2026-10-16). A killed test/load run left 8
 # fork-storm workers and a whole ktests process tree running for ~5 h. The
 # guard: ktests/tools/strays.sh (list/stop the ORPHANED processes of the test

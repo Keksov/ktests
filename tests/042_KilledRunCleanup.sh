@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # KilledRunCleanup (ktests round 5, T9 / DT9, 2026-10-16; review R1/R6/R7).
 #
 # The threaded runner kept its result files in a bare `mktemp -d` (a default

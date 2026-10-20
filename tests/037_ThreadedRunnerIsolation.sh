@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ThreadedRunnerIsolation (ktests round 3, T3/T4/T4b / DT3, 2026-10-02).
 #
 # T3: kt_runner_execute_threaded used to `export` its worker variables and

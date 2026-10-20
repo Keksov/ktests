@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Direct test runner execution functions
 
 # Only source if framework not already loaded
@@ -16,7 +16,7 @@ kt_test_start "Create sample test files for execution"
 FRAMEWORK_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ktest.sh"
 
 cat > "$TEST_DIR/test1.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "$FRAMEWORK_PATH"
 kt_test_init "Test1" "\$(dirname "\$0")"
 kt_test_start "Test 1 assertion"
@@ -28,7 +28,7 @@ fi
 EOF
 
 cat > "$TEST_DIR/test2.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "$FRAMEWORK_PATH"
 kt_test_init "Test2" "\$(dirname "\$0")"
 kt_test_start "Test 2 assertion"
@@ -40,7 +40,7 @@ fi
 EOF
 
 cat > "$TEST_DIR/test3.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "$FRAMEWORK_PATH"
 kt_test_init "Test3" "\$(dirname "\$0")"
 kt_test_start "Test 3 assertion"
@@ -109,7 +109,7 @@ kt_test_start "kt_runner_execute_tests with specific directory"
 dir_test_dir=$(kt_fixture_tmpdir_create "dir_scan_test")
 
 cat > "$dir_test_dir/001_test.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "$FRAMEWORK_PATH"
 kt_test_init "DirTest1" "\$(dirname "\$0")"
 kt_test_start "Dir test 1"
@@ -117,7 +117,7 @@ kt_assert_equals "a" "a" "Should pass" && kt_test_pass "Dir test 1"
 EOF
 
 cat > "$dir_test_dir/002_test.sh" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 source "$FRAMEWORK_PATH"
 kt_test_init "DirTest2" "\$(dirname "\$0")"
 kt_test_start "Dir test 2"

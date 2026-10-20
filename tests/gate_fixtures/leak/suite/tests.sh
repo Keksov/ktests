@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gate fixture "leak" (gate G2): the wrapper leaves a detached `sleep` behind
 # (outside ktests.sh's own run group, so only the gate's stray check sees it);
 # its argv[0] carries the fixture root (a nonce per test run). Bounded: 30 s.

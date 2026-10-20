@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FixtureBaseAbsolute (ktests round 5, T8 / DT8, 2026-10-16).
 #
 # 159 test files pass `$(dirname "$0")` to kt_test_init — RELATIVE when a file

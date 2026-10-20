@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Advanced integration scenarios and complex test workflows
 
 # Only source if framework not already loaded

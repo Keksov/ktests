@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # mkroot.sh ROOT NAME... — build a fake kbool root for the gate tests (050-052):
 # ROOT/ktests = a copy of this ktests' library (*.sh, tools/*.sh), and for each
 # NAME ROOT/NAME/tests = a copy of gate_fixtures/NAME/suite. The fixtures are

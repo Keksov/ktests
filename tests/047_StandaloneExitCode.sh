@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # StandaloneExitCode (ktests round 6, S3; owner decision 2026-10-18). A test
 # file run standalone (`bash tests/X.sh`) exited 0 even with a [FAIL] — only
 # the runner judged it (critic r6 info). Now its exit status reflects the

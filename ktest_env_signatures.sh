@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_env_signatures.sh - the ONE definition of the cygwin fork-failure
 # signatures ("ENV": the machine failed, not the test).
 #

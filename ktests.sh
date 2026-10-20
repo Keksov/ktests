@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktests.sh - Common test framework runner
 # Usage: ktests.sh SCRIPT_DIR [SUITE_NAME] [TEST_FILTER] [OPTIONS]
 # Parameters:

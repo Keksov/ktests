@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ktest_runner.sh - Test discovery and execution engine
 # Handles test file discovery, CLI parsing, sequential/parallel execution, and results aggregation
 #

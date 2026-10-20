@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # RunnerArgZero (found_in_P4: P4-F2).
 #
 # The runner starts every test file as `bash -c '... source "$KT_CLEAN_FILE"'`,
@@ -17,7 +17,7 @@ kt_test_init "RunnerArgZero" "$SCRIPT_DIR" "$@"
 TMP="$(kt_fixture_tmpdir)"
 FIX="$TMP/probe_argzero.sh"
 cat > "$FIX" <<'FIXEOF'
-#!/bin/bash
+#!/usr/bin/env bash
 source "$KTEST_SOURCE_PATH"
 kt_test_init "probe" "$(dirname "$0")"
 kt_test_start "probe"

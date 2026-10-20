@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GateVerdicts (gate G2). Every gate fixture (tests/gate_fixtures) through
 # ktests/tools/gate.sh: its verdict, the line, the result file and the exit
 # code — PASS (0), warn=N (a column, still PASS), ENV on the first attempt

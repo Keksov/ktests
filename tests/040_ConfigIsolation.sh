@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ConfigIsolation (kbool `uses` phase U3, owner decision U41 2026-10-09).
 #
 # Since U3 every kklass / kcl test loads kbool.sh, which reads the developer's
@@ -36,7 +36,7 @@ FRAMEWORK="$(cd "$KTESTS_LIB_DIR" && pwd)/ktest.sh"
 # the isolation. With kbool next to ktests it also loads kbool.sh.
 for n in 1 2; do
     cat > "$FX/00${n}_Probe.sh" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 [[ -n "\${_KTEST_SOURCED:-}" ]] || source "$FRAMEWORK"
 kt_test_init "Probe$n" "\$(dirname "\$0")"
 shopt -s nullglob dotglob
@@ -62,7 +62,7 @@ EOF
 done
 # a test that installs its own config explicitly
 cat > "$FX/003_Own.sh" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 [[ -n "\${_KTEST_SOURCED:-}" ]] || source "$FRAMEWORK"
 kt_test_init "Own" "\$(dirname "\$0")"
 kt_test_start "an explicitly installed config applies"

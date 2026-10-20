@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests: Core logging functions
 
 # Only source if framework not already loaded
