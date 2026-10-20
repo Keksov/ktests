@@ -19,10 +19,41 @@
 #   --storm LIST    storm levels, comma-separated (default 0,8). 0 = idle.
 #   --reps K        runs per (target, storm level) (default 5)
 #   --bash PATH     the bash under test, e.g. C:/bin/msys64/usr/bin/bash.exe.
-#                   The script RE-EXECUTES ITSELF under it (with its directory
+#                   The script RUNS ITSELF AGAIN under it (with its directory
 #                   first on PATH, so the runner's child `bash` is the same
-#                   build), so the storm, the suite and the leak check all live
-#                   in one cygwin runtime (see forkstorm.sh, "RUNTIMES").
+#                   build) as a child it waits for, so the storm, the suite
+#                   and the leak check all live in one cygwin runtime (see
+#                   forkstorm.sh, "RUNTIMES"). The environment does not cross
+#                   cygwin runtimes (only PATH and a few Windows variables
+#                   arrive, GATE_PLAN 8), so the child is started with
+#                   `env -i` (same runtime or not: one behaviour) and gets
+#                   what it needs from a SPEC FILE in a private dir made by
+#                   `mktemp -d` under TMPDIR, else %LOCALAPPDATA%/Temp (the
+#                   user's own; MSYS2's /tmp is shared by all users), else
+#                   `cygpath -F 28`/Temp, else /tmp — never the tree; with an
+#                   `owner` marker (PID RUNTIME START): a run first removes
+#                   the dirs a KILLED parent left (owner dead: this runtime
+#                   by kill -0, the other one when older than 24 h);
+#                   named by the hidden first argument `--reexec SPEC`, which
+#                   is also the guard against a second re-run (never an
+#                   environment variable). The child removes the spec after
+#                   reading it; the parent removes the dir when the child is
+#                   done (EXIT/INT/TERM trap). The child runs in a process
+#                   group of its own; a TERM/INT to the parent is passed on
+#                   as a real TERM of the child's runtime (`BASH -c kill`).
+#                   The spec holds the parsed options (absolute /posix paths of --log,
+#                   --keep-dir, SUITE_DIR in the C:/ spelling) and an
+#                   ALLOWLIST of the caller's exported variables: names
+#                   starting KT_ KBOOL_ KKLASS_ VERBOSE_KKLASS, LANG,
+#                   LANGUAGE, LC_*, TZ, TMPDIR, HOME, the Windows basics
+#                   (SYSTEMROOT WINDIR COMSPEC SYSTEMDRIVE PATHEXT TERM
+#                   USERNAME NUMBER_OF_PROCESSORS PROCESSOR_ARCHITECTURE OS
+#                   COMPUTERNAME) and each --pass-env NAME; a value that is
+#                   an absolute /posix path (TMPDIR=/tmp/x, HOME) arrives as
+#                   the same folder in the target's spelling. Nothing else
+#                   (no other variable, no exported function).
+#   --pass-env NAME also carry the caller's exported NAME across a --bash
+#                   re-run (repeatable)
 #   --grep REGEX    also print the [PASS]/[FAIL] lines matching REGEX — the
 #                   measured numbers (every [FAIL] line is always printed)
 #   --workers N     threaded-mode workers for the suite mode (runner default 8)
@@ -68,8 +99,35 @@ TC_TIMEOUT=900; TC_WARMUP=1; TC_LOG=""; TC_TIMING=""; TC_KEEP=""
 # STATUS_COMMITMENT_LIMIT) — a run that shows one is ENV, not a test verdict.
 # ONE definition (KT_ENV_FORK_FAILURE_RE), shared with the runner's retry rule.
 source "$TC_DIR/../ktest_env_signatures.sh" || { printf 'timing_check: cannot load ktest_env_signatures.sh\n' >&2; exit 2; }
-TC_ARGV=( "$@" )
-TC_POS=()
+TC_POS=() TC_PASS_ENV=()
+TC_REEXECED=0 TC_FROM=""
+# the child of a --bash re-exec: everything comes from the parent's spec
+# (see --bash above); no option parsing, no second re-exec
+if [[ "${1:-}" == --reexec ]]; then
+    tc_spec="${2:-}"
+    [[ -n "$tc_spec" && -r "$tc_spec" ]] || { printf 'timing_check: --reexec needs a readable spec file\n' >&2; exit 2; }
+    source "$tc_spec" || { rm -f -- "$tc_spec"; printf 'timing_check: bad spec %s\n' "$tc_spec" >&2; exit 2; }
+    rm -f -- "$tc_spec"
+    [[ "${TC_SPEC_VERSION:-}" == 2 ]] || { printf 'timing_check: spec %s: unknown version\n' "$tc_spec" >&2; exit 2; }
+    # this runtime's pid of the child, for the parent's signal forwarding
+    printf '%s\n' "$$" > "${tc_spec%/*}/pid" 2>/dev/null
+    # the caller's path values (C:/... in the spec) in this runtime's spelling
+    if (( ${#TC_SPEC_ENVP[@]} > 0 )) && command -v cygpath >/dev/null 2>&1; then
+        tc_vals=()
+        for tc_kv in "${TC_SPEC_ENVP[@]}"; do tc_vals+=( "${tc_kv#*=}" ); done
+        mapfile -t tc_conv < <(cygpath -u -- "${tc_vals[@]}" 2>/dev/null)
+        if (( ${#tc_conv[@]} == ${#tc_vals[@]} )); then
+            for (( tc_i = 0; tc_i < ${#tc_vals[@]}; tc_i++ )); do
+                TC_SPEC_ENVP[tc_i]="${TC_SPEC_ENVP[tc_i]%%=*}=${tc_conv[tc_i]}"
+            done
+        fi
+        unset tc_vals tc_conv tc_i
+    fi
+    for tc_kv in "${TC_SPEC_ENV[@]}" "${TC_SPEC_ENVP[@]}"; do export "$tc_kv" 2>/dev/null; done
+    unset tc_kv tc_spec
+    TC_REEXECED=1 TC_FROM="$TC_SPEC_FROM"
+    set --
+fi
 while (( $# > 0 )); do
     case "$1" in
         --storm)   TC_STORMS="${2:?--storm needs a list}"; shift 2 ;;
@@ -82,6 +140,9 @@ while (( $# > 0 )); do
         --log)     TC_LOG="${2:?--log needs a file}"; shift 2 ;;
         --timing)  TC_TIMING="${2:?--timing needs a regex}"; shift 2 ;;
         --keep-dir) TC_KEEP="${2:?--keep-dir needs a directory}"; shift 2 ;;
+        --pass-env)
+            [[ "${2:-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { printf 'timing_check: --pass-env needs a variable name, got "%s"\n' "${2:-}" >&2; exit 2; }
+            TC_PASS_ENV+=( "$2" ); shift 2 ;;
         -h|--help) tc_usage; exit 0 ;;
         --)        shift; TC_POS+=( "$@" ); break ;;
         -*)        printf 'timing_check: unknown option %s\n' "$1" >&2; tc_usage >&2; exit 2 ;;
@@ -94,11 +155,158 @@ if (( ${#TC_POS[@]} < 1 )); then tc_usage >&2; exit 2; fi
 [[ "$TC_STORMS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { printf 'timing_check: --storm must be N[,N...]\n' >&2; exit 2; }
 
 # --- re-exec under the bash under test -------------------------------------
-if [[ -n "$TC_BASH" && -z "${TC_REEXEC:-}" ]]; then
+# tc_mixed VAR... — each named variable's value, when it is an absolute
+# /posix path, in the mixed C:/... spelling (the same folder in every cygwin
+# runtime; `/tmp` is a different folder per runtime). One cygpath for all.
+tc_mixed() {
+    local -a names=() vals=() out=()
+    local n i
+    command -v cygpath >/dev/null 2>&1 || return 0
+    for n in "$@"; do
+        [[ "${!n}" == /* && "${!n}" != *[:$'\n']* ]] || continue
+        names+=( "$n" ); vals+=( "${!n}" )
+    done
+    (( ${#vals[@]} > 0 )) || return 0
+    mapfile -t out < <(cygpath -m -- "${vals[@]}" 2>/dev/null)
+    (( ${#out[@]} == ${#vals[@]} )) || return 0
+    for (( i = 0; i < ${#names[@]}; i++ )); do printf -v "${names[i]}" '%s' "${out[i]}"; done
+}
+
+# the caller's variables a --bash child gets (besides each --pass-env NAME)
+TC_ENV_ALLOW_RE='^(KT_[A-Za-z0-9_]*|KBOOL_[A-Za-z0-9_]*|KKLASS_[A-Za-z0-9_]*|VERBOSE_KKLASS[A-Za-z0-9_]*|LANG|LANGUAGE|LC_[A-Za-z0-9_]*|TZ|TMPDIR|HOME|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|PATHEXT|TERM|USERNAME|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|COMPUTERNAME)$'
+
+# tc_rt — REPLY = this cygwin runtime (the source of the `/` mount)
+tc_rt() {
+    local a b c
+    REPLY=none
+    [[ -r /proc/mounts ]] || return 0
+    while read -r a b c; do [[ "$b" == / ]] && { REPLY="$a"; break; }; done < /proc/mounts
+}
+# tc_rx_sweep BASE — remove what a KILLED parent left: BASE/timing_check.*
+# dirs with an `owner` marker (PID RUNTIME START) whose owner is dead — this
+# runtime: `kill -0` fails; the other runtime (its pids cannot be seen):
+# older than 24 h. A dir without a valid marker, a symlink, a live owner:
+# kept (G4 review R13)
+tc_rx_sweep() {
+    local d p r s me
+    tc_rt; me="$REPLY"
+    for d in "$1"/timing_check.*/; do
+        d="${d%/}"
+        [[ -d "$d" && ! -L "$d" && -f "$d/owner" ]] || continue
+        p="" r="" s=""; { read -r p r s < "$d/owner"; } 2>/dev/null
+        [[ "$p" =~ ^[0-9]+$ && "$s" =~ ^[0-9]+$ && -n "$r" ]] || continue
+        (( p == $$ )) && continue
+        if [[ "$r" == "$me" ]]; then
+            kill -0 "$p" 2>/dev/null && continue
+        else
+            (( EPOCHSECONDS - s > 86400 )) || continue
+        fi
+        rm -rf -- "$d"
+    done
+}
+
+# tc_rx_cleanup — the parent's EXIT trap: the private spec dir goes
+tc_rx_cleanup() {
+    [[ -n "${TC_RX_DIR:-}" && -d "$TC_RX_DIR" ]] && rm -rf -- "$TC_RX_DIR"
+    TC_RX_DIR=""
+}
+# tc_rx_signal RC — the parent got TERM/INT: pass a TERM on to the child as a
+# signal of ITS runtime (a cross-runtime `kill` would be a TerminateProcess:
+# no trap, the storm and the run in flight orphaned), then wait for it
+tc_rx_signal() {
+    local cp=""
+    TC_RX_SIG=$1
+    { read -r cp < "$TC_RX_DIR/pid"; } 2>/dev/null
+    if [[ "$cp" =~ ^[0-9]+$ ]]; then
+        if (( TC_RX_SAME )); then
+            kill -TERM "$cp" 2>/dev/null
+        else
+            env -i "PATH=${TC_RX_BASH%/*}:$PATH" "SYSTEMROOT=${SYSTEMROOT:-}" "WINDIR=${WINDIR:-}" \
+                "$TC_RX_BASH" -c 'kill -TERM "$1" 2>/dev/null' _ "$cp" < /dev/null
+        fi
+    else
+        kill -TERM "$TC_RX_PID" 2>/dev/null     # not started yet: the stub
+    fi
+}
+
+# tc_reexec BASH — write the spec into a private dir, run BASH on this script
+# with it as a child, wait, clean up, exit with the child's status
+tc_reexec() {
+    local b="$1" n v spec specm self="$TC_SELF" tc_p0="${TC_POS[0]}" rc base
+    local -a envn=() pathn=() tmpn=()
+    local -A want=()
+    TC_SPEC_VERSION=2
+    TC_SPEC_FROM="${BASH_VERSION%%(*}"
+    TC_SPEC_ENV=() TC_SPEC_ENVP=()
+    for n in "${TC_PASS_ENV[@]}"; do want["$n"]=1; done
+    for n in $(compgen -e); do
+        [[ "$n" =~ $TC_ENV_ALLOW_RE || -n "${want[$n]+x}" ]] || continue
+        [[ "${!n}" == /* && "${!n}" != *[:$'\n']* ]] && pathn+=( "$n" ) || envn+=( "$n" )
+    done
+    for n in "${envn[@]}"; do TC_SPEC_ENV+=( "$n=${!n}" ); done
+    # the path values: copied to __tc_v_N, converted in one cygpath, collected
+    for (( v = 0; v < ${#pathn[@]}; v++ )); do
+        printf -v "__tc_v_$v" '%s' "${!pathn[v]}"; tmpn+=( "__tc_v_$v" )
+    done
+    tc_mixed "${tmpn[@]}" TC_LOG TC_KEEP tc_p0 self
+    for (( v = 0; v < ${#pathn[@]}; v++ )); do n="__tc_v_$v"; TC_SPEC_ENVP+=( "${pathn[v]}=${!n}" ); done
+    TC_POS[0]="$tc_p0"
+    # a private dir in the user's own temp folder (mktemp -d: a new random
+    # name, created exclusively); the spec created there with noclobber
+    # (TMPDIR; else the Windows per-user temp — MSYS2's /tmp is C:/bin/msys64/tmp,
+    # readable by every user; /tmp only when nothing else exists)
+    base=/tmp
+    local f28=""
+    command -v cygpath >/dev/null 2>&1 && f28="$(cygpath -m -F 28 2>/dev/null)"
+    for v in "${TMPDIR:-}" "${LOCALAPPDATA:+$LOCALAPPDATA/Temp}" "${USERPROFILE:+$USERPROFILE/AppData/Local/Temp}" "${f28:+$f28/Temp}"; do
+        [[ -n "$v" ]] || continue
+        if [[ "$v" == [A-Za-z]:* ]] && command -v cygpath >/dev/null 2>&1; then v="$(cygpath -u "$v" 2>/dev/null)"; fi
+        [[ -d "$v" && -w "$v" ]] && { base="$v"; break; }
+    done
+    tc_rx_sweep "$base"
+    TC_RX_DIR="$(mktemp -d "$base/timing_check.XXXXXXXXXX" 2>/dev/null)" \
+        || { printf 'timing_check: cannot make a private dir under %s\n' "$base" >&2; exit 2; }
+    tc_rt; printf '%s %s %s\n' "$$" "$REPLY" "$EPOCHSECONDS" > "$TC_RX_DIR/owner"
+    trap tc_rx_cleanup EXIT
+    trap 'tc_rx_signal 130' INT
+    trap 'tc_rx_signal 143' TERM
+    spec="$TC_RX_DIR/spec"
+    ( set -C
+      { declare -p TC_SPEC_VERSION TC_SPEC_FROM TC_SPEC_ENV TC_SPEC_ENVP TC_STORMS TC_REPS TC_BASH TC_GREP \
+            TC_WORKERS TC_TIMEOUT TC_WARMUP TC_LOG TC_TIMING TC_KEEP TC_POS
+      } > "$spec" ) 2>/dev/null || { printf 'timing_check: cannot write %s\n' "$spec" >&2; exit 2; }
+    specm="$spec"
+    tc_mixed specm
+    TC_RX_BASH="$b" TC_RX_SIG=0 TC_RX_SAME=0
+    [[ "$b" -ef "$BASH" ]] && TC_RX_SAME=1
+    # env -i: the child's environment is PATH (the target bash first: the
+    # runner's child `bash` is the same build; cygwin converts PATH on the way)
+    # + what the spec carries — the same in the same runtime and across
+    # a process group of its own (set -m): a signal to OUR group (a terminal's
+    # Ctrl-C, `timeout` around us) must not reach the child's stub — for the
+    # other runtime that would be a TerminateProcess (no trap: its storm and
+    # run in flight orphaned, G0 §8) — but only tc_rx_signal's real TERM
+    set -m
+    env -i "PATH=${b%/*}:$PATH" "SYSTEMROOT=${SYSTEMROOT:-}" "WINDIR=${WINDIR:-}" "$b" "$self" --reexec "$specm" &
+    TC_RX_PID=$!
+    set +m
+    while :; do
+        wait "$TC_RX_PID"; rc=$?
+        kill -0 "$TC_RX_PID" 2>/dev/null || break      # a trapped signal ended the wait: wait again
+    done
+    if (( TC_RX_SIG )); then exit "$TC_RX_SIG"; fi
+    if [[ -e "$spec" ]]; then
+        printf 'timing_check: --bash %s did not run timing_check (its spec was never read; rc %s)\n' "$TC_BASH" "$rc" >&2
+        exit 2
+    fi
+    exit "$rc"
+}
+
+if [[ -n "$TC_BASH" ]] && (( ! TC_REEXECED )); then
     tc_b="$TC_BASH"
     if command -v cygpath >/dev/null 2>&1; then tc_b="$(cygpath -u "$tc_b")"; fi
     [[ -x "$tc_b" ]] || { printf 'timing_check: --bash %s is not executable\n' "$TC_BASH" >&2; exit 2; }
-    exec env TC_REEXEC=1 PATH="$(dirname "$tc_b"):$PATH" "$tc_b" "$TC_SELF" "${TC_ARGV[@]}"
+    tc_reexec "$tc_b"
 fi
 
 source "$TC_DIR/forkstorm.sh"
@@ -221,7 +429,7 @@ tc_run() {
     TC_MEAS="${TC_MEAS%; }"
 }
 
-tc_say "# timing_check: bash ${BASH_VERSION}, suite ${TC_SUITE}, targets ${TC_TARGETS[*]}, storm ${TC_STORMS}, reps ${TC_REPS}, $(printf '%(%F %T)T' -1)"
+tc_say "# timing_check: bash ${BASH_VERSION}${TC_FROM:+ (re-executed from bash $TC_FROM)}, suite ${TC_SUITE}, targets ${TC_TARGETS[*]}, storm ${TC_STORMS}, reps ${TC_REPS}, $(printf '%(%F %T)T' -1)"
 tc_any_fail=0
 for lvl in "${TC_LEVELS[@]}"; do
     if (( lvl > 0 )); then

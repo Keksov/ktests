@@ -76,7 +76,9 @@ if [[ $SC == parent ]]; then
     # an intermediate parent, killed at the Windows level below
     bash -c 'bash "$1" --root "$2" --out "$3" --timeout "$5" --bash "$4" all > "$3.stdout" 2>&1; echo "rc=$?" > "$3.lrc"' _ "$G" "$ROOT" "$OUT" "$SB" "$TMO" </dev/null &
 else
-    bash "$G" --root "$ROOT" --out "$OUT" --timeout "$TMO" --bash "$SB" all > "$OUT.stdout" 2>&1 </dev/null &
+    # segtree with --warm: the watchdog's segment-killed path removes seg-1.ckk too (G4 review R10)
+    WARM=(); [[ $SC == segtree ]] && WARM=( --warm )
+    bash "$G" --root "$ROOT" --out "$OUT" --timeout "$TMO" --bash "$SB" "${WARM[@]}" all > "$OUT.stdout" 2>&1 </dev/null &
 fi
 P=$!
 set +m
@@ -225,6 +227,7 @@ kt052_case() {
                 [[ "$st" == stopped && "$intr" == *"heartbeat stale"* && "$lr" == *"heartbeat stale"* ]] || bad+="[$sc: status=$st reason=$lr] "
                 lim=40000 ;;
         segtree) [[ "$st" == segment-killed && "$intr" == *segment-killed* && "${D[lrc]:-}" == 1 && "$last" == "__GATE__:FAIL:2:1:"* ]] || bad+="[segtree: status=$st lrc=${D[lrc]:-} last=$last] "
+                 [[ -e "$o/seg-1.ckk" ]] && bad+="[segtree --warm: seg-1.ckk left] "
                 lim=15000 ;;
         wdtimeout)
                 [[ "$st" == done && "$l2" == TIMEOUT && "${D[lrc]:-}" == 1 && "$out" == *"a rescue watchdog was started"* \

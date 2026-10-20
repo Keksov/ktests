@@ -1,6 +1,6 @@
 # ktests gate — one command for the phase gate (2026-10-19)
 
-**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049. G2 done 2026-10-20 + critic review round 1 (R1–R14), accepted: `gate all` = master sweep per suite on both runtimes (9011/9012); `tools/gate.sh`, `tests/gate_fixtures/`, tests 050–052, strays.sh KILL by the clock, the runner's `env NAME` summary lines (§4.1–4.3 "G2 as built", "Review round 1"). G3 done 2026-10-20 (reviewed; gate all 60/60 PASS 9040/9041): `cells.tsv` + `summary.json`, `--compare`, `--rerun-failed`/FLAKY, `--changed`, `--mode/--cwd both`, `--repeat`, `--fail-fast` (SKIPPED), `--warm`, `--parallel`; fixtures flaky + ckk; tests 053–054 (§3, §4.4, §4.5 "G3 as built").**
+**Status: COMPLETE 2026-10-20 (closing gate: 60/60 PASS, 9059 / 9060, compare vs G3 = ktests +19 only). owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049. G2 done 2026-10-20 + critic review round 1 (R1–R14), accepted: `gate all` = master sweep per suite on both runtimes (9011/9012); `tools/gate.sh`, `tests/gate_fixtures/`, tests 050–052, strays.sh KILL by the clock, the runner's `env NAME` summary lines (§4.1–4.3 "G2 as built", "Review round 1"). G3 done 2026-10-20 (reviewed; gate all 60/60 PASS 9040/9041): `cells.tsv` + `summary.json`, `--compare`, `--rerun-failed`/FLAKY, `--changed`, `--mode/--cwd both`, `--repeat`, `--fail-fast` (SKIPPED), `--warm`, `--parallel`; fixtures flaky + ckk; tests 053–054 (§3, §4.4, §4.5 "G3 as built"). G4 done 2026-10-20 (uncommitted), awaiting final critic: docs (`docs/GATE_FOR_AGENTS.md`, `docs/README.md` "Phase gate", tools/README gate section re-checked, kbool README), the speed observation measured (§9: no defect — the "33 min" sweep was a pre-kklass-round-5 figure), `timing_check.sh --bash` across runtimes via a spec file (test 055). Final critic: review round 1 R1–R12 done (§9 "G4 review round 1"), awaiting the supervisor's review and closing gate.**
 Ledger: [`gate_ledger.json`](gate_ledger.json). Workflow as in the kklass rounds:
 one Opus worker per phase → supervisor review against the live tree (critic on
 G2 and at the end) → ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 →
@@ -87,7 +87,7 @@ gate repos: kbool f81abdc+dirty kcl 0bb0ff8 kklass b3709a9 kkore c432048 ktests 
 [ 2/60] 5.2.37 threaded neutral kklass           PASS    803/803  warn=1   214.0s
 [ 7/60] 5.2.37 threaded neutral kcl/tstringlist  FAIL    291/293           44.0s  log=cells/007/log.txt
         [FAIL] 013_Assign: Assign of 20 sections ... (2 lines, first 5 shown)
-[ 9/60] 5.2.37 threaded neutral kcl/thttpserver  FLAKY   497/497 (rerun 1: 005_Lifecycle)  71.2s
+[ 9/60] 5.2.37 threaded neutral kcl/thttpserver  FLAKY   496/497 (rerun 1 passed: 005_Lifecycle.sh)  71.2s
 ...
 gate 5.2.37: 30 cells  29 PASS  1 FAIL  0 FLAKY  0 ENV  0 TIMEOUT  0 STRAY  tests 8221/8223  33m10s
 gate 5.3.9 : 30 cells  30 PASS ...                                           tests 8223/8223  32m45s
@@ -312,7 +312,7 @@ redirected `cd -P OUT` into another, non-empty dir that a later rotation
 would have removed; failglob from BASHOPTS killed the launcher).
 
 A passed cell's sandbox is removed (log and result kept) unless `--keep`. OUT
-default: `${TMPDIR:-/tmp}/kt-gate/<stamp>-<pid>`, made by an atomic `mkdir`
+default: `${TMPDIR:-/tmp}/kt-gate/<stamp>-<pid>` (*G4 review R13:* PRIVATE_TEMP/kt-gate — TMPDIR, else `%LOCALAPPDATA%/Temp` — one root for both runtimes), made by an atomic `mkdir`
 (a taken name gets `-2`, `-3`, …: the other runtime has its own pids); an
 explicit `--out` is a new dir (atomic `mkdir` of the leaf) or an existing
 EMPTY one (checked on the resolved path, dot names included), claimed by an
@@ -324,7 +324,7 @@ other-runtime age guard) AND it is complete (every `seg-N.spec` has its
 `seg-N.result`) or older than 2 h — never a neighbour of an explicit `--out`
 (head/new tree copies, a `--compare` base). `LAST` = the newest finished run
 under the same OUT root. *G3 as built:* under the DEFAULT OUT root
-`${TMPDIR:-/tmp}/kt-gate` (by the marker's start time; it must have
+`${TMPDIR:-/tmp}/kt-gate` (since R13 the shared PRIVATE_TEMP/kt-gate; by the marker's start time; it must have
 `FINISHED` and `cells.tsv`), also when this run has an explicit `--out` —
 an explicit dir's neighbours are the user's, and `--compare DIR` names them.
 
@@ -485,11 +485,11 @@ the master now sources `suitejob.sh` too; no assertion changed.
 | **G1** shared code | `tools/suitejob.sh` + `tests/tests.sh` on it (DG5); `KT_SUMMARY_FILE` in `ktests.sh` (nested-safe); tests 048 (summary file), 049 (suitejob.sh) | ktests suite + **full master sweep both bashes, totals identical to before**; 045 unmodified (G1: one fixture line, its fake root copies suitejob.sh too) |
 | **G2** gate core (done 2026-10-20, awaiting review) | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 050 (CLI/resolution), 051 (verdicts), 052 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
 | **G3** reports + selection (done 2026-10-20, awaiting review) | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 053 (reports/compare), 054 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
-| **G4** adoption | `tools/README.md` gate section, `docs/README.md`; worker/critic brief template: "the gate is `gate.sh … all --compare LAST`; paste `summary.json` totals into the ledger"; final **critic** over G1–G3; the round's own closing gate is run with `gate.sh` | owner: commit / push |
+| **G4** adoption (done 2026-10-20, awaiting final critic) | `tools/README.md` gate section, `docs/README.md`; worker/critic brief template: "the gate is `gate.sh … all --compare LAST`; paste `summary.json` totals into the ledger"; final **critic** over G1–G3; the round's own closing gate is run with `gate.sh`. *As built:* the brief template is [`docs/GATE_FOR_AGENTS.md`](docs/GATE_FOR_AGENTS.md) (calls, running in the background, reading the verdict, the ledger one-liner, strays after the run); `docs/README.md` "Phase gate" (ktests.sh vs master vs gate); the kbool README names the gate for a change on both runtimes; tools/README gate section re-read against gate.sh (UNSTARTED, the gate verdict set, exit 1/2/3 details, `--opt=VALUE`, the `KT_GATE_BASHES` default, OUT in the first line, ~28 min); open items: the speed observation (§9) and `timing_check.sh --bash` across runtimes (spec file + `--reexec`, test 055) | ktests suite both bashes; every doc example run; final critic; supervisor `gate all --compare` → owner: commit / push |
 
 Test numbers: round 6 P4 ended at 047; G1 took 048 (SummaryFile) and 049
-(SuiteJob), so G2 has 050–052 and G3 053–054 (the G2 worker re-checks
-before creating files).
+(SuiteJob), so G2 has 050–052, G3 053–054 and G4 055 (TimingCheckReexec;
+the G2 worker re-checks before creating files).
 
 ## 6. Acceptance (the whole plan)
 
@@ -549,8 +549,10 @@ before creating files).
   `--timeout` and delivers STOP/stale; the launcher replaces a silent one by a
   rescue (`seg-N.wdhb`), the segment refuses to start a cell without one.
   The watchdog's segment-killed path is done by one watchdog (a lock dir).
-- **Duration**: a full two-runtime gate is ~66 min; agents run it with
-  `run_in_background` and watch `progress.txt`; `--parallel` (~35 min) is for
+- **Duration**: a full two-runtime gate is ~28 min (G3 supervisor run,
+  15m19s + 12m38s; the plan's first estimate, ~66 min, used the pre-kklass
+  round 5 sweep time — §9); agents run it with
+  `run_in_background` and watch `progress.txt`; `--parallel` is for
   orientation runs only (DG3).
 
 ## 8. G0 measurements (2026-10-19)
@@ -596,3 +598,82 @@ tree kill, parent kill, noisy 5.2 fork counting). No measurement argues
 against DG1–DG8. Open for G2: the `--nohup` opt-out of the parent watch;
 052 covers TERM, SIGKILL, `taskkill /F`, parent kill and `taskkill /T` in
 both directions.
+
+## 9. G4: the speed observation (2026-10-20)
+
+The G2 note "a full gate (27 min, both runtimes) is much faster than the
+master sweep (~33 min PER runtime)" compared two different trees: ~33 min was
+the 5.3 sweep before kklass round 5 (kklass ledger, final gate 2026-10-17:
+"5.3 sweep ~10 min, was ~33"; the round made class loads 20-30x faster).
+On the SAME tree the sweep is not slower — the G2 acceptance run
+(`g2sup/accept.sh`: gate all, then the master sweep, back to back):
+
+| runtime | gate all (G2) | master sweep, same tree | gate − sweep |
+|---|---|---|---|
+| 5.2.37 | 15m02s (902 s) | 12m52s (772 s) | +130 s: kcl/math 135.6 s in the gate (the 018 race below, ~+116 s) + ~0.5 s/cell |
+| 5.3.9 | 12m17s (737 s) | 11m50s (710 s) | +27 s ≈ 0.9 s/cell |
+
+Per suite on 5.2 (seconds, wall, 2 interleaved reps; A = `tests.sh` from the
+suite dir, B = from a neutral cwd, C = `KT_MASTER_SUITES=/<suite>/tests/ bash
+tests/tests.sh`, D = `gate.sh --bash 5.2 <suite>`; raw data: the G4 worker's
+`w_g4/speed/`):
+
+| suite | A suite dir | B neutral | C master | D gate (cell) |
+|---|---|---|---|---|
+| kcl/dateutils | 25.6, 23.4 | 24.9, 22.0 | 25.4, 23.5 | 30.0 (26.9), 27.0 (24.1) |
+| kcl/thttpserver | 41.3, 27.4 | 40.8, 41.0 | 41.2, 28.8 | 66.4 (63.4), 43.2 (40.6) |
+| kklass | 130.9, 105.9 | 88.2, 95.6 | 88.4, 118.9 | 143.6 (140.6), 116.8 (111.0) |
+
+* **The master costs nothing between suites**: C = B within the noise (the
+  per-suite stray scan is one `/proc` pass, 1–4 ms; discovery ~0.1 s). The
+  noise of one suite run on this machine is ±15–30 % (kklass 88–131 s,
+  thttpserver bimodal ~28 / ~41 s whatever the method — its network
+  timeouts), so a single run says little.
+* **The gate costs ~0.5–1 s per cell plus ~3–6 s per run** (launcher: git
+  status of the repos, the bash probe, the 1 s relay tick, the segment's
+  final stray check; G3 run: the 30 cells of 5.2 sum to 912.8 s of a 919 s
+  segment). Its cells are not faster than a direct run: the cold `.ckk` per
+  cell (DG4) and the hermetic HOME/TMPDIR cost a little, never minutes.
+* **The one large difference — kcl/math on 5.2 — is a test race, not the
+  gate**: kcl/math direct 20.8 s, as a one-cell gate 23.9 s, but 135.6 s
+  (G2) / 133.9 s (G3) in the full gates, and 133–142 s in five of the
+  twelve G4 bisect gates with a full kcl/math cell (17.7–22.4 s in the
+  other seven). Bisected to `kcl/math/tests/018_DE1_ProgfileSweep.sh`: it
+  starts `bash -c '…; exec sleep 120' &`, waits for its pid file and sends
+  one `kill -TERM`; on the Git-bash 5.2 runtime that TERM is evidently
+  sometimes lost around the exec (cygwin exec = a new Windows process
+  behind the same pid), and `wait` then sits out the full 120 s. `gate.sh --bash 5.2 --repeat 8
+  kcl/math -- -n 18`: seven cells 3.4–3.7 s, one 123.6 s. Nothing of the
+  race is the gate's: run directly, `kcl/math/tests/tests.sh -n 18` took
+  ~124 s in 4 of 10 runs threaded and 0 of 10 with `--mode single` (3.7 s)
+  — the threaded runner's timing makes the window likelier; the master
+  sweep, threaded too, is exposed the same way (the G2 acceptance sweep,
+  772 s, evidently did not hit it); a
+  bisect of kcl/tests files (ttail first looked guilty) proved a coincidence
+  on a re-run. Not a ktests defect; the supervisor fixed the test in kcl
+  (018 sends TERM only once the child IS the sleep, waits bounded, then
+  KILL; `gate --repeat 8` on both bashes: 16/16 cells ≤ 6 s).
+* Nothing to fix in ktests: no pathological wait, no per-suite cost in the
+  master; §7 "Duration" corrected (~28 min, not ~66).
+
+### G4 review round 1 (final critic, 2026-10-20)
+
+The final critic over G1–G4 (probes: the supervisor's `critic_final/`); the
+supervisor decided R1–R12, the G4 worker fixed them (red first where a test
+can show it):
+
+| id | finding | fix | pinned by |
+|---|---|---|---|
+| R1 (F1, high) | timing_check's spec held the WHOLE exported env (live tokens) in `ktests/.tmp` (Users: read, Authenticated Users: modify), was `source`d back and left forever when the child never read it | an allowlist (`KT_* KBOOL_* KKLASS_* VERBOSE_KKLASS*`, `LANG LANGUAGE LC_* TZ TMPDIR HOME`, the Windows basics) + `--pass-env NAME`; the spec in a `mktemp -d` dir under TMPDIR / `%LOCALAPPDATA%/Temp`; no `exec`: the parent runs the child (`env -i`, a process group of its own), waits, removes the dir in its EXIT trap, passes TERM/INT on as a real TERM of the child's runtime; a child that never reads the spec → rc 2 | 055 (6 cases, both runtimes) |
+| R2 (F2, high) | one ENV file + one real FAIL → ENV (rc 3) | ENV only when every failed file is an `env` file or owns a raw fork-failure line (the line precedes the file's next tagged message); else FAIL with `+ fork failure in …` | 051 (`mix` fixture) |
+| R3 (F3) | `--compare LAST` without a readable base refused the run | unreadable candidates skipped (a note), none → `[WARN] … no base`, no compare; explicit DIR/FILE still rc 2; newest by start stamp, a tie by name | 053 |
+| R4 (F4) | a worktree rename (`Y=R`) mangled the old path | X or Y | 054 |
+| R5 (F5) | the root README selected nothing; `.gitmodules` neither | a doc map (`README.md` → kkore); `.gitmodules` → all | 054 |
+| R6 (F6, F10b) | base suites not planned here counted as changes and in the sums; a base row that never ran was "added" | compared over the planned keys; base-only keys apart (`base_only`); "not run in the base" | 053 |
+| R7 (F7) | summary.json could hold invalid UTF-8 | invalid sequences → U+FFFD (`_kt_gate_jutf8`) | 053 (strict `TextDecoder`) |
+| R8 (F8) | FAILFAST: two writers could race | `mkdir FAILFAST.lock` decides | 054 |
+| R9 (F9, F10, F12, F13) | `--help` printed code; huge base numbers; long / control-char suite ids in the lines; a deleted non-unit script counted as a unit | header comment only; ≤ 18 digits; the suite column capped at 40 (`...`), control chars `?`; a deleted file is a unit only when its HEAD version has `kk.unit` | 053, 054 |
+| R10 (F11) | `--warm`: `seg-N.ckk` left on the segment-killed path | removed there too | 052 (segtree with `--warm`) |
+| R11 (F14, F15) | docs; `--out` inside the tree (the segments source `OUT/seg-N.spec`) | §3 FLAKY example, the tools README timing-tests heading, `timeout -k 120`, `--out` must be private + a `[WARN]` inside the tree | 050 |
+| R12 | ledger / plan | `phases.G4.review_round_1`, `open` / `closed` | — |
+| R13 (supervisor, on the worker's open note) | the DEFAULT OUT root of a 5.3 launcher was MSYS2's `/tmp` (`C:/bin/msys64/tmp`, Authenticated Users: modify) and the segments source `OUT/seg-N.spec` from it; a killed timing_check parent left its private dir | the default root is PRIVATE_TEMP/kt-gate (`_kt_gate_ptmp`: TMPDIR when set, else `%LOCALAPPDATA%/Temp`, else `cygpath -F 28`/Temp; mixed form) — ONE root for both runtimes, so LAST and the rotation are runtime-independent; the rotation's other-runtime rule also needs a stale `OUT/hb` (a live launcher of the other runtime that already wrote INTERRUPTED keeps its dir); timing_check writes an `owner` marker and sweeps dead owners' dirs | 050 (default root unit + both launchers share it, LAST both ways; rotation `othlive`/`othdead`), 055 (sweep) |

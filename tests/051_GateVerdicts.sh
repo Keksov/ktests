@@ -131,14 +131,14 @@ fi
 RD="$TMP/rootD"; OD="$TMP/outD"
 bash "$MK" "$RD" crash hang leak
 t0=$SECONDS
-kt051_gate "$TMP/d.out" --root "$RD" --out "$OD" --timeout 4 all
+kt051_gate "$TMP/d.out" --root "$RD" --out "$OD" --timeout 10 all   # 10, not 4: under the full suite a 1-file cell took 5.2 s on 5.3 (G4 review round 1)
 dt=$(( SECONDS - t0 ))
 od="$(cat "$TMP/d.out")"
 kt051_pids "$RD"; leftD="$REPLY"
-kt_test_start "hang: TIMEOUT at --timeout 4 (reason in the line), its group stopped — nothing of it left"
+kt_test_start "hang: TIMEOUT at --timeout 10 (reason in the line), its group stopped — nothing of it left"
 kt051_line "$od" 2; l2="$REPLY"
 kt051_kv "$OD/cells/002/result" verdict; v2="$REPLY"
-if [[ "$l2" =~ \ hang\ +TIMEOUT\  && "$l2" == *"(timeout 4s, group stopped)"* && "$v2" == TIMEOUT && -z "$leftD" ]]; then
+if [[ "$l2" =~ \ hang\ +TIMEOUT\  && "$l2" == *"(timeout 10s, group stopped)"* && "$v2" == TIMEOUT && -z "$leftD" ]]; then
     kt_test_pass "[$l2]"
 else
     kt_test_fail "[$l2] verdict=$v2 left=[$leftD]"
@@ -306,6 +306,22 @@ if [[ "$RC" == 0 && "$os" == *$'\n'"__GATE__:PASS:$want:$want:0:0:0:0:0:$(( 2 * 
     kt_test_pass "${os##*$'\n'}"
 else
     kt_test_fail "rc=$RC | ${os//$'\n'/ | }"
+fi
+
+kt_test_start "a fork failure in one file and a REAL failure in another: FAIL (rc 1, one attempt), the fork failure only as a note; envx (every failed file has it) stays ENV (G4 review R2)"
+RM="$TMP/rootM"; bash "$MK" "$RM" mix envx
+for m in threaded single; do
+    kt051_gate "$TMP/m.$m.out" --root "$RM" --out "$TMP/outM.$m" --mode "$m" all
+    eval "rcm_$m=\$RC"
+done
+om="$(cat "$TMP/m.threaded.out")" oms="$(cat "$TMP/m.single.out")"
+kt051_line "$om" 2; lm="$REPLY"; kt051_line "$oms" 2; lms="$REPLY"; kt051_line "$om" 1; lx="$REPLY"
+kt051_kv "$TMP/outM.threaded/cells/002/result" attempts; am="$REPLY"
+if [[ "$rcm_threaded" == 1 && "$rcm_single" == 1 && "$lm" =~ \ mix\ +FAIL\ +0/2\  && "$lms" =~ \ mix\ +FAIL\ +0/2\  && "$am" == 1 \
+      && "$lm" == *"+ fork failure in 001_noise.sh"*"not ENV: 002_real.sh failed as well"* && "$lx" =~ \ envx\ +ENV\  ]]; then
+    kt_test_pass "[$lm]"
+else
+    kt_test_fail "rc=$rcm_threaded/$rcm_single attempts=$am | [$lx] [$lm] [$lms]"
 fi
 
 kt_test_start "nothing of this file's gates is left (by its tmp path)"

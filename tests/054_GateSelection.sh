@@ -75,7 +75,7 @@ done
 
 # ---- the scratch git fixture --------------------------------------------------------
 R="$TMP/groot"
-bash "$MK" "$R" pass=kcl pass=kcl/ua pass=kcl/ub pass=kcl/uc pass=kcl/ud pass=kcl/ue pass=kcl/ug pass=kk
+bash "$MK" "$R" pass=kcl pass=kcl/ua pass=kcl/ub pass=kcl/uc pass=kcl/ud pass=kcl/ue pass=kcl/ug pass=kk pass=kkore
 printf '#!/bin/bash\nkk.unit ua || return $__kk_unit_rc\n' > "$R/kcl/ua/ua.sh"
 printf '#!/bin/bash\nkk.unit ub || return $__kk_unit_rc\nkk.uses kklass_pascal || return\nkk.uses ua || return\n' > "$R/kcl/ub/ub.sh"
 printf '# a helper of the uc suite\nkk.uses ub || exit 1\n' > "$R/kcl/uc/tests/uc_helper.sh"
@@ -86,6 +86,7 @@ printf '# run by the suite'"'"'s tests, as kcl/*/bench.sh are\nkk.uses ud || exi
 printf 'kcl\n' > "$R/kcl/README.md"
 printf '#!/bin/bash\n' > "$R/kbool.sh"
 mkdir -p "$R/docs"; printf 'docs\n' > "$R/docs/x.md"
+printf 'readme\n' > "$R/README.md"
 printf '[submodule "kcl"]\n\tpath = kcl\n\turl = ./kcl\n' > "$R/.gitmodules"
 gok=1
 { git "${GC[@]}" -C "$R/kcl" init -q && git "${GC[@]}" -C "$R/kcl" add -A && git "${GC[@]}" -C "$R/kcl" commit -qm kcl \
@@ -174,9 +175,9 @@ fi
 kt_test_start "a core change (kbool.sh; an untracked file under ktests/) selects all"
 printf '# x\n' >> "$R/kbool.sh"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- kbool.sh
 printf 'x\n' > "$R/ktests/new.txt"; s2="$(kt054_sel)"; rm -f "$R/ktests/new.txt"
-all="kcl kcl/ua kcl/ub kcl/uc kcl/ud kcl/ue kcl/ug kk "
-if [[ "${s1%%|*}" == "$all" && "$s1" == *"all 8 suites, for kbool.sh"* && "${s2%%|*}" == "$all" && "$s2" == *"for ktests/new.txt"* ]]; then
-    kt_test_pass "all 8, twice"
+all="kcl kcl/ua kcl/ub kcl/uc kcl/ud kcl/ue kcl/ug kk kkore "
+if [[ "${s1%%|*}" == "$all" && "$s1" == *"all 9 suites, for kbool.sh"* && "${s2%%|*}" == "$all" && "$s2" == *"for ktests/new.txt"* ]]; then
+    kt_test_pass "all 9, twice"
 else
     kt_test_fail "[$s1] [$s2]"
 fi
@@ -192,6 +193,36 @@ if [[ "${s1%%|*}" == "kcl kcl/ud kcl/ue kcl/ug " && "$s1" == *"kcl/ug  <- bench.
     kt_test_pass "[${s1%%|*}] then clean"
 else
     kt_test_fail "[$s1] status=[$st] after reset [$s2]"
+fi
+kt_test_start "a worktree rename (porcelain ' R new old'): both paths kept whole — kcl/ue only, no mangled old path (G4 review R4)"
+mv "$R/kcl/ue/tests/ue_helper.sh" "$R/kcl/ue/tests/ue_helper2.sh"
+kt054_g -C "$R/kcl" add -N ue/tests/ue_helper2.sh
+st="$(git -C "$R/kcl" status --porcelain 2>/dev/null)"
+s1="$(kt054_sel)"
+kt054_g -C "$R/kcl" rm -q --cached ue/tests/ue_helper2.sh
+mv "$R/kcl/ue/tests/ue_helper2.sh" "$R/kcl/ue/tests/ue_helper.sh"
+s2="$(kt054_sel)"
+if [[ "$st" == " R "* && "${s1%%|*}" == "kcl/ue " && "$s1" == *"kcl/ue  <- changed: kcl/ue/tests/ue_helper2.sh"* && "$s1" != *"(no suite)"* \
+      && "$s2" == *"nothing changed"* ]]; then
+    kt_test_pass "[$st] -> [${s1%%|*}]"
+else
+    kt_test_fail "status=[$st] [$s1] after [$s2]"
+fi
+kt_test_start "the root README.md -> kkore (its doc examples, the doc map); .gitmodules -> all (G4 review R5)"
+printf 'more\n' >> "$R/README.md"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- README.md
+printf '# x\n' >> "$R/.gitmodules"; s2="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- .gitmodules
+if [[ "${s1%%|*}" == "kkore " && "$s1" == *"kkore  <- doc examples (kkore 015 runs its doctest blocks): README.md"* \
+      && "${s2%%|*}" == "$all" && "$s2" == *"for .gitmodules"* ]]; then
+    kt_test_pass "[${s1%%|*}] [all for .gitmodules]"
+else
+    kt_test_fail "[$s1] [$s2]"
+fi
+kt_test_start "a deleted top-level script that is no unit file (HEAD has no kk.unit): 'deleted script', its suite only (G4 review R9)"
+rm -f "$R/kcl/ug/bench.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ug/bench.sh
+if [[ "${s1%%|*}" == "kcl/ug " && "$s1" == *"kcl/ug  <- deleted script: kcl/ug/bench.sh"* ]]; then
+    kt_test_pass "${s1%%|*}"
+else
+    kt_test_fail "[$s1]"
 fi
 kt_test_start "--changed on a dir that is not the top of a git work tree: usage error rc 2"
 kt054_gate "$TMP/c3.out" --root "$R/kcl/ua" --changed
@@ -270,6 +301,19 @@ if [[ "$RC" == 1 && "$nsk" == "$want" && "$ff" == "cell 1 FAIL ($V a1)" && "$ox"
 else
     kt_test_fail "rc=$RC skipped=$nsk/$want FAILFAST=[$ff] | ${ox//$'\n'/ | }"
 fi
+
+kt_test_start "--fail-fast: FAILFAST has ONE writer — the first; a later failure, or one racing a writer that holds the lock, never overwrites it (G4 review R8)"
+mkdir -p "$TMP/ffl1" "$TMP/ffl2"
+ffo="$( source "$G" || exit 9
+    KT_GATE_S_FAILFAST=1 _KT_GATE_VER=$V KT_GATE_S_C_SUITE=( s0 s1 s2 )
+    KT_GATE_S_OUT="$TMP/ffl1"
+    _kt_gate_seg_failfast 1 FAIL 0; _kt_gate_seg_failfast 2 TIMEOUT 1; _kt_gate_seg_failfast 3 PASS 2
+    read -r a < "$TMP/ffl1/FAILFAST"
+    KT_GATE_S_OUT="$TMP/ffl2"; mkdir "$TMP/ffl2/FAILFAST.lock"
+    _kt_gate_seg_failfast 4 CRASH 1
+    b=none; [[ -e "$TMP/ffl2/FAILFAST" ]] && read -r b < "$TMP/ffl2/FAILFAST"
+    printf '%s|%s' "$a" "$b" )"
+if [[ "$ffo" == "cell 1 FAIL ($V s0)|none" ]]; then kt_test_pass "$ffo"; else kt_test_fail "$ffo"; fi
 
 # ---- --warm -----------------------------------------------------------------------------------
 RW="$TMP/rootW"; bash "$MK" "$RW" ckk

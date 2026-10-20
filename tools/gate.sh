@@ -62,16 +62,24 @@
 #                   OUT, no cell, no machine line. The root must be the top of
 #                   a git work tree (else rc 2).
 #   --compare LAST|DIR|FILE.tsv  compare this run's cells.tsv with another
-#                   run's: LAST = the newest FINISHED run with a cells.tsv
-#                   under the DEFAULT OUT root ${TMPDIR:-/tmp}/kt-gate (by its
-#                   marker's start time), DIR = DIR/cells.tsv, else the file.
-#                   Read before anything runs (pure bash, by the header's
-#                   column names): missing, empty, not a gate cells.tsv, a
-#                   garbled row -> usage error, rc 2. Per (bash version, mode,
-#                   cwd, suite) — over --repeat the largest total and the
-#                   smallest passed — the changed total/passed, the suites
-#                   added / removed / not run here (SKIPPED, INTERRUPTED,
-#                   never started), or `totals unchanged`; one summary line
+#                   run's: DIR = DIR/cells.tsv, else the file — missing,
+#                   empty, not a gate cells.tsv, a garbled row (field count,
+#                   counts not numbers of <= 18 digits) -> usage error, rc 2.
+#                   LAST = the newest FINISHED run with a cells.tsv under the
+#                   DEFAULT OUT root PRIVATE_TEMP/kt-gate — ONE root for both
+#                   runtimes (see --out) —, by its
+#                   marker's start stamp, a tie by the dir name (the later
+#                   wins); an unreadable candidate is skipped (a note), none
+#                   left -> `[WARN] --compare LAST: no base (...)` and the
+#                   run goes on without a compare. Read before anything runs
+#                   (pure bash, by the header's column names). Over the keys
+#                   (bash version, mode, cwd, suite) THIS run plans — over
+#                   --repeat the largest total and the smallest passed — the
+#                   changed total/passed, keys added / not run here (SKIPPED,
+#                   INTERRUPTED, never started) / not run in the base, or
+#                   `totals unchanged`; the per-bash sums over those keys; a
+#                   base key this run does not plan is no change ("N base
+#                   key(s) not in this run", `base_only`). One summary line
 #                   (+ up to 20 detail lines; all in OUT/compare.txt), a
 #                   `compare` object in summary.json. Informational: the exit
 #                   status is the run's.
@@ -92,8 +100,15 @@
 #   --root DIR      the tree to test (default: the one holding this ktests)
 #   --out DIR       the run's directory: a new one (made with an atomic mkdir)
 #                   or an existing EMPTY one (dot names count; claimed with an
-#                   exclusive marker). Default ${TMPDIR:-/tmp}/kt-gate/
-#                   STAMP-PID; only there old runs are rotated (see OUT).
+#                   exclusive marker). Default PRIVATE_TEMP/kt-gate/STAMP-PID,
+#                   PRIVATE_TEMP = TMPDIR when set, else %LOCALAPPDATA%/Temp
+#                   (else `cygpath -F 28`/Temp), in the C:/ form: the same
+#                   root from a 5.2 and a 5.3 launcher (MSYS2's /tmp,
+#                   C:/bin/msys64/tmp, is writable by every user: never by
+#                   default); only there old runs are rotated (see OUT). It
+#                   must be PRIVATE (the segments source OUT/seg-N.spec):
+#                   your temp or scratch dir — inside the tree under test a
+#                   `[WARN]` (a project folder is usually writable by others)
 #   --keep          keep the sandbox of PASSED cells too (others always kept)
 #   --nohup         no parent watch (see PROCESSES): for a run detached on
 #                   purpose. Implied when SIGHUP is ignored on entry
@@ -142,12 +157,15 @@
 # summary `error no-test-files`; not a failure) · CRASH (no summary file
 # from the runner, or one that says `error REASON`: the runner itself did
 # not finish) · FAIL · ENV · FLAKY (--rerun-failed) · PASS. ENV refines CRASH
-# and FAIL — the machine, not the test: a FAIL whose summary has `env NAME`
-# lines (the RUNNER saw a file die of a fork failure) or whose log has a RAW
-# fork-failure line (KT_ENV_FORK_FAILURE_RE in a line that is no test
+# and FAIL — the machine, not the test: a FAIL whose failed files ALL died
+# of a fork failure — the summary's `env NAME` lines (the RUNNER saw it), or
+# a RAW fork-failure line (KT_ENV_FORK_FAILURE_RE in a line that is no test
 # message: never in [FAIL]/[PASS]/[WARN] lines or their continuations — a
 # test may talk about fork failures; the runner's own "source aborted" line
-# counts); a CRASH with such a raw line, or without a summary at rc 125-127.
+# counts) that belongs to the file (it precedes the file's next tagged
+# message); one real failure next to them keeps FAIL ("+ fork failure in
+# ..." in the reason; G4 review R2); without a list of failed files any such
+# line; a CRASH with such a raw line, or without a summary at rc 125-127.
 # An ENV cell is re-run ONCE in a fresh sandbox, the second run decides, both
 # attempts are kept. INTERRUPTED: the cell was stopped by a stop of the gate;
 # SKIPPED: not run (--fail-fast) — neither is a verdict of the suite.
@@ -201,7 +219,8 @@
 #
 # OUT: .kt_gate (marker `kt-gate 2 PID WINPID START CREATED RUNTIME`),
 #   progress.txt, argv.txt, hb, STOP, INTERRUPTED, FINISHED, cells.tsv,
-#   summary.json, compare.txt (--compare), FAILFAST (--fail-fast: the first
+#   summary.json, compare.txt (--compare), FAILFAST (+ FAILFAST.lock: one
+#   writer; --fail-fast: the first
 #   hard failure; segments stop before their next cell),
 #   seg-N.{spec,log,lines,cur,why,ack,pid,wdpid,wdhb,result,strays.txt}
 #   (+ seg-N.ckk with --warm), cells/NNN/{result,log.txt,summary,fails.txt,
@@ -211,7 +230,7 @@
 #   lines: idx bash_version bash_path mode cwd suite repeat verdict rc total
 #   passed failed warn fail_lines strays attempts duration_ms log reason
 #   attempt1 reruns rerun_pass flaky ckk (the source of cells.tsv).
-#   Rotation ONLY under the default root ${TMPDIR:-/tmp}/kt-gate (an
+#   Rotation ONLY under the default root PRIVATE_TEMP/kt-gate (an
 #   explicit --out's neighbours may be the user's runs): of its gate-marked
 #   dirs the newest 10 are kept; an older one is removed only when gate made
 #   it (CREATED=1), its owner is dead (same runtime: kill -0; the other
@@ -316,7 +335,8 @@ _kt_gate_line() {
 # LAUNCHER
 # ===========================================================================
 
-kt_gate_usage() { sed -n '2,/^$/p' "$_KT_GATE_SELF" | sed 's/^# \{0,1\}//'; }
+# the header comment only, up to its first non-comment line (G4 review R9)
+kt_gate_usage() { sed -n '2,${/^#/!q;s/^# \{0,1\}//;p;}' "$_KT_GATE_SELF"; }
 
 _kt_gate_usage_error() {
     printf 'gate: %s\n' "$1" >&2
@@ -390,6 +410,33 @@ kt_gate_parse() {
     done
     (( ${#_KT_GATE_SUITES_ARG[@]} > 0 || _KT_GATE_CHANGED )) || _kt_gate_usage_error "no suite given (name suites, or all, or --changed)"
     return 0
+}
+
+# _kt_gate_ptmp -> REPLY: the user-PRIVATE temp dir, in the mixed C:/ form
+# (G4 review R13): TMPDIR when set (as given: the caller's choice, made on
+# use as before), else %LOCALAPPDATA%/Temp,
+# else the Windows per-user local app data folder (`cygpath -F 28`, also
+# without any environment: a cross-runtime start)/Temp; /tmp only when none
+# exists. Never MSYS2's /tmp unasked (C:/bin/msys64/tmp: every user may
+# write there, and the segments SOURCE OUT/seg-N.spec). The same rule in both
+# runtimes, so a 5.2 and a 5.3 launcher share ONE default root (LAST, rotation)
+_kt_gate_ptmp() {
+    local v c
+    if [[ -n "${TMPDIR:-}" ]]; then _kt_gate_mpath "${TMPDIR%/}"; return 0; fi
+    for v in "${LOCALAPPDATA:+$LOCALAPPDATA/Temp}"; do
+        [[ -n "$v" ]] || continue
+        c="$v"
+        [[ "$v" == [A-Za-z]:* && -n "$_KT_GATE_CYGPATH" ]] && c="$(cygpath -u -- "$v" 2>/dev/null)"
+        if [[ -n "$c" && -d "$c" && -w "$c" ]]; then _kt_gate_mpath "${c%/}"; return 0; fi
+    done
+    if [[ -n "$_KT_GATE_CYGPATH" ]]; then
+        v="$(cygpath -m -F 28 2>/dev/null)"
+        if [[ -n "$v" ]]; then
+            c="$(cygpath -u -- "$v/Temp" 2>/dev/null)"
+            if [[ -n "$c" && -d "$c" && -w "$c" ]]; then REPLY="${v%/}/Temp"; return 0; fi
+        fi
+    fi
+    _kt_gate_mpath /tmp
 }
 
 # _kt_gate_mpath PATH -> REPLY: the mixed C:/... spelling (`cygpath -m`): the
@@ -481,7 +528,7 @@ _kt_gate_git_list() {
         if (( st )); then
             if (( ren )); then ren=0
             else
-                [[ "${e:0:1}" == [RC] ]] && ren=1
+                [[ "${e:0:2}" == *[RC]* ]] && ren=1     # X or Y: a rename/copy, staged or in the worktree (R4)
                 e="${e:3}"
             fi
         fi
@@ -530,6 +577,20 @@ _kt_gate_chg_index() {
 
 # _kt_gate_chg_pick ID WHY — select suite ID (when it is one) for WHY (the
 # first reason is kept)
+# the root documents a suite runs (path -> "SUITE|why"; G4 review R5: a
+# change of the kbool README must reach kkore/tests/015_DocExamples)
+declare -gA _KT_GATE_DOC_MAP=( [README.md]="kkore|doc examples (kkore 015 runs its doctest blocks)" )
+
+# _kt_gate_was_unit PATH — rc 0 when the HEAD version of the (deleted) file
+# PATH (root-relative; in a submodule: that repo's HEAD) has a kk.unit line
+_kt_gate_was_unit() {
+    local p="$1" repo="$_KT_GATE_ROOT" rel="$1" sub
+    for sub in "${!_KT_GATE_CHG_ISSUB[@]}"; do
+        [[ "$p" == "$sub/"* ]] && { repo="$_KT_GATE_ROOT/$sub"; rel="${p#"$sub"/}"; break; }
+    done
+    git -C "$repo" show "HEAD:$rel" 2>/dev/null | LC_ALL=C grep -qE '^[[:space:]]*kk\.unit[[:space:]]'
+}
+
 _kt_gate_chg_pick() {
     [[ -n "${_KT_GATE_IS_ID["$1"]+x}" ]] || return 1
     [[ -n "${_KT_GATE_CHG_WHY["$1"]+x}" ]] || _KT_GATE_CHG_WHY["$1"]="$2"
@@ -540,13 +601,16 @@ _kt_gate_chg_pick() {
 # --porcelain -z -uall` (staged, unstaged, untracked) in the root repo and in
 # each submodule of .gitmodules; a submodule whose COMMIT differs from the
 # one the root's HEAD records adds the files of that diff. Then:
-#   kkore/ kklass/ ktests/ tests/ kbool.sh (or a submodule diff that cannot
-#   be read)                                   -> all suites
+#   kkore/ kklass/ ktests/ tests/ kbool.sh .gitmodules (or a submodule diff
+#   that cannot be read)                       -> all suites
+#   a root document a suite tests (_KT_GATE_DOC_MAP: README.md -> kkore, its
+#   015_DocExamples runs the doctest blocks)  -> that suite
 #   kcl/tests/...                              -> kcl
 #   kcl/DIR/...                                -> kcl/DIR (when it is a suite;
 #                                                 *.md too: doc tests)
-#   a unit file (kcl/DIR/X.sh with kk.unit; a deleted kcl/DIR/X.sh too)
-#                                              -> kcl as well
+#   a unit file (kcl/DIR/X.sh with kk.unit; a deleted kcl/DIR/X.sh whose
+#   HEAD version has a kk.unit line too)       -> kcl as well; a deleted
+#   top-level script without one ("deleted script") selects its suite only
 #   the units of DIR are TOUCHED by a change in kcl/DIR outside DIR/tests/
 #   that is not *.md; a unit whose unit file has `kk.uses U` for a touched
 #   (or so affected) unit is AFFECTED, transitively; every affected unit's
@@ -565,17 +629,18 @@ kt_gate_changed() {
     _KT_GATE_CHG_PATHS=() _KT_GATE_CHG_ALL="" _KT_GATE_CHG_LINES=()
     command -v git >/dev/null 2>&1 || _kt_gate_usage_error "--changed needs git"
     _kt_gate_is_toplevel "$r" || _kt_gate_usage_error "--changed: $r is not the top of a git work tree"
-    _KT_GATE_CHG_TMP="${TMPDIR:-/tmp}/kt-gate-changed.$$"
+    _KT_GATE_CHG_TMP="${_KT_GATE_PTMP:-${TMPDIR:-/tmp}}/kt-gate-changed.$$"
     for id in "${_KT_GATE_ALL_IDS[@]}"; do _KT_GATE_IS_ID["$id"]=1; done
     _kt_gate_git_list "$r" "" 1 status --porcelain -z -uall --ignore-submodules=dirty \
-        || _kt_gate_usage_error "--changed: git status failed in $r (or ${TMPDIR:-/tmp} is not writable)"
+        || _kt_gate_usage_error "--changed: git status failed in $r (or ${_KT_GATE_CHG_TMP%/*} is not writable)"
     if [[ -f "$r/.gitmodules" ]]; then
         while IFS=' =' read -r k v; do
             [[ "$k" == path ]] && { v="${v# }"; subs+=( "${v% }" ); }
         done < <(sed 's/^[[:space:]]*//; s/[[:space:]]*=[[:space:]]*/ = /' "$r/.gitmodules")
     fi
     local -A issub=()
-    for sub in "${subs[@]}"; do issub["$sub"]=1; done
+    declare -gA _KT_GATE_CHG_ISSUB=()
+    for sub in "${subs[@]}"; do issub["$sub"]=1; _KT_GATE_CHG_ISSUB["$sub"]=1; done
     # a submodule entry of the root's status = its commit moved: the files of
     # that diff (the root's HEAD records REC, the submodule is at HEAD)
     local -a rootp=( "${_KT_GATE_CHG_PATHS[@]}" )
@@ -605,8 +670,8 @@ kt_gate_changed() {
     for p in "${_KT_GATE_CHG_PATHS[@]}"; do
         [[ -n "$_KT_GATE_CHG_ALL" ]] && break
         case "$p" in
-            kkore/*|kklass/*|ktests/*|tests/*|kbool.sh|kkore|kklass|ktests|tests)
-                _KT_GATE_CHG_ALL="$p (kkore/ kklass/ ktests/ tests/ kbool.sh select all)" ;;
+            kkore/*|kklass/*|ktests/*|tests/*|kbool.sh|kkore|kklass|ktests|tests|.gitmodules)
+                _KT_GATE_CHG_ALL="$p (kkore/ kklass/ ktests/ tests/ kbool.sh .gitmodules select all)" ;;
         esac
     done
     if [[ -n "$_KT_GATE_CHG_ALL" ]]; then
@@ -625,11 +690,21 @@ kt_gate_changed() {
         if [[ "$p" =~ ^kcl/([^/]+)/(.+)$ ]]; then
             d="${BASH_REMATCH[1]}" f="${BASH_REMATCH[2]}"
             _kt_gate_chg_pick "kcl/$d" "changed: $p" || none+=( "$p" )
+            # a deleted top-level script of DIR: a unit file only when its HEAD
+            # version says kk.unit (G4 review R9) — else it selects its suite only
+            local del=0
+            if [[ "$f" != */* && "$f" == *.sh && ! -e "$r/$p" && -z "${_KT_GATE_F_UNIT["$p"]+x}" ]]; then
+                if _kt_gate_was_unit "$p"; then del=1
+                else
+                    [[ "${_KT_GATE_CHG_WHY["kcl/$d"]:-}" == "changed: $p" ]] && _KT_GATE_CHG_WHY["kcl/$d"]="deleted script: $p"
+                    continue
+                fi
+            fi
             if [[ "$f" != tests/* && "$f" != *.md ]]; then
                 touch["$d"]="$p"
             fi
-            # a unit file (its header), or a deleted top-level script of DIR
-            if [[ -n "${_KT_GATE_F_UNIT["$p"]+x}" ]] || [[ "$f" != */* && "$f" == *.sh && ! -e "$r/$p" ]]; then
+            # a unit file (its header), or a deleted one
+            if [[ -n "${_KT_GATE_F_UNIT["$p"]+x}" ]] || (( del )); then
                 _kt_gate_chg_pick kcl "unit file changed: $p"
                 # a deleted unit file: its unit is the file stem (U33)
                 u="${f%.sh}"
@@ -638,6 +713,10 @@ kt_gate_changed() {
                 fi
             fi
             continue
+        fi
+        if [[ -n "${_KT_GATE_DOC_MAP["$p"]+x}" ]]; then
+            l="${_KT_GATE_DOC_MAP["$p"]}"
+            _kt_gate_chg_pick "${l%%|*}" "${l#*|}: $p" && continue
         fi
         none+=( "$p" )
     done
@@ -721,7 +800,8 @@ kt_gate_bashes() {
 }
 
 # kt_gate_out — claim OUT, write the marker, argv.txt; rotation.
-#   default: ${TMPDIR:-/tmp}/kt-gate/STAMP-PID made by an ATOMIC mkdir (a name
+#   default: PRIVATE_TEMP/kt-gate/STAMP-PID (_kt_gate_ptmp; one root for both
+#     runtimes, G4 review R13) made by an ATOMIC mkdir (a name
 #     taken — the other runtime has its own pids — gets -2, -3, ...).
 #   --out DIR: a new DIR (its parent made with -p, the leaf by an atomic mkdir)
 #     or an existing EMPTY one — emptiness checked on the RESOLVED path, dot
@@ -734,7 +814,7 @@ kt_gate_out() {
     local -a e=()
     _KT_GATE_CREATED=0 _KT_GATE_DEFROOT=0
     if [[ -z "$o" ]]; then
-        p="${TMPDIR:-/tmp}/kt-gate"
+        p="$_KT_GATE_PTMP/kt-gate"
         mkdir -p -- "$p" 2>/dev/null
         printf -v stamp '%(%Y%m%d-%H%M%S)T' -1
         base="$p/$stamp-$$"; o="$base"
@@ -768,6 +848,12 @@ kt_gate_out() {
     (( rc == 0 )) || _kt_gate_usage_error "--out $_KT_GATE_OUT_ARG is in use by another gate ($o)"
     _KT_GATE_OUT="$o"
     _kt_gate_mpath "$_KT_GATE_OUT"; _KT_GATE_OUTM="$REPLY"
+    # OUT must be private: the segment SOURCES OUT/seg-N.spec — a dir others
+    # can write to (the tree: C:\projects inherits "Authenticated Users:
+    # Modify") lets them run code in the gate (G4 review R11)
+    _KT_GATE_OUT_WARN=""
+    [[ "$_KT_GATE_OUT/" == "$_KT_GATE_ROOT/"* ]] \
+        && _KT_GATE_OUT_WARN="[WARN] --out is inside the tree under test ($_KT_GATE_OUTM): the segments source OUT/seg-N.spec — use a private dir (your temp/scratch dir)"
     mkdir -p -- "$_KT_GATE_OUT/cells"
     printf '%q ' "$_KT_GATE_SELF" "${_KT_GATE_ARGV[@]}" > "$_KT_GATE_OUT/argv.txt"; echo >> "$_KT_GATE_OUT/argv.txt"
     : > "$_KT_GATE_OUT/progress.txt"
@@ -778,7 +864,8 @@ kt_gate_out() {
 # kt_gate_rotate — ONLY under the default root (review R3): of its
 # gate-marked dirs the newest 10 stay; an older one is removed only when gate
 # made it (marker v2, CREATED=1), its owner is dead (same runtime: kill -0;
-# the other runtime: FINISHED/INTERRUPTED or older than 24 h) AND it is
+# the other runtime: no fresh OUT/hb and FINISHED/INTERRUPTED or older than
+# 24 h) AND it is
 # complete — every seg-N.spec has its seg-N.result — or older than 2 h (F15)
 kt_gate_rotate() {
     local parent="${_KT_GATE_OUT%/*}" d pid st cr rt tag ver i n s ok age
@@ -805,6 +892,11 @@ kt_gate_rotate() {
         if [[ "$rt" == "$_KT_GATE_RT" ]]; then
             kill -0 "$pid" 2>/dev/null && continue
         else
+            # the other runtime's pid cannot be seen: its launcher rewrites
+            # OUT/hb every 5 s while it lives — fresh (< 2 min) = alive, also
+            # after an INTERRUPTED mark (it then still writes the reports; one
+            # default root for both runtimes since G4 review R13)
+            [[ -n "$(find "$d" -maxdepth 1 -name hb -mmin -2 2>/dev/null)" ]] && continue
             [[ -e "$d/FINISHED" || -e "$d/INTERRUPTED" ]] || (( age > 86400 )) || continue
         fi
         ok=1
@@ -976,8 +1068,21 @@ kt_gate_cells() {
 # _kt_gate_cellvars MODE CWD SUITE REP — the line globals of a cell
 # (_KT_GATE_CMODE/_CCWD/_CSUITE; the suite as SUITE#REP when --repeat > 1)
 _kt_gate_cellvars() {
-    _KT_GATE_CMODE="$1" _KT_GATE_CCWD="$2" _KT_GATE_CSUITE="$3"
+    _KT_GATE_CMODE="$1" _KT_GATE_CCWD="$2"
+    _kt_gate_hsuite "$3"; _KT_GATE_CSUITE="$REPLY"
     (( ${KT_GATE_S_NREP:-1} > 1 )) && _KT_GATE_CSUITE+="#$4"
+    return 0
+}
+
+# the suite column of the human lines: at most this many characters
+declare -g _KT_GATE_SUITE_MAX=40
+# _kt_gate_hsuite ID -> REPLY: ID for a human line (G4 review R9): every
+# control character (tab, newline, CR, ESC, ...) a `?`, longer than
+# _KT_GATE_SUITE_MAX cut with `...` (cells.tsv and summary.json keep the id)
+_kt_gate_hsuite() {
+    REPLY="$1"
+    [[ "$REPLY" == *[$'\001'-$'\037'$'\177']* ]] && REPLY="${REPLY//[$'\001'-$'\037'$'\177']/?}"
+    (( ${#REPLY} > _KT_GATE_SUITE_MAX )) && REPLY="${REPLY:0:_KT_GATE_SUITE_MAX-3}..."
     return 0
 }
 
@@ -1242,10 +1347,49 @@ _kt_gate_jctl_init() {
     done
 }
 
+# _kt_gate_jutf8 S -> REPLY: S with every byte sequence that is not valid
+# UTF-8 (a stray continuation byte, a truncated or overlong sequence, a
+# surrogate, > U+10FFFF) replaced by U+FFFD — summary.json must decode with a
+# strict UTF-8 decoder (G4 review R7). Byte-wise (LC_ALL=C), ASCII runs
+# copied in one step.
+_kt_gate_jutf8() {
+    local LC_ALL=C
+    local s="$1" o="" pre c b n j lo hi ok
+    local rep=$'\xef\xbf\xbd'
+    while [[ -n "$s" ]]; do
+        pre="${s%%[$'\x80'-$'\xff']*}"
+        o+="$pre"; s="${s:${#pre}}"
+        [[ -n "$s" ]] || break
+        c="${s:0:1}"; printf -v b '%d' "'$c"
+        lo=128 hi=191 n=0
+        if (( b >= 0xc2 && b <= 0xdf )); then n=1
+        elif (( b == 0xe0 )); then n=2 lo=0xa0
+        elif (( b == 0xed )); then n=2 hi=0x9f
+        elif (( b >= 0xe1 && b <= 0xef )); then n=2
+        elif (( b == 0xf0 )); then n=3 lo=0x90
+        elif (( b >= 0xf1 && b <= 0xf3 )); then n=3
+        elif (( b == 0xf4 )); then n=3 hi=0x8f
+        fi
+        ok=$(( n > 0 ))
+        for (( j = 1; ok && j <= n; j++ )); do
+            c="${s:j:1}"
+            [[ -n "$c" ]] || { ok=0; break; }
+            printf -v b '%d' "'$c"
+            if (( j == 1 )); then (( b >= lo && b <= hi )) || ok=0
+            else (( b >= 0x80 && b <= 0xbf )) || ok=0; fi
+        done
+        if (( ok )); then o+="${s:0:n+1}"; s="${s:n+1}"
+        else o+="$rep"; s="${s:1}"; fi
+    done
+    REPLY="$o"
+}
+
 # _kt_gate_jstr S -> REPLY: S as a JSON string (quotes, backslashes and every
-# control character escaped; bytes >= 0x80 — UTF-8 — passed through as is)
+# control character escaped; valid UTF-8 passed through, an invalid byte
+# sequence as U+FFFD: _kt_gate_jutf8)
 _kt_gate_jstr() {
     local s="$1" i h
+    if [[ "$s" == *[$'\x80'-$'\xff']* ]]; then _kt_gate_jutf8 "$s"; s="$REPLY"; fi
     s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
     if [[ "$s" == *[$'\001'-$'\037']* ]]; then
         s="${s//$'\n'/\\n}"; s="${s//$'\r'/\\r}"; s="${s//$'\t'/\\t}"; s="${s//$'\b'/\\b}"; s="${s//$'\f'/\\f}"
@@ -1333,69 +1477,113 @@ _kt_gate_cmp_add() {
     return 0
 }
 
-# kt_gate_compare_base — --compare: find the base's cells.tsv and read it
-# (pure bash) into the compare table. Unreadable, empty, not a gate cells.tsv
-# (a header without the key columns), a garbled row: usage error (rc 2) —
-# called before OUT is made, before any run. LAST = the newest FINISHED run
-# with a cells.tsv under the DEFAULT OUT root ${TMPDIR:-/tmp}/kt-gate (by
-# its marker's start time); DIR = DIR/cells.tsv; else the file itself.
-kt_gate_compare_base() {
-    local c="$_KT_GATE_COMPARE" f="" d st best=-1 line i n key
+# _kt_gate_cmp_read FILE — read a base cells.tsv (pure bash) into the b side
+# of the compare table; rc 1 + REPLY = why: unreadable, empty, not a gate
+# cells.tsv (a header without the key columns), a garbled row (a wrong field
+# count, total/passed not a number of at most 18 digits — no overflow)
+_kt_gate_cmp_read() {
+    local f="$1" line i n key
     local -a H=() F=() L=()
     local -A col=()
-    declare -gA _KT_GATE_CMP=()
-    _KT_GATE_CMP_BKEYS=() _KT_GATE_CMP_NKEYS=() _KT_GATE_CMP_FILE="" _KT_GATE_CMP_BASE="" _KT_GATE_CMP_CH=()
-    [[ -n "$c" ]] || return 0
-    if [[ "$c" == LAST ]]; then
-        local root="${TMPDIR:-/tmp}/kt-gate"
-        for d in "$root"/*/; do
-            d="${d%/}"
-            [[ -f "$d/FINISHED" && -f "$d/cells.tsv" && -f "$d/.kt_gate" ]] || continue
-            st=""; { read -r _ _ _ _ st _ < "$d/.kt_gate"; } 2>/dev/null
-            [[ "$st" =~ ^[0-9]+$ ]] || continue
-            (( st >= best )) && { best=$st; f="$d/cells.tsv"; _KT_GATE_CMP_BASE="$d"; }
-        done
-        [[ -n "$f" ]] || _kt_gate_usage_error "--compare LAST: no finished gate run with a cells.tsv under $root"
-    elif [[ -d "$c" ]]; then
-        f="${c%/}/cells.tsv"; _KT_GATE_CMP_BASE="${c%/}"
-        [[ -f "$f" ]] || _kt_gate_usage_error "--compare $c: no cells.tsv in that dir"
-    else
-        f="$c"; _KT_GATE_CMP_BASE="$c"
-    fi
-    [[ -f "$f" && -r "$f" ]] || _kt_gate_usage_error "--compare $c: cannot read $f"
+    _KT_GATE_CMP=() _KT_GATE_CMP_BKEYS=()
+    [[ -f "$f" && -r "$f" ]] || { REPLY="cannot read $f"; return 1; }
     { mapfile -t L < "$f"; } 2>/dev/null
-    (( ${#L[@]} > 0 )) || _kt_gate_usage_error "--compare $c: $f is empty"
+    (( ${#L[@]} > 0 )) || { REPLY="$f is empty"; return 1; }
     line="${L[0]%$'\r'}"
     IFS=$'\x1f' read -r -a H <<< "${line//$'\t'/$'\x1f'}"
     for (( i = 0; i < ${#H[@]}; i++ )); do col["${H[i]}"]=$i; done
     for key in bash_version mode cwd suite verdict total passed; do
-        [[ -n "${col[$key]+x}" ]] || _kt_gate_usage_error "--compare $c: $f is not a gate cells.tsv (no column \"$key\" in its header)"
+        [[ -n "${col[$key]+x}" ]] || { REPLY="$f is not a gate cells.tsv (no column \"$key\" in its header)"; return 1; }
     done
     for (( n = 1; n < ${#L[@]}; n++ )); do
         line="${L[n]%$'\r'}"
         [[ -n "$line" ]] || continue
         F=()
         IFS=$'\x1f' read -r -a F <<< "${line//$'\t'/$'\x1f'}"
-        (( ${#F[@]} == ${#H[@]} )) || _kt_gate_usage_error "--compare $c: $f line $(( n + 1 )) is garbled (${#F[@]} fields, the header has ${#H[@]})"
-        [[ "${F[col[total]]}" =~ ^([0-9]+|-)$ && "${F[col[passed]]}" =~ ^([0-9]+|-)$ ]] \
-            || _kt_gate_usage_error "--compare $c: $f line $(( n + 1 )) is garbled (total/passed are not numbers)"
+        (( ${#F[@]} == ${#H[@]} )) || { REPLY="$f line $(( n + 1 )) is garbled (${#F[@]} fields, the header has ${#H[@]})"; return 1; }
+        [[ "${F[col[total]]}" =~ ^([0-9]{1,18}|-)$ && "${F[col[passed]]}" =~ ^([0-9]{1,18}|-)$ ]] \
+            || { REPLY="$f line $(( n + 1 )) is garbled (total/passed are not numbers of up to 18 digits)"; return 1; }
         key="${F[col[bash_version]]}"$'\x1f'"${F[col[mode]]}"$'\x1f'"${F[col[cwd]]}"$'\x1f'"${F[col[suite]]}"
         _kt_gate_cmp_add b "$key" "${F[col[verdict]]}" "${F[col[total]]}" "${F[col[passed]]}"
     done
+    return 0
+}
+
+# kt_gate_compare_base — --compare: find the base's cells.tsv and read it
+# into the compare table, before OUT is made, before any run. DIR =
+# DIR/cells.tsv, else the file itself: unreadable or garbled -> usage error
+# (rc 2). LAST = the newest FINISHED run with a cells.tsv under the DEFAULT
+# OUT root PRIVATE_TEMP/kt-gate (_kt_gate_ptmp: the same for a 5.2 and a 5.3
+# launcher, so either finds the other's runs), newest by its marker's start stamp, a tie by the
+# dir name (the later name wins); a candidate that cannot be read is skipped
+# (named in a note, G4 review R3); with none left the run goes on WITHOUT a
+# compare: `[WARN] --compare LAST: no base (...)`
+kt_gate_compare_base() {
+    local c="$_KT_GATE_COMPARE" f="" d st i bi why
+    local -a cst=() cdir=() skipped=() ns=() nd=()
+    declare -gA _KT_GATE_CMP=()
+    _KT_GATE_CMP_BKEYS=() _KT_GATE_CMP_NKEYS=() _KT_GATE_CMP_FILE="" _KT_GATE_CMP_BASE="" _KT_GATE_CMP_CH=()
+    _KT_GATE_CMP_BONLY=() _KT_GATE_CMP_NOTES=()
+    [[ -n "$c" ]] || return 0
+    if [[ "$c" == LAST ]]; then
+        local root="$_KT_GATE_PTMP/kt-gate"
+        for d in "$root"/*/; do
+            d="${d%/}"
+            [[ -f "$d/FINISHED" && -f "$d/cells.tsv" && -f "$d/.kt_gate" ]] || continue
+            st=""; { read -r _ _ _ _ st _ < "$d/.kt_gate"; } 2>/dev/null
+            [[ "$st" =~ ^[0-9]{1,18}$ ]] || continue
+            cst+=( "$st" ); cdir+=( "$d" )
+        done
+        # newest first: by start stamp, then by name (a selection: few dirs)
+        while (( ${#cdir[@]} > 0 )); do
+            bi=0
+            for (( i = 1; i < ${#cdir[@]}; i++ )); do
+                if (( 10#${cst[i]} > 10#${cst[bi]} )); then bi=$i
+                elif (( 10#${cst[i]} == 10#${cst[bi]} )) && [[ "${cdir[i]}" > "${cdir[bi]}" ]]; then bi=$i; fi
+            done
+            d="${cdir[bi]}"
+            if _kt_gate_cmp_read "$d/cells.tsv"; then f="$d/cells.tsv"; _KT_GATE_CMP_BASE="$d"; break; fi
+            skipped+=( "${d##*/}: $REPLY" )
+            ns=() nd=()
+            for (( i = 0; i < ${#cdir[@]}; i++ )); do (( i == bi )) && continue; ns+=( "${cst[i]}" ); nd+=( "${cdir[i]}" ); done
+            cst=( "${ns[@]}" ) cdir=( "${nd[@]}" )
+        done
+        for why in "${skipped[@]}"; do _KT_GATE_CMP_NOTES+=( "gate compare: a LAST candidate skipped (unreadable): $why" ); done
+        if [[ -z "$f" ]]; then
+            _kt_gate_mpath "$root"
+            _KT_GATE_CMP_NOTES+=( "[WARN] --compare LAST: no base (no readable finished gate run under $REPLY) - running without a compare" )
+            _KT_GATE_COMPARE="" _KT_GATE_CMP_BKEYS=()
+            _KT_GATE_CMP=()
+            return 0
+        fi
+    else
+        if [[ -d "$c" ]]; then
+            f="${c%/}/cells.tsv"; _KT_GATE_CMP_BASE="${c%/}"
+            [[ -f "$f" ]] || _kt_gate_usage_error "--compare $c: no cells.tsv in that dir"
+        else
+            f="$c"; _KT_GATE_CMP_BASE="$c"
+        fi
+        _kt_gate_cmp_read "$f" || _kt_gate_usage_error "--compare $c: $REPLY"
+    fi
     _kt_gate_mpath "$f"; _KT_GATE_CMP_FILE="$REPLY"
     _kt_gate_mpath "$_KT_GATE_CMP_BASE"; _KT_GATE_CMP_BASE="$REPLY"
     return 0
 }
 
-# kt_gate_compare — this run's rows against the base: _KT_GATE_CMP_CH (the
+# kt_gate_compare — this run's rows against the base, over the keys (bash,
+# mode, cwd, suite) PLANNED in this run (G4 review R6): _KT_GATE_CMP_CH (the
 # changes, "KIND US VER US MODE US CWD US SUITE US BT US BP US NT US NP"
-# each, US = \x1f; KIND changed / added / removed / notrun), the lines to
-# print (_KT_GATE_CMP_OUT, all of them in OUT/compare.txt)
+# each, US = \x1f; KIND changed / added / notrun (not run here) / notbase
+# (in the base, but not run there: `-` counts, UNSTARTED, INTERRUPTED,
+# SKIPPED)); the per-bash sums over the planned keys only. A base key this
+# run does not plan is no change and not in the sums: _KT_GATE_CMP_BONLY
+# ("VER US MODE US CWD US SUITE US BT US BP"), reported apart. The lines to
+# print: _KT_GATE_CMP_OUT (all of them in OUT/compare.txt)
 kt_gate_compare() {
-    local i key bt bp nt np kind vv m su s c l
+    local i key bt bp nt np kind vv m su s c l nb=0
     local -a out=() vord=()
     local -A bsum=() nsum=() seen=()
-    _KT_GATE_CMP_CH=()
+    _KT_GATE_CMP_CH=() _KT_GATE_CMP_BONLY=()
     for (( i = 0; i < _KT_GATE_NCELLS; i++ )); do
         key="${_KT_GATE_ROW["$i:bash_version"]}"$'\x1f'"${_KT_GATE_ROW["$i:mode"]}"$'\x1f'"${_KT_GATE_ROW["$i:cwd"]}"$'\x1f'"${_KT_GATE_ROW["$i:suite"]}"
         _kt_gate_cmp_add n "$key" "${_KT_GATE_ROW["$i:verdict"]}" "${_KT_GATE_ROW["$i:total"]}" "${_KT_GATE_ROW["$i:passed"]}"
@@ -1405,6 +1593,10 @@ kt_gate_compare() {
         seen["k:$key"]=1
         bt="${_KT_GATE_CMP["b:t:$key"]:-}" bp="${_KT_GATE_CMP["b:p:$key"]:-}"
         nt="${_KT_GATE_CMP["n:t:$key"]:-}" np="${_KT_GATE_CMP["n:p:$key"]:-}"
+        if [[ -z "${_KT_GATE_CMP["n:seen:$key"]+x}" ]]; then
+            _KT_GATE_CMP_BONLY+=( "$key"$'\x1f'"$bt"$'\x1f'"$bp" )
+            continue
+        fi
         vv="${key%%$'\x1f'*}"
         [[ -n "${seen["v:$vv"]+x}" ]] || { seen["v:$vv"]=1; vord+=( "$vv" ); }
         [[ -n "$bt" ]] && { bsum["t:$vv"]=$(( ${bsum["t:$vv"]:-0} + bt )); bsum["p:$vv"]=$(( ${bsum["p:$vv"]:-0} + bp )); }
@@ -1412,9 +1604,10 @@ kt_gate_compare() {
         kind=""
         if [[ -n "$bt" && -n "$nt" ]]; then
             [[ "$bt" != "$nt" || "$bp" != "$np" ]] && kind=changed
-        elif [[ -n "$nt" ]]; then kind=added
+        elif [[ -n "$nt" ]]; then
+            if [[ -n "${_KT_GATE_CMP["b:seen:$key"]+x}" ]]; then kind=notbase; else kind=added; fi
         elif [[ -n "$bt" ]]; then
-            if [[ -n "${_KT_GATE_CMP["n:seen:$key"]+x}" ]]; then kind=notrun; else kind=removed; fi
+            kind=notrun
         fi
         [[ -n "$kind" ]] && _KT_GATE_CMP_CH+=( "$kind"$'\x1f'"$key"$'\x1f'"$bt"$'\x1f'"$bp"$'\x1f'"$nt"$'\x1f'"$np" )
     done
@@ -1427,6 +1620,7 @@ kt_gate_compare() {
             s+="${s:+, }$vv ${bsum["p:$vv"]:-0}/${bsum["t:$vv"]:-0} -> ${nsum["p:$vv"]:-0}/${nsum["t:$vv"]:-0}"
         fi
     done
+    nb=${#_KT_GATE_CMP_BONLY[@]}
     l="$_KT_GATE_CMP_BASE"
     [[ "$_KT_GATE_COMPARE" == LAST ]] && l="LAST ($_KT_GATE_CMP_BASE)"
     if (( ${#_KT_GATE_CMP_CH[@]} == 0 )); then
@@ -1434,16 +1628,22 @@ kt_gate_compare() {
     else
         out=( "gate compare $l: ${#_KT_GATE_CMP_CH[@]} change(s) ($s)" )
     fi
+    (( nb > 0 )) && out[0]+="; $nb base key(s) not in this run, not compared"
     for c in "${_KT_GATE_CMP_CH[@]}"; do
         IFS=$'\x1f' read -r kind vv m su s bt bp nt np <<< "$c"
         l="        $vv $m $su $s  "
         case "$kind" in
             changed) l+="total $bt -> $nt  passed $bp -> $np" ;;
             added) l+="added ($np/$nt)" ;;
-            removed) l+="removed (was $bp/$bt)" ;;
+            notbase) l+="not run in the base (now $np/$nt)" ;;
             notrun) l+="not run here (was $bp/$bt)" ;;
         esac
         out+=( "$l" )
+    done
+    for c in "${_KT_GATE_CMP_BONLY[@]}"; do
+        IFS=$'\x1f' read -r vv m su s bt bp <<< "$c"
+        if [[ -n "$bt" ]]; then out+=( "        $vv $m $su $s  base only (was $bp/$bt): not in this run" )
+        else out+=( "        $vv $m $su $s  base only (not run there): not in this run" ); fi
     done
     printf '%s\n' "${out[@]}" > "$_KT_GATE_OUT/compare.txt"
     _KT_GATE_CMP_OUT=( "${out[@]:0:21}" )
@@ -1572,6 +1772,18 @@ kt_gate_json() {
                 if [[ -n "$nt" ]]; then printf '"new": {"total": %d, "passed": %d}}' "$nt" "$np"; else printf '"new": null}'; fi
             done
             [[ -n "$a" ]] && printf '\n  '
+            printf '], "base_only": ['
+            a=""
+            for x in "${_KT_GATE_CMP_BONLY[@]}"; do
+                IFS=$'\x1f' read -r vv m su s bt bp <<< "$x"
+                printf '%s\n    {' "$a"; a=","
+                _kt_gate_jstr "$vv"; printf '"bash_version": %s, ' "$REPLY"
+                _kt_gate_jstr "$m"; printf '"mode": %s, ' "$REPLY"
+                _kt_gate_jstr "$su"; printf '"cwd": %s, ' "$REPLY"
+                _kt_gate_jstr "$s"; printf '"suite": %s, ' "$REPLY"
+                if [[ -n "$bt" ]]; then printf '"base": {"total": %d, "passed": %d}}' "$bt" "$bp"; else printf '"base": null}'; fi
+            done
+            [[ -n "$a" ]] && printf '\n  '
             printf ']},\n'
         fi
         _kt_gate_jstr "$mline"; printf '  "machine": %s,\n' "$REPLY"
@@ -1585,6 +1797,11 @@ kt_gate_main() {
     kt_gate_parse "$@"
     _KT_GATE_CYGPATH=""; command -v cygpath >/dev/null 2>&1 && _KT_GATE_CYGPATH=1
     _kt_gate_rt; _KT_GATE_RT="$REPLY"
+    # the private temp: mixed (one default root for both runtimes), used in
+    # this runtime's spelling (cygpath -u: /c/... in both)
+    _kt_gate_ptmp; _KT_GATE_PTMPM="$REPLY" _KT_GATE_PTMP="$REPLY"
+    [[ -n "$_KT_GATE_CYGPATH" ]] && _KT_GATE_PTMP="$(cygpath -u -- "$REPLY" 2>/dev/null)"
+    _KT_GATE_PTMP="${_KT_GATE_PTMP:-$_KT_GATE_PTMPM}"
     kt_gate_root
     kt_gate_resolve
     _KT_GATE_CHG_PATHS=() _KT_GATE_CHG_ALL="" _KT_GATE_CHG_LINES=()
@@ -1635,6 +1852,7 @@ kt_gate_main() {
         (( _KT_GATE_REPEAT > 1 )) && s+="#$_KT_GATE_REPEAT"
         (( ${#s} > _KT_GATE_SW )) && _KT_GATE_SW=${#s}
     done
+    (( _KT_GATE_SW > _KT_GATE_SUITE_MAX )) && _KT_GATE_SW=$_KT_GATE_SUITE_MAX
     _KT_GATE_VW=1
     for s in "${_KT_GATE_B_VER[@]}"; do (( ${#s} > _KT_GATE_VW )) && _KT_GATE_VW=${#s}; done
     _KT_GATE_SIG=0 _KT_GATE_SIGWHY="" _KT_GATE_STOPPED=0 _KT_GATE_STOP_T0=0
@@ -1673,6 +1891,8 @@ kt_gate_main() {
     (( _KT_GATE_RERUN > 0 )) && l+=" --rerun-failed $_KT_GATE_RERUN"
     [[ -n "$l" ]] && _kt_gate_say "gate options:$l"
     for l in "${_KT_GATE_CHG_LINES[@]}"; do _kt_gate_say "$l"; done
+    [[ -n "${_KT_GATE_OUT_WARN:-}" ]] && _kt_gate_say "$_KT_GATE_OUT_WARN"
+    for l in "${_KT_GATE_CMP_NOTES[@]}"; do _kt_gate_say "$l"; done
     [[ -n "$_KT_GATE_COMPARE" ]] && _kt_gate_say "gate compare: base $_KT_GATE_CMP_FILE"
     (( _KT_GATE_ONE )) && _kt_gate_say "[WARN] one runtime only (no --bash, no KT_GATE_BASHES): $BASH_VERSION"
     if [[ -z "$_KT_GATE_SETSID$_KT_GATE_PERL" ]]; then
@@ -1816,10 +2036,18 @@ declare -g _KT_GATE_RAW_RE='^[0-9]+ \[[^]]+\] |(^|/)[A-Za-z0-9_.-]*sh(\.exe)?: (
 #                   [PASS]/[WARN] lines and their continuations: a test may
 #                   talk about fork failures, ktests 035 does), but in the
 #                   runner's own "source aborted" line (review R4)
+#   _KT_GATE_ENVRAW the files such a raw line belongs to (assoc; G4 review
+#                   R2): a raw line is output of the file whose next tagged
+#                   message ("... (NNN_name.sh)", or the runner's "[FAIL]
+#                   NNN_name.sh: source aborted") follows it — a file's
+#                   output comes as one block, threaded or single;
+#                   _KT_GATE_SIGFREE=1 when a raw line had no tagged message
+#                   after it
 _kt_gate_seg_scan_log() {
-    local raw line esc=$'\e' pre post cont=0 sumb=0 nf=${#_KT_GATE_FFILES[@]} n
+    local raw line esc=$'\e' pre post cont=0 sumb=0 nf=${#_KT_GATE_FFILES[@]} n pend=0 tagf
     local -a L=()
-    _KT_GATE_FAILS=() _KT_GATE_WARN=0 _KT_GATE_SIGHIT=""
+    _KT_GATE_FAILS=() _KT_GATE_WARN=0 _KT_GATE_SIGHIT="" _KT_GATE_SIGFREE=0
+    declare -gA _KT_GATE_ENVRAW=()
     { mapfile -t L < "$1"; } 2>/dev/null
     for raw in "${L[@]}"; do
         line="$raw"
@@ -1830,7 +2058,14 @@ _kt_gate_seg_scan_log() {
         done
         line="${line//$'\r'/}"
         line="${line#"${line%%[![:space:]]*}"}"
-        [[ "$line" == 'Total tests:'* ]] && { sumb=1; cont=0; continue; }
+        [[ "$line" == 'Total tests:'* ]] && { (( pend )) && _KT_GATE_SIGFREE=1; pend=0; sumb=1; cont=0; continue; }
+        # a pending raw fork-failure line belongs to the next tagged message's file
+        if (( pend )) && [[ "$line" == '['[A-Z]*']'* ]]; then
+            tagf=""
+            if [[ "$line" =~ \(([0-9]{3}_[^()]*\.sh)\)$ ]]; then tagf="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^\[FAIL\]\ ([0-9]{3}_[^:]*\.sh):\ source\ aborted ]]; then tagf="${BASH_REMATCH[1]}"; fi
+            [[ -n "$tagf" ]] && { _KT_GATE_ENVRAW["$tagf"]=1; pend=0; }
+        fi
         if [[ "$line" == '[FAIL]'* ]]; then
             cont=0
             if (( nf > 0 )); then
@@ -1840,8 +2075,9 @@ _kt_gate_seg_scan_log() {
             fi
             (( sumb )) && continue
             _KT_GATE_FAILS+=( "$line" ); cont=1
-            if [[ -z "$_KT_GATE_SIGHIT" && "$line" == '[FAIL] '*': source aborted ('* && "$line" =~ $KT_ENV_FORK_FAILURE_RE ]]; then
-                _KT_GATE_SIGHIT="${BASH_REMATCH[0]}"
+            if [[ "$line" == '[FAIL] '*': source aborted ('* && "$line" =~ $KT_ENV_FORK_FAILURE_RE ]]; then
+                [[ -z "$_KT_GATE_SIGHIT" ]] && _KT_GATE_SIGHIT="${BASH_REMATCH[0]}"
+                [[ "$line" =~ ^\[FAIL\]\ ([0-9]{3}_[^:]*\.sh):\ source\ aborted ]] && _KT_GATE_ENVRAW["${BASH_REMATCH[1]}"]=1
             fi
             continue
         fi
@@ -1857,10 +2093,12 @@ _kt_gate_seg_scan_log() {
             continue
         fi
         cont=0
-        if [[ -z "$_KT_GATE_SIGHIT" && "$line" =~ $KT_ENV_FORK_FAILURE_RE ]]; then
-            _KT_GATE_SIGHIT="${BASH_REMATCH[0]}"
+        if [[ "$line" =~ $KT_ENV_FORK_FAILURE_RE ]]; then
+            [[ -z "$_KT_GATE_SIGHIT" ]] && _KT_GATE_SIGHIT="${BASH_REMATCH[0]}"
+            (( sumb )) || pend=1
         fi
     done
+    (( pend )) && _KT_GATE_SIGFREE=1
     return 0
 }
 
@@ -1876,6 +2114,7 @@ _kt_gate_seg_attempt() {
     local c=$1 a=$2 idx="${KT_GATE_S_C_IDX[$1]}" suite="${KT_GATE_S_C_SUITE[$1]}" cd m wd jr why="" t0 t1
     local sum log nrow brk=0 timedout=0 stray=0 v="" r="" tt=0 pp=0 ff=0 src="" l nenv=0 envf="" rel="${3:-}" sel="${4:-}" ckk
     local -a S=()
+    local -A envnames=()
     [[ -n "$rel" ]] || printf -v rel 'cells/%03d' "$idx"
     cd="$KT_GATE_S_OUT/$rel" m="$KT_GATE_S_OUTM/$rel"
     (( a > 1 )) && rm -rf -- "$cd/home" "$cd/tmp" "$cd/etc" "$cd/cwd" "$cd/ckk" 2>/dev/null
@@ -1950,7 +2189,7 @@ _kt_gate_seg_attempt() {
             case "$l" in
                 "error "*) [[ -z "$src" ]] && src="${l#error }" ;;
                 "file "*) _KT_GATE_FFILES["${l#file }"]=1 ;;
-                "env "*) nenv=$(( nenv + 1 )); [[ -z "$envf" ]] && envf="${l#env }" ;;
+                "env "*) nenv=$(( nenv + 1 )); [[ -z "$envf" ]] && envf="${l#env }"; envnames["${l#env }"]=1 ;;
             esac
         done
     else
@@ -1979,8 +2218,23 @@ _kt_gate_seg_attempt() {
     elif (( _KT_GATE_A_RC != 0 || ff > 0 || pp < tt )); then
         v=FAIL
         # ENV: the RUNNER saw a file die of a fork failure (`env` lines of the
-        # summary), or a raw fork-failure line is in the log (review R4)
-        if (( nenv > 0 )); then v=ENV; r="fork failure in $nenv file(s) (runner): $envf"
+        # summary), or a raw fork-failure line is in the log (review R4) —
+        # only when EVERY failed file is such a file (G4 review R2: a fork
+        # failure in one file must not hide a real failure in another); a
+        # summary without a list of failed files: the old rule
+        local -A envset=()
+        local nonenv="" en=""
+        for l in "${!envnames[@]}" "${!_KT_GATE_ENVRAW[@]}"; do envset["$l"]=1; done
+        if (( ${#_KT_GATE_FFILES[@]} > 0 )); then
+            for l in "${!_KT_GATE_FFILES[@]}"; do [[ -n "${envset[$l]+x}" ]] || nonenv+="${nonenv:+, }$l"; done
+            for l in "${!envset[@]}"; do en+="${en:+, }$l"; done
+            if [[ -z "$nonenv" ]] && (( ${#envset[@]} > 0 )); then
+                v=ENV
+                if (( nenv > 0 )); then r="fork failure in $nenv file(s) (runner): $envf"; else r="fork failure: $_KT_GATE_SIGHIT"; fi
+            elif (( ${#envset[@]} > 0 )) || [[ -n "$_KT_GATE_SIGHIT" ]]; then
+                r="+ fork failure in ${en:-the log}${_KT_GATE_SIGHIT:+ ($_KT_GATE_SIGHIT)}; not ENV: $nonenv failed as well"
+            fi
+        elif (( nenv > 0 )); then v=ENV; r="fork failure in $nenv file(s) (runner): $envf"
         elif [[ -n "$_KT_GATE_SIGHIT" ]]; then v=ENV; r="fork failure: $_KT_GATE_SIGHIT"; fi
     else
         v=PASS
@@ -2124,6 +2378,9 @@ _kt_gate_seg_failfast() {
     (( KT_GATE_S_FAILFAST )) || return 0
     _kt_gate_seg_hard "$2" || return 0
     [[ -e "$KT_GATE_S_OUT/FAILFAST" ]] && return 0
+    # the FIRST writer only (G4 review R8: two --parallel segments failing at
+    # once): an atomic mkdir decides, across runtimes too
+    mkdir -- "$KT_GATE_S_OUT/FAILFAST.lock" 2>/dev/null || return 0
     _kt_gate_put "$KT_GATE_S_OUT/FAILFAST" "cell $1 $2 (${_KT_GATE_VER} ${KT_GATE_S_C_SUITE[$3]})"
 }
 
@@ -2373,6 +2630,8 @@ _kt_gate_wd_killed() {
             printf '%s\n' "$REPLY" >> "$o/seg-$n.lines"
         fi
     fi
+    # --warm: the segment's shared .ckk goes as on the normal end (G4 review R10)
+    (( KT_GATE_S_WARM && ! KT_GATE_S_KEEP )) && rm -rf -- "$o/seg-$n.ckk" 2>/dev/null
     printf 'segment %s: segment-killed (the watchdog stopped its cells)\n' "$n" >> "$o/INTERRUPTED"
     _kt_gate_put "$o/seg-$n.result" "status=segment-killed" "cells_run=?" "cells=${#KT_GATE_S_C_IDX[@]}" \
         "bash_version=${BASH_VERSION%%(*}" "strays_final=$left"

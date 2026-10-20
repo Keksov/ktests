@@ -3,7 +3,7 @@
   "project": "ktests gate — one command for the phase gate (ktests/tools/gate.sh)",
   "created": "2026-10-19",
   "updated": "2026-10-20",
-  "status": "in progress — G0, G1, G2 done + committed; G3 done 2026-10-20 (uncommitted, awaiting review)",
+  "status": "COMPLETE 2026-10-20: G0-G4 done, reviewed (critic on G2 + final critic), closing gate 60/60 PASS; open items listed in open",
   "plan": "GATE_PLAN.md",
   "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
   "motivation": {
@@ -295,21 +295,188 @@
     },
     "G4": {
       "name": "docs, brief template, final critic, round gate run with gate.sh",
-      "status": "planned"
+      "status": "done",
+      "date": "2026-10-20",
+      "base": "kbool aca2370, ktests 1e5a956",
+      "changes": [
+        "ktests/docs/GATE_FOR_AGENTS.md (new): the brief template — calls (KT_GATE_BASHES in every call, full gate --rerun-failed 1 --compare LAST all, --changed, one suite, -- -n, --out), run_in_background / never &-detach / --nohup only on purpose / watch OUT/progress.txt / one gate at a time, the verdict table (exit 0/1/2/3/4/128+N, ENV = machine, FLAKY != PASS, STRAY = bug), the ledger node one-liner, strays.sh list --all in both runtimes after a run",
+        "ktests/docs/README.md: section 'Phase gate' (ktests.sh vs master sweep vs gate.sh, one example, links)",
+        "README.md (kbool root, 'Running the tests'): the gate as the way to check a change on both runtimes, one --changed example (not a doctest block: kkore 015 counts 9, unchanged)",
+        "ktests/tools/README.md gate section re-read against gate.sh: ~28 min (was ~66), agents pointer to GATE_FOR_AGENTS.md, OUT is in the FIRST line (was 'second header line'), --opt=VALUE, the --bash default (KT_GATE_BASHES / one runtime + [WARN]), UNSTARTED row, the gate's own verdict set + which cells are in no machine-line field, exit 1 (every cell NOTRUN too) / 2 (before anything runs, no OUT) / 3 (re-run, do not fix), .kt_gate in the outputs, the ledger one-liner + out + compare; timing_check section: the --bash spec-file re-exec",
+        "ktests/tools/timing_check.sh: --bash re-exec through a spec file (ktests/.tmp/timing_check.reexec.PID.spec, umask 077, removed by the child first) passed as the hidden first argument --reexec SPEC = the re-exec guard (TC_REEXEC env var gone); the spec carries the parsed options (TC_LOG/TC_KEEP/SUITE_DIR and the script path in the C:/ spelling when absolute /posix), every exported variable but the runtime's own (PATH PWD OLDPWD SHLVL _ SHELL EXEPATH MANPATH INFOPATH ACLOCAL_PATH CONFIG_SITE MSYSTEM* MINGW_* PKG_CONFIG_* ORIGINAL_* TC_* BASH_FUNC_*), absolute /posix values cygpath -m'd and turned back with cygpath -u in the child, and the exported functions (declare -fx); target dir first on PATH as before; header '(re-executed from bash V)'; execfail -> rc 2 + spec removed",
+        "ktests/tests/055_TimingCheckReexec.sh (new, 3): same runtime and across runtimes (5.2 -> 5.3 under 5.2, 5.3 -> 5.2 under 5.3): a quoted variable, LANG, fake HOME + TMPDIR, a /tmp path, an exported function, a stale TC_REEXEC=1 -> all arrive, same folders, suite and test file under the target bash, --log at the caller's path, header names the re-exec, no spec left; --reexec without a spec rc 2",
+        "ktests/tests/gate_fixtures/tcenv/ (new fixture: tests.sh dumps what the suite wrapper sees, 001_bash.sh records the test file's bash)",
+        "ktests/GATE_PLAN.md: status line, 5 G4 row (as built), test numbers (055), 7 Duration (~28 min), new 9 (the speed observation)"
+      ],
+      "speed_observation": {
+        "verdict": "no ktests defect; the '~33 min per runtime' sweep was the pre-kklass-round-5 figure (kklass ledger final_gate 2026-10-17: '5.3 sweep ~10 min, was ~33'); on the same tree the sweep is not slower than the gate",
+        "same_tree_G2_accept": "gate all 5.2 902 s / 5.3 737 s vs master sweep right after 5.2 772 s / 5.3 710 s: gate +130 s on 5.2 (kcl/math 135.6 s in the gate = the 018 race ~+116 s, + ~0.5 s/cell), +27 s on 5.3 (~0.9 s/cell)",
+        "per_suite_5.2_two_reps_s": {
+          "kcl/dateutils": "suite dir 25.6 23.4 | neutral 24.9 22.0 | KT_MASTER_SUITES 25.4 23.5 | gate wall 30.0 27.0 (cell 26.9 24.1)",
+          "kcl/thttpserver": "suite dir 41.3 27.4 | neutral 40.8 41.0 | master 41.2 28.8 | gate 66.4 43.2 (cell 63.4 40.6); bimodal ~28/~41 s by its network timeouts",
+          "kklass": "suite dir 130.9 105.9 | neutral 88.2 95.6 | master 88.4 118.9 | gate 143.6 116.8 (cell 140.6 111.0); run-to-run noise +-15-30 %"
+        },
+        "master_overhead": "none measurable: C = B within the noise (per-suite stray scan 1-4 ms, discovery ~0.1 s)",
+        "gate_overhead": "~0.5-1 s per cell + ~3-6 s per run (launcher git status, bash probe, 1 s relay tick, final stray check); G3 gate: 5.2 cells sum 912.8 s of a 919 s segment",
+        "kcl_math_race": "kcl/math on 5.2: direct 20.8 s, one-cell gate 23.9 s, 135.6 s (G2) / 133.9 s (G3) in full gates, 133-142 s in 5 of 12 G4 bisect gates with a full math cell (17.7-22.4 s in 7). Cause: kcl/math/tests/018_DE1_ProgfileSweep.sh starts `bash -c '...; exec sleep 120' &`, waits for the pid file, sends ONE kill -TERM and waits: on Git-bash 5.2 the TERM is evidently sometimes lost around the cygwin exec, the wait sits out 120 s. gate --bash 5.2 --repeat 8 kcl/math -- -n 18: 7 x 3.4-3.7 s, 1 x 123.6 s. A kcl/tests bisect (ttail looked guilty) was a coincidence (same config re-run: 17.7 s). Direct, no gate: tests.sh -n 18 threaded 4 of 10 runs ~124 s, --mode single 0 of 10 (3.7 s) — the race is the test's, the threaded runner makes it likelier, the master sweep is exposed the same way",
+        "raw_data": "G4 worker scratch w_g4/speed/ (times.tsv, math.tsv, d18.txt, logs/, measure.sh, math.sh); the gate run dirs and the bisect tree copy were removed"
+      },
+      "timing_check_fix": "see changes; the old script, cross-runtime: the suite saw VAR/LANG/TMPDIR unset and HOME = the msys default (reproduced against the HEAD version); the new one passes 055 both directions",
+      "tests": {
+        "055_TimingCheckReexec": "5.2 3/3, 5.3 3/3",
+        "ktests_suite_5.2.37": "633/633 rc 0 (630 + 3), 0 [WARN]",
+        "ktests_suite_5.3.9": "634/634 rc 0 (631 + 3)",
+        "kkore_015_DocExamples (reads the root README)": "18/18 on 5.2 and 5.3",
+        "syntax": "bash -n 5.2 + 5.3: timing_check.sh, 055, tcenv fixture files"
+      },
+      "doc_examples_run": {
+        "docs/README gate kcl/tstopwatch both bashes": "rc 0, __GATE__:PASS:2:2:0:0:0:0:0:122:122 (the line the doc quotes)",
+        "GATE_FOR_AGENTS --rerun-failed 1 --compare LAST (all -> kcl/tstopwatch)": "rc 0, 'totals unchanged (5.2.37 61/61, 5.3.9 61/61)'",
+        "GATE_FOR_AGENTS kcl/tstringlist": "rc 0, 384/384",
+        "GATE_FOR_AGENTS kcl/tregex -- -n 1-12": "rc 0, 454/454",
+        "GATE_FOR_AGENTS --out $SCRATCH/g_p3 kklass": "rc 0, 1706/1706, 202 s",
+        "GATE_FOR_AGENTS --compare $SCRATCH/g_p3 (with kcl/tstopwatch)": "rc 0, '4 change(s) (5.2.37 853/853 -> 61/61, ...)'",
+        "GATE_FOR_AGENTS timeout -k 60 9000 bash $G kcl/tstopwatch": "rc 0",
+        "tools/README KT_GATE_BASHES=... kcl/tregex -- -n 1-12": "rc 0",
+        "root README / GATE_FOR_AGENTS --changed (clean clone of kbool aca2370 + recorded submodule SHAs)": "nothing changed: '[WARN] nothing changed', rc 0, no OUT; after a docs-only kcl/tstopwatch/README.md change: 'kcl/tstopwatch <- changed', 2 cells PASS rc 0; --changed --compare LAST: totals unchanged rc 0",
+        "tail -n 5 OUT/progress.txt, the ledger node one-liner on that OUT, strays.sh list --all in both runtimes": "as written, all fine"
+      },
+      "strays": "none in either runtime after every step",
+      "not_run": "gate.sh all and the master sweep (supervisor); the final critic",
+      "review_round_1": {
+        "date": "2026-10-20",
+        "source": "final critic over G1-G4 (probes: supervisor scratch critic_final/), supervisor decisions R1-R12",
+        "R1": "done: timing_check --bash = child + wait (no exec): env -i, own process group (set -m), ALLOWLIST (KT_* KBOOL_* KKLASS_* VERBOSE_KKLASS*, LANG LANGUAGE LC_* TZ TMPDIR HOME, Windows basics) + --pass-env NAME; spec in mktemp -d under TMPDIR / %LOCALAPPDATA%/Temp (never ktests/.tmp; MSYS2 /tmp is shared), noclobber; child writes its pid, removes the spec; parent EXIT trap removes the dir, TERM/INT -> a real TERM of the child's runtime (`B -c kill`); spec unread (B no bash) -> rc 2; the false 'mode 600' text gone (header, tools/README). 055 rewritten: 6 cases (same runtime + across: allowlist/--pass-env arrive, a secret-named and a non-allowlisted var and a function do not, spec dir in TMPDIR while running and gone after; --bash /usr/bin/true rc 2 nothing left; SIGKILLed child: parent ends, dir gone; TERM to the parent with a run in flight in the OTHER runtime: rc 143, the suite stopped, nothing left in either runtime; --reexec w/o spec rc 2). Red: HEAD timing_check 0/6; green 6/6 on 5.2 and 5.3. Found on the way: a group signal (timeout's kill(0)) hit the cross-runtime stub = TerminateProcess -> fixed by the own process group",
+        "R2": "done: ENV only when every failed file of the summary is an `env` file or owns a raw fork-failure line (_KT_GATE_ENVRAW: the raw line precedes the file's next tagged message '(NNN_x.sh)' or its 'source aborted' line); else FAIL with '+ fork failure in F; not ENV: G failed as well'; no file list -> the old rule. Fixture gate_fixtures/mix; 051 case (threaded + single): red (old: ENV rc 3, 2 attempts) -> green; env/envx/envcrash verdicts unchanged",
+        "R3": "done: _kt_gate_cmp_read; LAST candidates newest by start stamp then dir name, an unreadable one skipped with a note, none -> '[WARN] --compare LAST: no base (...)' and no compare (summary.json without `compare`), rc of the run; explicit DIR/FILE unreadable/garbled -> rc 2 as before; per-runtime default root documented (gate.sh header, tools/README, GATE_FOR_AGENTS). 053 case",
+        "R4": "done: porcelain rename/copy detected in X or Y; 054 case (git add -N worktree rename): red selected kcl via the mangled old path -> green kcl/ue only",
+        "R5": "done: _KT_GATE_DOC_MAP (README.md -> kkore, 'doc examples (kkore 015 runs its doctest blocks)'); .gitmodules -> all; 054 case (fixture got a kkore suite, 'all 9')",
+        "R6": "done: compare over the keys THIS run plans; base-only keys reported apart ('N base key(s) not in this run, not compared', summary.json compare.base_only) and not in the sums; a base row with '-' counts / UNSTARTED / INTERRUPTED -> 'not run in the base' (kind notbase), not 'added'. 053: the FILE.tsv case rewritten (2 changes + 1 base-only), a new case (only a base-only key differs -> totals unchanged; UNSTARTED base row -> not run in the base)",
+        "R7": "done: _kt_gate_jutf8 (byte-wise, LC_ALL=C): invalid UTF-8 (stray continuation, truncated, overlong, surrogate, > U+10FFFF) -> U+FFFD; 053 case with \\xff\\xfe in a [FAIL] message read by TextDecoder('utf-8',{fatal:true}): red 'not valid utf-8' -> green",
+        "R8": "done: FAILFAST first writer by mkdir FAILFAST.lock; 054 unit case (sourced): a later failure and one racing a held lock never overwrite",
+        "R9": "done: --help prints the header comment only; base tsv counts <= 18 digits (else garbled: rc 2 explicit / skipped for LAST); the human suite column capped at 40 chars ('...'), control chars '?' (_kt_gate_hsuite; tsv/json keep the id); a deleted top-level script is a unit only when `git show HEAD:path` has kk.unit, else 'deleted script' -> its suite only. 053 + 054 cases",
+        "R10": "done: the watchdog's segment-killed path removes seg-N.ckk (--warm, no --keep); 052 segtree scenario now runs with --warm and checks it (red: 'seg-1.ckk left' both directions)",
+        "R11": "done: GATE_PLAN 3 FLAKY example 496/497 '(rerun 1 passed: 005_Lifecycle.sh)'; tools/README '## Load tools for timing tests' heading above the intro; GATE_FOR_AGENTS `timeout -k 120 9000` (KT_GATE_STOP_WAIT 90 s) and --out must be private; gate.sh header/tools README: --out must be private; `[WARN] --out is inside the tree under test` (050 case)",
+        "test_fix": "051 case D: --timeout 4 -> 10 (a 1-file cell took 5.2 s inside the 5.3 suite run)",
+        "R12": "done: this record; open/closed updated; GATE_PLAN status + 9 'G4 review round 1' table",
+        "tests": {
+          "red_green": "050/052/053/054 with the pre-R8 gate: 74/79 (the 5 new cases fail as intended) -> 79/79; 051 red 16/17 -> 17/17; 053 R3/R6 red 11/15 -> 15/15; 053 R7 red 15/16 -> 16/16; 054 R4/R5/R9 red 16/19 -> 19/19; 055 red 0/6 -> 6/6",
+          "ktests_suite_5_2": "646/646 rc 0 (633 + 13 new cases: 055 +3, 050 +1, 051 +1, 053 +4, 054 +4); 051 again after its case-D timeout change: 17/17",
+          "ktests_suite_5_3": "647/647 rc 0 (third run). Runs 1-2: 051 case D (crash hang leak, --timeout 4) - the leak cell TIMEOUT at 5.2 s under the suite load, twice; 051 alone 17/17 -> the case now uses --timeout 10 (hang still times out, 25 s)",
+          "ktests_suite_5_2_after_R13": "649/649 rc 0 (646 + 050 +2, 055 +1)",
+          "ktests_suite_5_3_after_R13": "650/650 rc 0"
+        },
+        "R13": "done (supervisor decision on the worker's open note): the gate's DEFAULT OUT root = PRIVATE_TEMP/kt-gate, _kt_gate_ptmp: TMPDIR when set (as given), else %LOCALAPPDATA%/Temp, else `cygpath -m -F 28`/Temp (works without any environment: a cross-runtime start), /tmp last; always the mixed C:/ form, used in the runtime's own spelling — a 5.2 and a 5.3 launcher share ONE default root, LAST and the rotation are runtime-independent (docs: gate.sh header, tools/README, GATE_FOR_AGENTS, GATE_PLAN 4.2/9). Rotation re-checked for a shared root: an other-runtime dir also needs NO fresh OUT/hb (< 2 min, one find) before FINISHED/INTERRUPTED/24 h count — a live launcher that already wrote INTERRUPTED keeps its dir while it writes the reports. timing_check: an `owner` marker (PID RUNTIME START) in its private dir; each --bash run first sweeps BASE/timing_check.* of a dead owner (this runtime: kill -0 fails; the other runtime: older than 24 h; no marker / symlink / live owner: kept); `cygpath -F 28`/Temp added as the last private fallback. Tests: 050 +2 (ptmp unit: LOCALAPPDATA / per-user folder / TMPDIR as given, the other runtime with NO environment -> the per-user folder, never msys64/tmp; a 5.2 and a 5.3 launcher with TMPDIR unset and the same LOCALAPPDATA land in one root and --compare LAST finds the other's run both ways) — red on the pre-R13 gate 22/24 (the 5.3 run landed in C:/bin/msys64/tmp/kt-gate) -> 24/24; 050 rotation case + othlive/othdead (red 23/24 -> 24/24); 055 +1 sweep case (red 6/7 -> 7/7). 053: the compare tests set TMPDIR to their own roots — unchanged, green"
+      },
+      "final_critic": "Opus final critic 2026-10-20 over G0-G4: F1-F15 (HIGH F1 timing_check spec with the whole caller env in ktests/.tmp, readable by Users / writable by Authenticated Users, sourced back, sometimes left forever; HIGH F2 one ENV file + one real FAIL -> whole cell ENV; MED F3 --compare LAST without a base = rc 2) -> R1-R12 + R13 (default OUT root private and shared by both launchers: msys64 /tmp is Authenticated Users: Modify), all fixed (review_round_1)",
+      "supervisor_fix": "kcl/math/tests/018: TERM only once the child IS the sleep, bounded wait, KILL only if still alive (a TERM landing during the cygwin exec was lost and the wait sat out sleep 120; ~1 in 3 threaded runs on 5.2); gate --repeat 8 both bashes 16/16 <= 6 s",
+      "closing_gate": {
+        "call": "KT_GATE_BASHES=5.2;5.3 timeout -k 120 9000 gate.sh --rerun-failed 1 --compare <G3 run> all",
+        "verdict": "PASS",
+        "exit": 0,
+        "repos": {
+          "kbool": {
+            "sha": "aca2370",
+            "dirty": true
+          },
+          "ktests": {
+            "sha": "1e5a956",
+            "dirty": true
+          },
+          "kcl": {
+            "sha": "74190f7",
+            "dirty": true
+          },
+          "kklass": {
+            "sha": "6028933",
+            "dirty": false
+          },
+          "kkore": {
+            "sha": "240f653",
+            "dirty": false
+          }
+        },
+        "totals": {
+          "5.2.37": {
+            "cells": 30,
+            "PASS": 30,
+            "passed_tests": 9059,
+            "total_tests": 9059,
+            "minutes": 15
+          },
+          "5.3.9": {
+            "cells": 30,
+            "PASS": 30,
+            "passed_tests": 9060,
+            "total_tests": 9060,
+            "minutes": 15
+          }
+        },
+        "compare": "2 changes vs G3: ktests 630->649 (5.2), 631->650 (5.3); every other suite unchanged",
+        "out": "default private root C:/Users/1/AppData/Local/Temp/kt-gate",
+        "strays": "none, both runtimes"
+      }
     }
   },
   "open": [
-    "test numbers: G1 took 048-049; G2 050-052, G3 053-054",
-    "closed_in_G2: --nohup opt-out of the launcher parent watch (implemented, see phases.G2.nohup)",
-    "closed_in_G2: 052 covers TERM, SIGKILL, taskkill /F, parent kill and taskkill /T (launcher and segment) in both directions",
-    "closed_in_G2: found_in_G1 kt_strays_stop KILL lag (KILL phase by the clock, KT_STRAYS_KILL_MS, 045 case)",
+    "test numbers: G1 took 048-049; G2 050-052, G3 053-054, G4 055 (fixtures: G4 tcenv, mix)",
     "G2 for the critic: the 052 zero-fork check samples /proc every ~20 ms (ppid attribution); a fork shorter than a sample can be missed - the watchdog and wait path are builtins by construction",
-    "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)",
-    "found_in_G1 (5.3, full sweep load, 2026-10-20, first time seen in any sweep log): 045 \"unfiltered: a tree rooted at timeout 8 ...\" — kt_strays_stop sent TERM (grace 3 s used) then KILL by pid 20x over 2 s, the timeout root + its TERM-ignoring child were still alive -> \"2 process(es) LEFT\", rc 1. Identity check passed (signals were sent), so SIGKILL delivery itself lagged > 2 s under load. Matters for gate: a false \"could NOT be stopped\" makes a cell STRAY. Proposal: kt_strays_stop KILL phase polls until gone up to ~10 s (fork-free), and reports LEFT only after that; G2 worker to take it as a ktests fix with a test, or a separate item",
-    "closed_in_G2_review_1: ENV vs CRASH (R5 decided: CRASH with a raw fork line or rc 125-127 without summary = ENV); the watchdog SPOF (R6)",
     "not_now (review R1 F13): a perl-free session fallback (\"$COMSPEC /d /c\"); today perl/setsid are present, else a [WARN] - without a session of its own two concurrent gates in one runtime could attribute each other's strays",
     "found_in_G2 (runner, pre-existing): a suite path containing a quote makes the threaded runner report 'no result file' for every file; a suite dir name with a newline breaks the gate's progress line",
-    "found_in_G2 (fixed in the G2 commit): kklass tests 027/032/033 were not hermetic against an exported KKLASS_CKK_DIR",
-    "observation G2: a full gate (27 min for both runtimes) is much faster than the master sweep (~33 min PER runtime) on the same tree — not analysed; check in G4 whether the sweep pays for something gate skips or the cold .ckk/neutral cwd/one-session-per-segment explain it"
+    "G4 question for the final critic (ktests): why the threaded runner makes the 018 TERM loss likelier on 5.2 (threaded 4/10 vs single 0/10, one file, one worker) — not analysed; if the worker context changes signal dispositions/timing for a test file, that is a runner matter — the 018 test itself was fixed by the supervisor (2026-10-20); the runner question stays open"
+  ],
+  "closed": [
+    {
+      "item": "closed_in_G2: --nohup opt-out of the launcher parent watch (implemented, see phases.G2.nohup)",
+      "resolution": "closed_in_G2 (moved to closed in G4)"
+    },
+    {
+      "item": "closed_in_G2: 052 covers TERM, SIGKILL, taskkill /F, parent kill and taskkill /T (launcher and segment) in both directions",
+      "resolution": "closed_in_G2 (moved to closed in G4)"
+    },
+    {
+      "item": "closed_in_G2: found_in_G1 kt_strays_stop KILL lag (KILL phase by the clock, KT_STRAYS_KILL_MS, 045 case)",
+      "resolution": "closed_in_G2 (moved to closed in G4)"
+    },
+    {
+      "item": "found_in_G0 (supervisor reproduced 2026-10-20: FOO/TMPDIR/LANG unset in 5.3 when set by the 5.2 caller): tools/timing_check.sh --bash OTHER-RUNTIME loses TC_REEXEC and the caller env (KT_STORM_*, TMPDIR) across the switch — re-execs twice (harmless) and runs without the caller env; fix with the gate spec-file approach (G4 or a separate item)",
+      "resolution": "fixed in G4: timing_check.sh --bash passes the caller env + options in a spec file named by a --reexec argument (the guard); test 055 both runtimes, both directions"
+    },
+    {
+      "item": "found_in_G1 (5.3, full sweep load, 2026-10-20, first time seen in any sweep log): 045 \"unfiltered: a tree rooted at timeout 8 ...\" — kt_strays_stop sent TERM (grace 3 s used) then KILL by pid 20x over 2 s, the timeout root + its TERM-ignoring child were still alive -> \"2 process(es) LEFT\", rc 1. Identity check passed (signals were sent), so SIGKILL delivery itself lagged > 2 s under load. Matters for gate: a false \"could NOT be stopped\" makes a cell STRAY. Proposal: kt_strays_stop KILL phase polls until gone up to ~10 s (fork-free), and reports LEFT only after that; G2 worker to take it as a ktests fix with a test, or a separate item",
+      "resolution": "resolved in G2: kt_strays_stop KILL phase by the clock (KT_STRAYS_KILL_MS, 045 case) — the same item as the closed_in_G2 one"
+    },
+    {
+      "item": "closed_in_G2_review_1: ENV vs CRASH (R5 decided: CRASH with a raw fork line or rc 125-127 without summary = ENV); the watchdog SPOF (R6)",
+      "resolution": "closed_in_G2_review_1 (moved to closed in G4)"
+    },
+    {
+      "item": "found_in_G2 (fixed in the G2 commit): kklass tests 027/032/033 were not hermetic against an exported KKLASS_CKK_DIR",
+      "resolution": "fixed in the G2 commit (kklass 6028933)"
+    },
+    {
+      "item": "observation G2: a full gate (27 min for both runtimes) is much faster than the master sweep (~33 min PER runtime) on the same tree — not analysed; check in G4 whether the sweep pays for something gate skips or the cold .ckk/neutral cwd/one-session-per-segment explain it",
+      "resolution": "measured in G4 (GATE_PLAN 9): not a ktests effect — the 33 min figure predates kklass round 5; same tree: sweep 772/710 s vs gate 902/737 s; the 5.2 gap is mostly the kcl/math 018 race (new open item)"
+    },
+    {
+      "item": "found_in_G4 (kcl, not ktests): kcl/math/tests/018_DE1_ProgfileSweep.sh 'a process killed after its engine started' sends ONE kill -TERM to a `bash -c '...; exec sleep 120' &` and waits; on Git-bash 5.2 the TERM is sometimes lost around the exec and the file waits 120 s (1 of 8 gate cells; directly threaded 4 of 10, --mode single 0 of 10; 135 s instead of ~20 s for kcl/math in both full gates G2/G3). Proposal: after the TERM, a bounded wait (e.g. 5 s, kill -0 polling) then kill -KILL; or `exec sleep 120` -> a loop of short sleeps; the test only needs the pid dead",
+      "resolution": "closed: fixed by the supervisor in kcl/math/tests/018 (TERM only once the child IS the sleep, a bounded wait, then KILL); verified gate --repeat 8 on both bashes 16/16 <= 6 s"
+    },
+    {
+      "item": "found_in_G4 (--changed): a change of the kbool root README.md selects no suite (root files other than kbool.sh select nothing), but kkore/tests/015_DocExamples runs the root README's doctest blocks — proposal: map README.md (root) -> kkore",
+      "resolution": "fixed in G4 review round 1 (R5): the doc map README.md -> kkore; .gitmodules -> all; 054"
+    },
+    {
+      "item": "G4 for the final critic: timing_check.sh now carries the caller's exported variables into a 0600 spec file on disk (ktests/.tmp, removed by the child at once) — includes any secrets in the environment for that moment; same-user readable /proc/PID/environ exposes the same",
+      "resolution": "fixed in G4 review round 1 (R1): an allowlist + --pass-env, a private mktemp -d dir in the user's temp, no exec, cleaned by the parent; 055"
+    },
+    {
+      "item": "found_in_G4 review (proposal): the DEFAULT OUT root of a 5.3 launcher is MSYS2's /tmp (C:/bin/msys64/tmp, Users read / Authenticated Users modify) and the segments source OUT/seg-N.spec from it — the same class as R11's --out warning; proposal: take the default root from TMPDIR, else %LOCALAPPDATA%/Temp (as timing_check now does), and say LAST moves with it",
+      "resolution": "fixed in G4 review round 1 (R13): one private default root PRIVATE_TEMP/kt-gate for both runtimes; 050"
+    },
+    {
+      "item": "found_in_G4 review: a SIGKILLed timing_check --bash PARENT leaves its private spec dir (timing_check.XXXXXXXXXX in the user's temp; the spec itself is gone once the child read it) — no sweep; harmless, private",
+      "resolution": "fixed in G4 review round 1 (R13): owner marker + a dead-owner sweep at each --bash run; 055"
+    }
   ]
 }

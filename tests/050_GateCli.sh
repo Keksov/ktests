@@ -269,14 +269,19 @@ kt050_mark "$D/incold" "$dead" 1002 1 "$rt" incomplete          # incomplete, bu
 mkdir -p "$D/v1"; printf 'kt-gate 1 %s 0 1003 %s\n' "$dead" "$rt" > "$D/v1/.kt_gate"   # an old marker format
 for i in 01 02 03 04 05 06 07 08 09 10; do kt050_mark "$D/d$i" "$dead" "$(( 1010 + 10#$i ))" 1 "$rt"; done
 kt050_mark "$D/oth" "$dead" "$(( now - 100 ))" 1 other-runtime   # other runtime, young, unfinished
+# other runtime, old, INTERRUPTED: its launcher alive (hb fresh) / gone (hb 10 min old) — R13
+kt050_mark "$D/othlive" "$dead" 1004 1 other-runtime; : > "$D/othlive/INTERRUPTED"; : > "$D/othlive/hb"
+kt050_mark "$D/othdead" "$dead" 1005 1 other-runtime; : > "$D/othdead/INTERRUPTED"; : > "$D/othdead/hb"
+touch -d '10 minutes ago' "$D/othdead/hb"
 kt050_mark "$D/inc" "$dead" "$(( now - 100 ))" 1 "$rt" incomplete # incomplete, young
 mkdir -p "$D/plain"
 TMPDIR="$TMP/rt" kt050_gate "$TMP/rot2.out" --root "$F" w
 have="$(cd "$D" && ls -d */ | tr -d '/' | tr '\n' ' ')"
 new="$(sed -n 's|^gate .* out=\(.*\)$|\1|p' "$TMP/rot2.out" | head -1)"; new="${new##*/}"
-# 17 marked; the 7 oldest beyond 10: old00 nc incold v1 d01 d02 d03 ->
-# incold, d01, d02, d03 go; old00 (alive), nc (not gate's), v1 (old marker) stay
-want="d04 d05 d06 d07 d08 d09 d10 inc nc old00 oth plain v1"
+# 19 marked; the 9 oldest beyond 10: old00 nc incold v1 othlive othdead d01 d02 d03 ->
+# incold, othdead (other runtime, INTERRUPTED, hb stale), d01, d02, d03 go; old00 (alive), nc (not
+# gate's), v1 (old marker), othlive (other runtime, hb fresh: its launcher lives) stay
+want="d04 d05 d06 d07 d08 d09 d10 inc nc old00 oth othlive plain v1"
 got="$(tr ' ' '\n' <<< "$have" | grep -v "^$new$" | grep . | sort | tr '\n' ' ')"
 if [[ "$RC" == 0 && -n "$new" && "$have" == *"$new"* && "$got" == "$want " && "$new" =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ ]]; then
     kt_test_pass "kept: $got+ $new"
@@ -352,6 +357,57 @@ if [[ "$rc" == 1 && "$o13" == *"[WARN] suspending a gate is not supported"* && "
     kt_test_pass "rc 1 (the hang cell's TIMEOUT), the warning printed"
 else
     kt_test_fail "rc=$rc lp=$lp | ${o13//$'\n'/ | }"
+fi
+
+kt_test_start "--out inside the tree under test: a [WARN] (the segments source OUT/seg-N.spec: a private dir is needed), the run goes on; outside it: no warning (G4 review R11)"
+kt050_gate "$TMP/oin.out" --root "$F" --out "$F/gate-out" c/uniq; rin=$RC
+kt050_gate "$TMP/oout.out" --root "$F" --out "$TMP/gate-out-ok" c/uniq; rout=$RC
+oin="$(cat "$TMP/oin.out")" oout="$(cat "$TMP/oout.out")"
+rm -rf "$F/gate-out"
+if [[ "$rin" == 0 && "$oin" == *"[WARN] --out is inside the tree under test"* && "$rout" == 0 && "$oout" != *"--out is inside"* ]]; then
+    kt_test_pass "$(grep -m1 'inside the tree' "$TMP/oin.out")"
+else
+    kt_test_fail "rc=$rin/$rout | ${oin//$'\n'/ | }"
+fi
+
+kt_test_start "the default root is PRIVATE and the same for both launchers: TMPDIR unset -> %LOCALAPPDATA%/Temp, else the per-user folder (cygpath -F 28) — never MSYS2's /tmp, also with no environment at all (G4 review R13)"
+pt="$( source "$G" || exit 9; _KT_GATE_CYGPATH=1
+    unset TMPDIR; LOCALAPPDATA="$(cygpath -m "$TMP/lad")"; mkdir -p "$TMP/lad/Temp"; _kt_gate_ptmp; printf '%s|' "$REPLY"
+    unset LOCALAPPDATA; _kt_gate_ptmp; printf '%s|' "$REPLY"
+    TMPDIR="$TMP/given"; _kt_gate_ptmp; printf '%s' "$REPLY" )"
+pto=""
+if [[ -n "$OTHER" ]]; then
+    pto="$(env -i PATH="${OTHER%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" "$OTHER" -c \
+        'source "$1" || exit 9; _KT_GATE_CYGPATH=1; _kt_gate_ptmp; printf "%s|%s|%s" "${TMPDIR-unset}" "${LOCALAPPDATA-unset}" "$REPLY"' _ "$G" < /dev/null 2>&1)"
+fi
+want_la="$(cygpath -m "$TMP/lad")/Temp" want_f28="$(cygpath -m -F 28)/Temp"
+IFS='|' read -r p1 p2 p3 <<< "$pt"
+if [[ "$p1" == "$want_la" && "$p2" == "$want_f28" && "$p3" == "$(cygpath -m "$TMP/given")" \
+      && ( -z "$OTHER" || "$pto" == "unset|unset|$want_f28" ) && "$p2$pto" != *msys64/tmp* ]]; then
+    kt_test_pass "[$pt] other: [${pto:-no second runtime}]"
+else
+    kt_test_fail "[$pt] want [$want_la|$want_f28|…] other=[$pto]"
+fi
+kt_test_start "a 5.2 and a 5.3 launcher (TMPDIR unset, the same LOCALAPPDATA) land in ONE default root, and --compare LAST from either finds the other's run (G4 review R13)"
+if [[ -n "$OTHER" ]]; then
+    LAD="$TMP/lad2"; mkdir -p "$LAD/Temp"; LADM="$(cygpath -m "$LAD")"
+    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec timeout -k 10 120 bash "$G" --root "$F" --bash "$BASH" c/uniq ) > "$TMP/sh1.out" 2>&1 < /dev/null; s1=$?
+    env -i PATH="${OTHER%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" timeout -k 10 120 "$OTHER" -c \
+        'unset TMPDIR; export LOCALAPPDATA="$1"; exec "$2" "$3" --root "$4" --bash "$2" --compare LAST c/uniq' _ "$LADM" "$OTHER" "$G" "$F" \
+        > "$TMP/sh2.out" 2>&1 < /dev/null; s2=$?
+    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec timeout -k 10 120 bash "$G" --root "$F" --bash "$BASH" --compare LAST c/uniq ) > "$TMP/sh3.out" 2>&1 < /dev/null; s3=$?
+    o1="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh1.out" | head -1)"
+    o2="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh2.out" | head -1)"
+    o3="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh3.out" | head -1)"
+    c2="$(grep -m1 '^gate compare LAST (' "$TMP/sh2.out")"; c3="$(grep -m1 '^gate compare LAST (' "$TMP/sh3.out")"
+    if [[ "$s1$s2$s3" == 000 && "$o1" == "$LADM/Temp/kt-gate/"* && "$o2" == "$LADM/Temp/kt-gate/"* && "$o3" == "$LADM/Temp/kt-gate/"* \
+          && "$c2" == *"($o1)"* && "$c3" == *"($o2)"* ]]; then
+        kt_test_pass "[${o1##*/}] [${o2##*/}] [${o3##*/}] — LAST across both ways"
+    else
+        kt_test_fail "rc=$s1$s2$s3 o=[$o1] [$o2] [$o3] c2=[$c2] c3=[$c3] | $(tr '\n' ' ' < "$TMP/sh2.out" | cut -c1-400)"
+    fi
+else
+    kt_test_pass "skipped: no second bash runtime on this machine"
 fi
 
 kt_test_start "nothing of this file's gates is left (by its tmp path)"

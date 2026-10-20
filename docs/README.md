@@ -198,6 +198,26 @@ variables (`run_test`, `kt_runner_*`, `kt_fixture_stale_dir`,
 `kt_fixture_owner_mark`, …); the single mode exports none. A test must not
 depend on either.
 
+## Phase gate
+
+Three ways to run tests, for three jobs:
+
+| | runs | for |
+|---|---|---|
+| a suite's `tests.sh` (this runner, `ktests.sh`) | one suite, in your shell, your environment | writing and debugging tests |
+| `bash tests/tests.sh` (the master sweep, kbool root) | every suite, one bash | the whole tree on the bash you are in |
+| `ktests/tools/gate.sh` (the phase gate) | chosen suites × one or more bash runtimes, every suite in a hermetic sandbox, bounded | checking a change before a commit: one verdict, `cells.tsv` + `summary.json`, totals compared with the last gate |
+
+```bash
+# from the kbool root: one suite on both runtimes, one line per (bash, suite)
+bash ktests/tools/gate.sh --bash C:/bin/Git/usr/bin/bash.exe --bash C:/bin/msys64/usr/bin/bash.exe kcl/tstopwatch
+```
+
+The last line is the machine line
+(`__GATE__:PASS:2:2:0:0:0:0:0:122:122`); exit 0 = every cell PASS. Options,
+verdicts, exit codes and outputs: [`../tools/README.md`](../tools/README.md#gatesh--the-phase-gate);
+how an agent runs it: [`GATE_FOR_AGENTS.md`](GATE_FOR_AGENTS.md).
+
 ## How the Runner Judges a Test File
 
 Each file runs in its own `bash -c` wrapper that sources the framework, then

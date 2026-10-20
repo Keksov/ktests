@@ -176,17 +176,30 @@ cp "$RB/pass/tests/002_b.sh" "$RB/pass/tests/003_c.sh"
 mkdir -p "$RB/newsuite/tests"; cp "$LIB/tests/gate_fixtures/pass/suite/"* "$RB/newsuite/tests/"
 kt053_gate "$TMP/b3.out" --root "$RB" --out "$TMP/outB3" --compare "$OB1/cells.tsv" newsuite pass; rb3=$RC
 ob3="$(cat "$TMP/b3.out")"
-kt_test_start "--compare FILE.tsv: changed total/passed, a suite added, a suite removed; informational (rc 0)"
+kt_test_start "--compare FILE.tsv: changed total/passed, a suite added; a base suite this run does not plan is reported apart, not a change, not in the sums (G4 review R6); informational (rc 0)"
 cj=""
-if [[ -n "$NODE" ]]; then kt053_js "$TMP/outB3/summary.json" 'j.compare.unchanged' 'j.compare.changes.map(c=>c.kind+":"+c.suite+":"+JSON.stringify(c.base)+":"+JSON.stringify(c.new)).join(" ")'; cj="${REPLY//$'\n'/ }"; fi
-if [[ "$rb3" == 0 && "$ob3" == *"gate compare "*"/outB1/cells.tsv: 3 change(s) ($V 4/4 -> 7/7)"* \
+if [[ -n "$NODE" ]]; then kt053_js "$TMP/outB3/summary.json" 'j.compare.unchanged' 'j.compare.changes.map(c=>c.kind+":"+c.suite+":"+JSON.stringify(c.base)+":"+JSON.stringify(c.new)).join(" ")' 'j.compare.base_only.map(c=>c.suite+":"+JSON.stringify(c.base)).join(" ")'; cj="${REPLY//$'\n'/ }"; fi
+if [[ "$rb3" == 0 && "$ob3" == *"gate compare "*"/outB1/cells.tsv: 2 change(s) ($V 3/3 -> 7/7); 1 base key(s) not in this run, not compared"* \
       && "$ob3" == *$'\n'"        $V threaded neutral pass  total 3 -> 4  passed 3 -> 4"* \
       && "$ob3" == *$'\n'"        $V threaded neutral newsuite  added (3/3)"* \
-      && "$ob3" == *$'\n'"        $V threaded neutral warn  removed (was 1/1)"* \
-      && ( -z "$NODE" || "$cj" == 'false "added:newsuite:null:{\"total\":3,\"passed\":3} changed:pass:{\"total\":3,\"passed\":3}:{\"total\":4,\"passed\":4} removed:warn:{\"total\":1,\"passed\":1}:null"' ) ]]; then
-    kt_test_pass "3 changes"
+      && "$ob3" == *$'\n'"        $V threaded neutral warn  base only (was 1/1): not in this run"* \
+      && ( -z "$NODE" || "$cj" == 'false "added:newsuite:null:{\"total\":3,\"passed\":3} changed:pass:{\"total\":3,\"passed\":3}:{\"total\":4,\"passed\":4}" "warn:{\"total\":1,\"passed\":1}"' ) ]]; then
+    kt_test_pass "2 changes + 1 base-only key"
 else
     kt_test_fail "rc=$rb3 json=[$cj] | ${ob3//$'\n'/ | }"
+fi
+kt_test_start "--compare: only a base-only key differs -> 'totals unchanged' over the planned keys; a base row that never ran there (UNSTARTED, '-') is 'not run in the base', not 'added' (G4 review R6, F10b)"
+kt053_gate "$TMP/b4.out" --root "$RB" --out "$TMP/outB4" --compare "$OB1" warn; rb4=$RC
+ob4="$(cat "$TMP/b4.out")"
+awk -F'\t' 'BEGIN{OFS="\t"} NR==1{for(i=1;i<=NF;i++)c[$i]=i; print; next} $c["suite"]=="pass"{$c["verdict"]="UNSTARTED"; $c["total"]="-"; $c["passed"]="-"} {print}' "$OB1/cells.tsv" > "$TMP/unstarted.tsv"
+kt053_gate "$TMP/b5.out" --root "$RB" --out "$TMP/outB5" --compare "$TMP/unstarted.tsv" pass; rb5=$RC
+ob5="$(cat "$TMP/b5.out")"
+if [[ "$rb4" == 0 && "$ob4" == *"/outB1: totals unchanged ($V 1/1); 1 base key(s) not in this run, not compared"* \
+      && "$rb5" == 0 && "$ob5" == *"/unstarted.tsv: 1 change(s) ($V 0/0 -> 4/4); 1 base key(s) not in this run, not compared"* \
+      && "$ob5" == *$'\n'"        $V threaded neutral pass  not run in the base (now 4/4)"* && "$ob5" != *added* ]]; then
+    kt_test_pass "$(grep 'gate compare ' "$TMP/b4.out" | tail -1) | $(grep '^gate compare ' "$TMP/b5.out" | tail -1)"
+else
+    kt_test_fail "rc=$rb4/$rb5 | ${ob4//$'\n'/ | } || ${ob5//$'\n'/ | }"
 fi
 # LAST: the newest FINISHED run under the default OUT root (TMPDIR/kt-gate); a
 # newer dir without FINISHED is no candidate
@@ -205,16 +218,43 @@ if [[ "$rl1" == 0 && "$rl2" == 0 && -n "$l1dir" && "$ol2" == *"gate compare LAST
 else
     kt_test_fail "rc=$rl1/$rl2 l1=[$l1dir] | ${ol2//$'\n'/ | }"
 fi
-kt_test_start "an unreadable / garbled base is a usage error (rc 2) before any run — no OUT dir"
-mkdir -p "$TMP/emptydir" "$TMP/rt_empty"
+# kt053_fake DIR STAMP TSV — a finished gate run dir (CREATED=0: rotation never removes it)
+kt053_fake() {
+    mkdir -p "$1"; printf 'kt-gate 2 1 0 %s 0 none\n' "$2" > "$1/.kt_gate"; : > "$1/FINISHED"; cp "$3" "$1/cells.tsv"
+}
+kt_test_start "--compare LAST: an unreadable newest candidate is skipped (a note), a same-stamp tie goes to the later name; no base at all -> [WARN], the run goes on without a compare, rc 0 (G4 review R3)"
+RT2="$TMP/rt2"; S0=$(( EPOCHSECONDS + 1000 ))
+{ head -1 "$OB1/cells.tsv"; printf '1\t2\t3\n'; } > "$TMP/garbled_last.tsv"
+awk -F'\t' 'BEGIN{OFS="\t"} NR==1{for(i=1;i<=NF;i++)c[$i]=i; print; next} $c["suite"]=="pass"{$c["total"]=9; $c["passed"]=9} {print}' "$l1dir/cells.tsv" > "$TMP/nine.tsv"
+kt053_fake "$RT2/kt-gate/zz-bad" $(( S0 + 200 )) "$TMP/garbled_last.tsv"
+kt053_fake "$RT2/kt-gate/t-a" $(( S0 + 100 )) "$l1dir/cells.tsv"
+kt053_fake "$RT2/kt-gate/t-b" $(( S0 + 100 )) "$TMP/nine.tsv"
+TMPDIR="$RT2" kt053_gate "$TMP/l3.out" --root "$RB" --out "$TMP/outL3" --compare LAST pass; rl3=$RC
+ol3="$(cat "$TMP/l3.out")"
+mkdir -p "$TMP/rt_none"
+TMPDIR="$TMP/rt_none" kt053_gate "$TMP/l4.out" --root "$RB" --out "$TMP/outL4" --compare LAST pass; rl4=$RC
+ol4="$(cat "$TMP/l4.out")"
+cj=""
+if [[ -n "$NODE" ]]; then kt053_js "$TMP/outL4/summary.json" 'typeof j.compare' 'j.verdict'; cj="${REPLY//$'\n'/ }"; fi
+if [[ "$rl3" == 0 && "$ol3" == *"gate compare: a LAST candidate skipped (unreadable): zz-bad: "*"is garbled"* \
+      && "$ol3" == *"gate compare LAST ("*"/t-b): 1 change(s) ($V 9/9 -> 4/4)"* \
+      && "$rl4" == 0 && "$ol4" == *"[WARN] --compare LAST: no base (no readable finished gate run under "*"running without a compare"* \
+      && "$ol4" != *"gate compare LAST ("* && "$ol4" == *$'\n'"__GATE__:PASS:1:1:"* && ( -z "$NODE" || "$cj" == "\"undefined\" \"PASS\"" ) ]]; then
+    kt_test_pass "$(grep -m1 'skipped' "$TMP/l3.out") | $(grep -m1 'WARN' "$TMP/l4.out")"
+else
+    kt_test_fail "rc=$rl3/$rl4 json=[$cj] | ${ol3//$'\n'/ | } || ${ol4//$'\n'/ | }"
+fi
+kt_test_start "an unreadable / garbled explicit base is a usage error (rc 2) before any run — no OUT dir"
+mkdir -p "$TMP/emptydir"
 printf 'a\tb\n1\t2\n' > "$TMP/notgate.tsv"
 { head -1 "$OB1/cells.tsv"; printf '1\t2\t3\n'; } > "$TMP/garbled.tsv"
 { head -1 "$OB1/cells.tsv"; sed -n 2p "$OB1/cells.tsv" | awk -F'\t' 'BEGIN{OFS="\t"} {$10="x"; print}'; } > "$TMP/garbled2.tsv"
+{ head -1 "$OB1/cells.tsv"; sed -n 2p "$OB1/cells.tsv" | awk -F'\t' 'BEGIN{OFS="\t"} {$10="1234567890123456789"; print}'; } > "$TMP/garbled3.tsv"
 : > "$TMP/empty.tsv"
 bad=""; n=0
-for base in "$TMP/nonexistent" "$TMP/emptydir" "$TMP/notgate.tsv" "$TMP/garbled.tsv" "$TMP/garbled2.tsv" "$TMP/empty.tsv" LAST; do
+for base in "$TMP/nonexistent" "$TMP/emptydir" "$TMP/notgate.tsv" "$TMP/garbled.tsv" "$TMP/garbled2.tsv" "$TMP/garbled3.tsv" "$TMP/empty.tsv"; do
     n=$(( n + 1 ))
-    TMPDIR="$TMP/rt_empty" kt053_gate "$TMP/u.out" --root "$RB" --out "$TMP/never$n" --compare "$base" pass
+    kt053_gate "$TMP/u.out" --root "$RB" --out "$TMP/never$n" --compare "$base" pass
     o="$(cat "$TMP/u.out")"
     [[ "$RC" == 2 && "$o" == "gate: --compare "* && ! -e "$TMP/never$n" ]] || bad+="[$base -> rc $RC: ${o:0:160}] "
 done
@@ -280,6 +320,21 @@ if [[ -n "$NODE" ]]; then
 else
     kt_test_pass "skipped: no node on this machine"
 fi
+kt_test_start "summary.json is valid UTF-8 for a strict decoder: a [FAIL] message with the bytes \xff\xfe gets U+FFFD, valid UTF-8 stays (G4 review R7)"
+RU="$TMP/rootU"; OU="$TMP/outU"
+bash "$MK" "$RU" pass=u8
+rm -f "$RU/u8/tests/002_b.sh"
+printf '%s\n' 'source "$KTEST_SOURCE_PATH"' 'kt_test_init "GfxBytes" "$KT_TESTS_DIR" "$@"' \
+    'kt_test_start "b"; kt_test_fail $'"'"'bad \xff\xfe and \xc3\xbc ok'"'"'' > "$RU/u8/tests/002_bytes.sh"
+kt053_gate "$TMP/u8.out" --root "$RU" --out "$OU" all
+if [[ -n "$NODE" ]]; then
+    js="$("$NODE" -e 'const b=require("fs").readFileSync(process.argv[1]); let s; try { s=new TextDecoder("utf-8",{fatal:true}).decode(b); } catch(e) { console.log("NOT UTF-8: "+e.message); process.exit(0); } const j=JSON.parse(s); console.log(JSON.stringify(j.cells[0].fails[0]))' \
+        "$(cygpath -m "$OU/summary.json" 2>/dev/null || echo "$OU/summary.json")" 2>&1)"
+    want='"[FAIL] bad '$'\xef\xbf\xbd\xef\xbf\xbd'' and '$'\xc3\xbc'' ok (002_bytes.sh)"'
+    if [[ "$RC" == 1 && "$js" == "$want" ]]; then kt_test_pass "$js"; else kt_test_fail "rc=$RC got [$js] want [$want]"; fi
+else
+    kt_test_pass "skipped: no node on this machine"
+fi
 kt_test_start "the escape function: every control character, newline, quote, backslash; the tsv value function: no tab/newline/CR, '' -> -"
 S=$'l1\nl2\r\t"q"\\b\x01\x02\x07\x08\x0b\x0c\x1b\x1f end \xc3\xa4\xe2\x82\xac'
 printf '%s' "$S" > "$TMP/raw.txt"
@@ -301,6 +356,17 @@ else
     kt_test_fail "node=[$js] tsv=[$(cat "$TMP/tv.out")] json=[$(cat -v "$TMP/esc.json")]"
 fi
 
+kt_test_start "human lines: a suite id's control characters become '?', a long id is cut at 40 chars with '...'; --help prints the header comment only (G4 review R9)"
+L60="$(printf 'x%.0s' {1..60})"
+hs="$( source "$G" || exit 9
+    _kt_gate_hsuite $'a\tb\nc\x1bd'; printf '%s|' "$REPLY"
+    _kt_gate_hsuite "kcl/$L60"; printf '%s|%s' "$REPLY" "${#REPLY}" )"
+hl="$(bash "$G" --help 2>&1)"
+if [[ "$hs" == "a?b?c?d|kcl/${L60:0:33}...|40" && "$hl" == "gate.sh — the phase gate"* && "$hl" != *_KT_GATE_SOURCED* && "$hl" != *$'\n'"fi"* ]]; then
+    kt_test_pass "$hs | help: $(wc -l <<< "$hl") lines"
+else
+    kt_test_fail "[$hs] help tail: $(tail -3 <<< "$hl" | tr '\n' ' ')"
+fi
 kt_test_start "nothing of this file's gates is left (by its tmp path)"
 kt053_pids "$TMP"
 if [[ -z "$REPLY" ]]; then kt_test_pass "none"; else kt_test_fail "left: $REPLY"; fi
