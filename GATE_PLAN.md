@@ -1,6 +1,6 @@
 # ktests gate — one command for the phase gate (2026-10-19)
 
-**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049. G2 done 2026-10-20 + critic review round 1 (R1–R14), accepted: `gate all` = master sweep per suite on both runtimes (9011/9012); `tools/gate.sh`, `tests/gate_fixtures/`, tests 050–052, strays.sh KILL by the clock, the runner's `env NAME` summary lines (§4.1–4.3 "G2 as built", "Review round 1").**
+**Status: PLANNED, owner decisions DG1–DG8 taken (quiz 2026-10-19); G0 measured (§8, reviewed 2026-10-20); G1 done 2026-10-20 (reviewed, sweep 8950/8951): `tools/suitejob.sh`, master on it, `KT_SUMMARY_FILE`, tests 048–049. G2 done 2026-10-20 + critic review round 1 (R1–R14), accepted: `gate all` = master sweep per suite on both runtimes (9011/9012); `tools/gate.sh`, `tests/gate_fixtures/`, tests 050–052, strays.sh KILL by the clock, the runner's `env NAME` summary lines (§4.1–4.3 "G2 as built", "Review round 1"). G3 done 2026-10-20 (reviewed; gate all 60/60 PASS 9040/9041): `cells.tsv` + `summary.json`, `--compare`, `--rerun-failed`/FLAKY, `--changed`, `--mode/--cwd both`, `--repeat`, `--fail-fast` (SKIPPED), `--warm`, `--parallel`; fixtures flaky + ckk; tests 053–054 (§3, §4.4, §4.5 "G3 as built").**
 Ledger: [`gate_ledger.json`](gate_ledger.json). Workflow as in the kklass rounds:
 one Opus worker per phase → supervisor review against the live tree (critic on
 G2 and at the end) → ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 →
@@ -102,6 +102,37 @@ The last line is the one machine line:
 **Exit status**: 0 every cell PASS · 1 any FAIL / TIMEOUT / STRAY / CRASH ·
 2 usage · 3 no hard failure, ENV left after the retry · 4 no hard failure and no
 ENV, some FLAKY · 130/143/129 interrupted (after cleanup).
+
+**G3 as built (2026-10-20)**:
+
+- **Cell order** inside a runtime: repeat > suite (discovery order) > mode >
+  cwd, so all variants of a suite are neighbours and repeats interleave (a
+  flake hunt sees the whole set before the next round). With `--repeat` > 1
+  the line shows `SUITE#R`.
+- **FLAKY keeps the full run's counts**: a FLAKY cell's total/passed/failed
+  and `[FAIL]` lines are those of its full run (e.g. `FLAKY 3/4 (rerun 1
+  passed: 002_flaky.sh)`), not a merged 4/4 — the summary does not give the
+  failed files' own counts in the full run, and a merge would invent them;
+  the rerun's own counts are in `cells/NNN/rerun-R/summary`. So
+  `passed_tests < total_tests` in the machine line of an exit-4 run. A rerun
+  that dies of a fork failure counts as a failed rerun (no ENV retry inside
+  the reruns); a rerun that leaves a process makes the cell STRAY.
+- **SKIPPED** (`--fail-fast`): its own verdict, not a NOTRUN (NOTRUN = "the
+  suite has no test file", which never fails a gate); counted apart like
+  INTERRUPTED, in no field of the machine line; `OUT/FAILFAST` (the first
+  hard failure) is what the segments look at before each cell — in a
+  `--parallel` run the other runtime stops there too; serially the launcher
+  writes the SKIPPED results of a runtime it no longer starts.
+- **`--parallel`** = one launcher loop over all segments (the serial run is
+  the same loop over one); every segment keeps its own relay counter,
+  watchdog rescue and stop handling.
+- **`--warm`**: `OUT/seg-N.ckk`, removed at the segment's end unless `--keep`
+  (a full kcl .ckk is large; rotation keeps 10 runs). The cell's `result`
+  names its ckk dir (`ckk=`).
+- **`--changed` with nothing to run** (nothing changed, or only paths that
+  select no suite, and no suite named): `[WARN]`, exit 0, and neither an OUT
+  dir nor a `__GATE__` line — a machine line `PASS:0:…` would read as a
+  passing gate.
 
 ## 4. Design
 
@@ -292,7 +323,10 @@ it (CREATED=1), its owner is dead (the `kt_iso` dead-pid rules, incl. the
 other-runtime age guard) AND it is complete (every `seg-N.spec` has its
 `seg-N.result`) or older than 2 h — never a neighbour of an explicit `--out`
 (head/new tree copies, a `--compare` base). `LAST` = the newest finished run
-under the same OUT root.
+under the same OUT root. *G3 as built:* under the DEFAULT OUT root
+`${TMPDIR:-/tmp}/kt-gate` (by the marker's start time; it must have
+`FINISHED` and `cells.tsv`), also when this run has an explicit `--out` —
+an explicit dir's neighbours are the user's, and `--compare DIR` names them.
 
 ### 4.3 Results without parsing prose
 
@@ -353,6 +387,32 @@ by gate. `--compare` reads the other run's `cells.tsv` and prints per
 (bash, mode, cwd, suite) the changed `total`/`passed`, and "totals unchanged"
 when none — the "sweep sum 8707 on both bashes" check, done by the tool.
 
+**G3 as built (2026-10-20)**: `cells.tsv` has the plan's columns plus
+`reruns rerun_pass flaky reason` (22; `reason` last, the only free text); a
+row per PLANNED cell (a cell never started: `UNSTARTED`); no value holds a
+tab/newline/CR (each a space), an empty value is `-`, `flaky` joins names
+with `/` (no file name holds one). `summary.json` adds `gate.options`,
+`changed` (with `--changed`), `compare` (with `--compare`), `machine` (the
+`__GATE__` line) and `exit`; `totals` is keyed by bash version (a second
+`--bash` of the same version: `"5.3.9 (2)"`) with every verdict count,
+`passed_tests`, `total_tests`, `duration_ms`; each cell carries the tsv
+columns typed (numbers, `flaky` an array, empty = null) plus `attempt1`,
+`ckk` and `fails` (the first 5 lines of `fails.txt`). The JSON escape
+(`_kt_gate_jstr`) escapes `"` `\` and every control character (`\n \r \t
+\b \f`, the rest `\u00XX`), bytes ≥ 0x80 pass through — 053 reads them back
+with node. Both reports are written before the verdict line (a watcher that
+sees `__GATE__` finds them complete), also for an INTERRUPTED run.
+`--compare` reads the base by its header's column names (needs
+`bash_version mode cwd suite verdict total passed`; extra columns are
+fine), before OUT is made — missing / empty / not a gate tsv / a row with
+the wrong field count or non-numeric counts → rc 2. Per key over
+`--repeat`: the largest total and the smallest passed (the worst repeat).
+Kinds: `changed`, `added`, `removed`, `notrun` (the key is planned here but
+SKIPPED / INTERRUPTED / UNSTARTED); a base row that never ran counts as
+absent. The summary line carries the per-bash sums (`5.2.37 405/405 ->
+403/405`); all detail lines go to `OUT/compare.txt`, the first 20 to the
+output.
+
 ### 4.5 `--changed` (DG6)
 
 `git status --porcelain` in the root repo and each submodule (uncommitted
@@ -364,6 +424,40 @@ suite with a `kk.uses U` line (unit files AND test files: 14 test files
 `kk.uses tstopwatch`) for each unit U defined under a selected dir. Docs-only
 changes (`*.md`) still select their suite (doc-example tests exist, U5). The
 selection and its reason are printed before the first cell.
+
+**G3 as built (2026-10-20)** — the rule above, made precise:
+
+- **The dependency travels through UNIT files only.** The units of `kcl/DIR`
+  are *touched* by a change in `kcl/DIR` outside `DIR/tests/` that is not
+  `*.md`; a unit whose unit file (`kcl/DIR/X.sh` with a `kk.unit X` line) has
+  `kk.uses [--optional] U` for a touched or affected U is *affected*,
+  transitively; selected = the suite of every affected unit + every suite
+  with another script that `kk.uses` an affected unit — a test file
+  (`kcl/DIR/tests/**.sh`) or a script the tests run (`kcl/DIR/bench.sh`:
+  17 of them `kk.uses tstopwatch`, run by the `*_Bench.sh` tests; found when
+  probing a tstopwatch change on a clean clone) — + every suite with a changed
+  path. Such a script's `kk.uses` only selects its own suite: suite D's tests using U say nothing about D's unit, so a change
+  of U does not reach the suites of D's dependents (the plan's wording "for
+  each unit U defined under a selected dir" would have; DG6 says "touched
+  units + their reverse dependents"). A test-only or docs-only change of DIR
+  selects kcl/DIR alone.
+- **Unit file** = has the `kk.unit` header (one `grep -r` over `kcl/*.sh`
+  for the `kk.unit` / `kk.uses` lines: unit names are the literal words up
+  to `||`/`;`/`#`/a redirection; `kk.uses "$u"` is skipped). A deleted
+  top-level `kcl/DIR/X.sh` counts as a unit file of unit X (U33: the file
+  stem) — `kcl` is selected and X's dependents too.
+- **A submodule's commit that the root has not recorded yet** (the state
+  between a submodule commit and the root's bump): the root's status is read
+  with `--ignore-submodules=dirty`, a submodule entry there adds the files of
+  `git -C SUB diff --name-only RECORDED HEAD`; when that cannot be read, all.
+- Paths outside any suite (`kcl/README.md`, `docs/`, root files other than
+  `kbool.sh`) select nothing; they are listed as `(no suite)`.
+- The root must be the top of a git work tree (`rev-parse --show-toplevel`);
+  a dir inside a repository is a usage error, and `gate repos:` likewise no
+  longer reports an enclosing repository for a non-repository root (a
+  fixture root in a test's tmp did).
+- `git status` failing (or an unwritable TMPDIR for the NUL-separated list)
+  is a usage error, never "nothing changed".
 
 ### 4.6 suitejob.sh (DG5)
 
@@ -390,7 +484,7 @@ the master now sources `suitejob.sh` too; no assertion changed.
 | **G0** probe (no product code) | measure on both runtimes: launcher→segment rc propagation; STOP file and `-nt` heartbeat latency; launcher killed by SIGKILL / `taskkill /F` / TERM → segment notices ≤ 30 s and leaves nothing; `cygpath` of HOME/TMPDIR across runtimes; cost of an empty cell (sandbox create + scrub + remove). Report → plan amendments here (§4.1 may change) | supervisor review of the report |
 | **G1** shared code | `tools/suitejob.sh` + `tests/tests.sh` on it (DG5); `KT_SUMMARY_FILE` in `ktests.sh` (nested-safe); tests 048 (summary file), 049 (suitejob.sh) | ktests suite + **full master sweep both bashes, totals identical to before**; 045 unmodified (G1: one fixture line, its fake root copies suitejob.sh too) |
 | **G2** gate core (done 2026-10-20, awaiting review) | CLI + suite resolution; launcher/segment/cell; hermetic env; timeout; verdicts PASS/FAIL/TIMEOUT/CRASH/ENV(+1 retry)/STRAY; progress lines, summary, `__GATE__`, exit codes; OUT rotation. Fixture suites under `tests/gate_fixtures/` (pass, fail, hang, leak, env-signature, warn, crash); tests 050 (CLI/resolution), 051 (verdicts), 052 (signals, launcher death, strays — both runtimes) | ktests suite both bashes + **critic** (Opus) + `gate all` on both bashes = master sweep totals |
-| **G3** reports + selection | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 053 (reports/compare), 054 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
+| **G3** reports + selection (done 2026-10-20, awaiting review) | `cells.tsv`, `summary.json` (+repo SHAs), `--compare`, `--rerun-failed`/FLAKY (flaky fixture: fails on its first run via a marker file), `--changed` with the reverse-dependency walk, `--mode both`, `--cwd both`, `--repeat`, `--parallel`, `--fail-fast`, `--warm`; tests 053 (reports/compare), 054 (`--changed` on a scratch git fixture with a submodule) | ktests suite both bashes; `gate --changed` on a real dirty tree selects what §4.5 says |
 | **G4** adoption | `tools/README.md` gate section, `docs/README.md`; worker/critic brief template: "the gate is `gate.sh … all --compare LAST`; paste `summary.json` totals into the ledger"; final **critic** over G1–G3; the round's own closing gate is run with `gate.sh` | owner: commit / push |
 
 Test numbers: round 6 P4 ended at 047; G1 took 048 (SummaryFile) and 049

@@ -13,6 +13,8 @@ bash $G --bash $B52 --bash $B53 all                          # the phase gate (~
 bash $G --bash $B53 kcl/tstringlist kklass --timeout 900     # some suites, one runtime
 KT_GATE_BASHES="$B52;$B53" bash $G kcl/tregex -- -n 1-12    # default runtimes; args to every tests.sh
 bash $G --root "$SCRATCH/head" --out "$SCRATCH/g_head" kklass # a tree copy, an OUT of your choice
+bash $G --bash $B52 --bash $B53 --changed --compare LAST      # what the diff touches, totals vs the last gate
+bash $G --bash $B53 kcl/tstringlist --mode both --cwd both --repeat 5 --rerun-failed 2  # flake hunting
 ```
 
 **Agents**: start it with `run_in_background`, watch `tail OUT/progress.txt`
@@ -28,15 +30,26 @@ the gate needs, it only caps the wall time.
 
 Suites: `all`, ids (`kkore`, `kcl` = kcl/tests, `kcl/tstringlist`) or a
 unique last component (`tstringlist`); unknown/ambiguous → rc 2 before
-anything runs. Options: `--bash PATH` (repeatable; runtimes one after
-another), `--mode threaded|single`, `--workers N`, `--cwd neutral|suite`,
-`--timeout SEC` (per cell, default 1800), `--root DIR`, `--out DIR` (new, or
-empty — dot names count; claimed by an exclusive marker), `--keep` (keep
-passed cells' sandboxes), `--nohup`, `-- ARGS`. G3 options (`--compare`,
-`--rerun-failed`, `--changed`, `--repeat`, `--parallel`, `--fail-fast`,
-`--warm`, `--mode/--cwd both`) are usage errors for now. Ctrl-Z is not
-supported (a `[WARN]`, ignored). The caller's exported `SHELLOPTS`,
-`BASHOPTS`, `CDPATH`, `GLOBIGNORE` change nothing (the launcher resets them).
+anything runs. Options (all in `gate.sh --help`):
+
+| option | what |
+|---|---|
+| `--bash PATH` | a runtime (repeatable; one segment each, one after another — DG3) |
+| `--mode threaded\|single\|both`, `--cwd neutral\|suite\|both` | the runner mode / the cell's cwd; `both` = a cell for each |
+| `--repeat N` | every cell N times (the repeat# is a column, the line shows `SUITE#R`); a runtime's cells run repeat > suite > mode > cwd |
+| `--workers N`, `--timeout SEC` | the runner's workers; per-cell bound (default 1800 s → TIMEOUT) |
+| `--rerun-failed N` | after a FAIL (not ENV/TIMEOUT/STRAY/CRASH): exactly the failed files (`-n` by their numbers from the summary's `file` lines), same mode/cwd, a fresh sandbox `cells/NNN/rerun-R/` each, up to N times; a passing rerun → **FLAKY** (never PASS), a rerun leaving a process → STRAY, else FAIL. The cell keeps the counts and `[FAIL]` lines of its full run |
+| `--changed` | the suites the uncommitted changes touch (`git status --porcelain -uall` in the root and every submodule, plus the files of a submodule commit the root has not recorded yet): kkore/ kklass/ ktests/ tests/ kbool.sh → all; `kcl/tests/…` → kcl; `kcl/DIR/…` → kcl/DIR; a unit file (`kk.unit`, also deleted) → kcl too; the units of DIR (touched by a change outside `DIR/tests/` that is not `*.md`) and, transitively, every unit whose unit file `kk.uses` one → their suites, and every suite whose other scripts (test files, a `bench.sh` its tests run) `kk.uses` one of them. Named suites are added (union). Selection + reasons printed before the first cell. Nothing to run → `[WARN] nothing changed`, **exit 0**, no OUT, no machine line |
+| `--compare LAST\|DIR\|FILE.tsv` | this run's cells.tsv vs another's: LAST = the newest FINISHED run under `${TMPDIR:-/tmp}/kt-gate`; per (bash, mode, cwd, suite) the changed total/passed, suites added/removed, or `totals unchanged`; an unreadable/garbled base → rc 2 before any run; informational (the exit code is the run's) |
+| `--parallel` | all runtimes at the same time, lines relayed as they come — **cross-runtime fork contention** (DG3, the 2026-09 timing flakes): for orientation, never a phase gate |
+| `--fail-fast` | after the first FAIL/TIMEOUT/STRAY/CRASH every cell not started yet (all runtimes) is SKIPPED; exit 1 |
+| `--warm` | one `.ckk` dir per segment (`OUT/seg-N.ckk`) shared by its cells; default a cold one per cell (DG4) |
+| `--root DIR`, `--out DIR` | the tree; the run dir (new, or empty — dot names count; claimed by an exclusive marker) |
+| `--keep`, `--nohup`, `-- ARGS` | keep passed cells' sandboxes; no parent watch; args for every `tests.sh` |
+
+Ctrl-Z is not supported (a `[WARN]`, ignored). The caller's exported
+`SHELLOPTS`, `BASHOPTS`, `CDPATH`, `GLOBIGNORE` change nothing (the launcher
+resets them).
 
 | verdict (worst wins) | meaning | exit |
 |---|---|---|
@@ -46,12 +59,16 @@ supported (a `[WARN]`, ignored). The caller's exported `SHELLOPTS`,
 | CRASH | no summary from the runner (`KT_SUMMARY_FILE`), or `error REASON` in it | 1 |
 | FAIL | the suite failed; the first 5 lines of its `[FAIL]` messages under the line | 1 |
 | ENV | the machine, not the test — re-run once in a fresh sandbox, the 2nd run decides (both kept): a FAIL whose summary has `env NAME` lines (the runner saw a file die of a fork failure) or whose log has a RAW fork-failure line (never a test's own `[FAIL]`/`[PASS]`/`[WARN]` message); a CRASH with such a raw line or without a summary at rc 125–127 | 3 if left |
+| FLAKY | `--rerun-failed`: a FAIL whose failed files passed on a rerun (which files, at which attempt: `flaky`, `rerun_pass`) | 4 (no hard failure, no ENV) |
 | PASS | `warn=N` is a column (the log's `[WARN]` lines), not a verdict | 0 |
 | INTERRUPTED | the gate was stopped while the cell ran | 128+N |
+| SKIPPED | `--fail-fast`: never started after a hard failure | (1: there was one) |
 
-Exit 2 = usage, 4 = reserved (FLAKY, G3), 128+N = interrupted (TERM 143,
-INT 130, HUP 129; a lost parent 143). A segment killed from outside, or one
-whose watchdog could not be started again (`no-watchdog`) → [WARN], exit 1.
+Exit 0 = every cell PASS (NOTRUN allowed; also `--changed` with nothing to
+run), 1 = a hard failure, 2 = usage, 3 = ENV left, 4 = FLAKY (and nothing
+worse), 128+N = interrupted (TERM 143, INT 130, HUP 129; a lost parent 143).
+A segment killed from outside, or one whose watchdog could not be started
+again (`no-watchdog`) → [WARN], exit 1.
 
 **Processes** (two cygwin runtimes cannot signal or see each other): the
 *launcher* (as started) writes a spec per runtime (`OUT/seg-N.spec`, mixed
@@ -80,13 +97,42 @@ atomic mkdir; only under that default root are old runs rotated: the newest
 10 gate-marked dirs stay, an older one is removed only when gate made it, its
 owner is dead and it is complete or older than 2 h — never a neighbour of an
 explicit `--out`): `progress.txt`, `FINISHED` (the machine line) or
-`INTERRUPTED` (who stopped it), `argv.txt`, `cells/NNN/{result,log.txt,
-summary,fails.txt,strays.txt}` (+ `log.1.txt` etc. of an ENV first attempt;
-`result` = KEY=VALUE, G3's cells.tsv columns), `seg-N.{spec,log,result}`.
+`INTERRUPTED` (who stopped it), `argv.txt`, **`cells.tsv`**, **`summary.json`**,
+`compare.txt`, `FAILFAST`, `cells/NNN/{result,log.txt,summary,fails.txt,
+strays.txt}` (+ `log.1.txt` etc. of an ENV first attempt, `rerun-R/` of a
+rerun; `result` = KEY=VALUE, the source of cells.tsv), `seg-N.{spec,log,
+result}` (+ `seg-N.ckk` with `--warm`).
+
+**Reports** (written by the launcher at the end — also of an interrupted run,
+with what finished — before the verdict line):
+
+- `cells.tsv` — header + one row per planned cell (never started: verdict
+  UNSTARTED): `idx bash_version bash_path mode cwd suite repeat verdict rc
+  total passed failed warn fail_lines strays attempts duration_ms log reruns
+  rerun_pass flaky reason`; tab-separated, no value holds a tab/newline/CR
+  (each becomes a space), an empty value is `-`, `flaky` joins file names
+  with `/`. `--compare` reads it (by column name).
+- `summary.json` — `{gate:{started, finished, root, out, argv, repos:{NAME:
+  {sha, dirty}}, options}, changed?, bashes:[{version, path, runtime}],
+  totals:{VERSION:{cells, PASS, FAIL, FLAKY, ENV, TIMEOUT, STRAY, CRASH,
+  NOTRUN, INTERRUPTED, SKIPPED, UNSTARTED, passed_tests, total_tests,
+  duration_ms}}, cells:[{…the tsv columns (numbers as numbers, flaky an
+  array), attempt1, ckk, fails: the first 5 [FAIL] lines}], compare?,
+  machine, exit, verdict}`. Never read back by gate.
+
+**Into a ledger**: take `totals` and `verdict` (and `gate.repos` for the
+SHAs) from `summary.json` instead of retyping counts — e.g.
+`node -e 'const j=require(process.argv[1]); console.log(JSON.stringify({verdict:j.verdict, repos:j.gate.repos, totals:j.totals}))' "$(cygpath -m OUT/summary.json)"`,
+and paste the result as the phase's `gate` value (with `OUT` for the record).
+
 Tests: `tests/050_GateCli.sh`, `051_GateVerdicts.sh` (every fixture of
 `tests/gate_fixtures/`, hermeticity), `052_GateSignals.sh` (TERM, INT,
 SIGKILL, `taskkill /F`, parent kill, `taskkill /T` of launcher and segment,
-the watchdog killed, both directions, no fork in the segment).
+the watchdog killed, both directions, no fork in the segment),
+`053_GateReports.sh` (cells.tsv, summary.json via node, `--compare`, an
+interrupted run's reports, sanitising), `054_GateSelection.sh` (`--changed`
+on a scratch git fixture, `--rerun-failed`/FLAKY, the matrix options,
+`--fail-fast`, `--warm`, `--parallel`).
 
 A timing assertion is only as stable as the slowest thing inside its timed
 window. On MSYS/cygwin that is a **fork**: a bash forks in ~15 ms when the

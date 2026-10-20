@@ -3,7 +3,7 @@
   "project": "ktests gate — one command for the phase gate (ktests/tools/gate.sh)",
   "created": "2026-10-19",
   "updated": "2026-10-20",
-  "status": "in progress — G0, G1 done; G2 done 2026-10-20 (uncommitted, awaiting review + critic); base ktests e266334 (round 6 P4)",
+  "status": "in progress — G0, G1, G2 done + committed; G3 done 2026-10-20 (uncommitted, awaiting review)",
   "plan": "GATE_PLAN.md",
   "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
   "motivation": {
@@ -247,7 +247,51 @@
     },
     "G3": {
       "name": "cells.tsv, summary.json, --compare, --rerun-failed/FLAKY, --changed, --mode/--cwd both, --repeat, --parallel, --fail-fast, --warm; tests 053-054",
-      "status": "planned"
+      "status": "done",
+      "date": "2026-10-20",
+      "base": "kbool 08aa779, ktests 0bab5d5",
+      "changes": [
+        "ktests/tools/gate.sh: parser (--mode/--cwd both, --repeat, --rerun-failed, --compare, --changed, --parallel, --fail-fast, --warm; the 'not yet (G3)' refusals removed); cell table kt_gate_cells (runtime > repeat > suite > mode > cwd); spec carries NREP/RERUN/FAILFAST/WARM; launcher loop kt_gate_segments_run over 1 (serial) or all (--parallel) segments with per-segment state; reports kt_gate_rows/tsv/json + _kt_gate_jstr; --compare kt_gate_compare_base/kt_gate_compare; --changed kt_gate_changed (+ _kt_gate_git_list, _kt_gate_chg_index); segment: _kt_gate_seg_attempt REL SEL, _kt_gate_seg_rerun, fail-fast (FAILFAST file, SKIPPED results), --warm seg-N.ckk; kt_gate_repos only for a root that is a work-tree top (_kt_gate_is_toplevel); header documents every option, outputs, exit codes",
+        "ktests/tests/gate_fixtures/flaky (fails on its first run: marker in the fixture root copy), gate_fixtures/ckk (records KKLASS_CKK_DIR in that dir)",
+        "ktests/tests/050_GateCli.sh: the G3-refusal case replaced by 12 G3 usage-error cases; messages of --mode/--cwd/no suite updated",
+        "ktests/tests/053_GateReports.sh (new, 13), 054_GateSelection.sh (new, 16)",
+        "ktests/tools/README.md: gate section (options table, FLAKY/SKIPPED, exit 4, reports, how to paste summary.json into a ledger)",
+        "ktests/GATE_PLAN.md: status line; 3, 4.2, 4.4, 4.5 'G3 as built'; 5 G3 row"
+      ],
+      "design_decisions": [
+        "cell order inside a runtime: repeat > suite > mode > cwd; SUITE#R in the line when --repeat > 1",
+        "FLAKY keeps the full run's total/passed/failed and [FAIL] lines (no merged counts: the summary has no per-file counts); rerun files in cells/NNN/rerun-R/; a rerun leaving a process -> STRAY; no ENV retry inside reruns; -n appended after ARGS (the runner takes the last -n); numbers passed without leading zeros",
+        "SKIPPED is its own verdict (not NOTRUN), counted apart, in no __GATE__ field; OUT/FAILFAST read by every segment before each cell (works for --parallel too); serially the launcher writes SKIPPED results for a runtime it does not start",
+        "--changed: dependency through UNIT files only (touched = units of DIR on a change outside DIR/tests not *.md; affected = transitive unit-file kk.uses); a non-unit script's kk.uses (test files, bench.sh run by the *_Bench tests) selects only its own suite; deleted unit file -> unit = file stem; submodule commit not recorded by the root -> its diff files (else all); nothing to run -> [WARN], exit 0, no OUT, no __GATE__ line; root must be a work-tree top (rc 2); git status failure -> rc 2",
+        "--compare LAST: the newest FINISHED run with cells.tsv under the DEFAULT root ${TMPDIR:-/tmp}/kt-gate (plan said 'same OUT root'); base read by header column names; per key over repeats max total / min passed; kinds changed/added/removed/notrun; detail lines max 20 shown, all in compare.txt",
+        "cells.tsv: 22 columns (plan's + reruns rerun_pass flaky reason), a row per planned cell (UNSTARTED for never started), '' -> '-', tab/newline/CR -> space, flaky joined by '/'",
+        "summary.json: + gate.options, changed, compare, machine, exit; totals keyed by version ('5.3.9 (2)' for a duplicate); cells typed, + attempt1, ckk, fails (first 5)",
+        "--warm dir removed at the segment end unless --keep",
+        "a non-repository root inside another repository no longer reports that repository in 'gate repos:' (fixture roots in tests/.tmp did); the tests set GIT_CEILING_DIRECTORIES to their tmp"
+      ],
+      "tests": {
+        "050_GateCli": "21 (the G3-refusal case now 12 G3 usage errors: --repeat 0/x, --rerun-failed -1/none, --compare none, --changed=/--parallel=/--fail-fast=/--warm= values, --mode=all, --cwd up, no suite)",
+        "053_GateReports": "13: tsv header/rows/no empty value; mixed run verdicts (NOTRUN, FAIL after rerun, FLAKY, PASS, warn); summary.json via node (keys, root/out mixed, argv, repos sha+dirty of a git root, totals, cells typed, flaky array, machine, timestamps); reports before the verdict line; --compare DIR unchanged; FILE.tsv changed/added/removed + json changes; LAST (an unfinished newer dir skipped); 7 bad bases rc 2 without OUT; TERM mid-run -> 143 with partial tsv/json; sanitising (quoted suite id, tab+quote file name, quote/backslash/tab/UTF-8 message; escape function round trip of every control char via node)",
+        "054_GateSelection": "16: scratch git fixture (root + nested kcl repo as gitlink); nothing changed rc 0 no OUT no __GATE__; unit change -> suite + unit-file and test-file dependents + kcl, not the unrelated one; union with a named suite + selection printed before the first cell + summary.json changed; test-only / *.md / untracked; deleted unit file + bench.sh dependent; docs-only -> no suite rc 0; core change and untracked ktests/ file -> all; submodule commit moved -> its diff; non-toplevel root rc 2; --rerun-failed 2 FLAKY rc 4 (rerun-1 summary 1 1 0 0); no rerun -> FAIL; always-failing -> FAIL after 2 reruns; --mode both --cwd both --repeat 2 order; --fail-fast SKIPPED both runtimes; --warm shared seg-1.ckk vs per-cell, removed without --keep; --parallel line order"
+      },
+      "gate": {
+        "syntax": "bash -n on 5.2 and 5.3: gate.sh, 050, 053, 054, the flaky and ckk fixtures",
+        "ktests_suite_5.3.9": "631/631 (602 + 13 + 16), rc 0",
+        "ktests_suite_5.2.37": "630 = 601 + 13 + 16: full run 621/630 - the 9 failures (034, 044, 048, 050, 051) were cygwin fork failures (child_copy Win32 error 299, 'Resource temporarily unavailable'; commit charge 1.2 GB free of 60 GB, the owner's apps) = ENV; reruns of exactly those files 72/72 + 16/16 green. A first run overlapped the session restart (05:51) and is void",
+        "053_054_after_bench_fix": "054 16/16 on 5.2 and 5.3 after the bench.sh rule (053 13/13 both before it; the fix touches --changed only)",
+        "three_suites_gate": "gate --bash 5.2 --bash 5.3 kcl/tstopwatch kcl/tqueuestack kcl/tregex: PASS 61/98/246 per runtime, __GATE__:PASS:6:6:0:0:0:0:0:810:810, 42 s",
+        "compare_gate": "same + --compare <that run>: 'totals unchanged (5.2.37 405/405, 5.3.9 405/405)', rc 0",
+        "matrix_gate": "same + --mode both --repeat 2 --warm --compare <that run>: 24 cells PASS, 1620/1620 per runtime, __GATE__:PASS:24:24:0:0:0:0:0:3240:3240, compare: 6 'added' (the single-mode keys), 3m26s",
+        "changed_real_tree": "read-only (selection only, gate.sh sourced): the live tree is dirty by this phase's ktests work -> 'all 30 suites, for ktests/GATE_PLAN.md'; a clean clone of the committed tree (kbool 08aa779 + recorded submodule SHAs, in the worker's scratch) -> gate --changed: '[WARN] nothing changed', rc 0, no OUT; probes there: tpath.sh -> kcl kcl/tdirectory kcl/tfile kcl/tpath; tstopwatch.sh -> 19 suites (kcl, tstopwatch, thttpserver by its unit, 16 more by their bench.sh)",
+        "strays": "none in either runtime after every step",
+        "not_run": "gate.sh all and the master sweep (supervisor)"
+      },
+      "supervisor_review": "2026-10-20: diff read (JSON escape covers all control chars; --changed validates unit names before word splitting, git read-only); the restart of the Claude Code session at ~05:51 interrupted the worker, resumed from its PROGRESS.md checkpoint with nothing lost",
+      "supervisor_gate": {
+        "gate_all": "gate.sh --bash 5.2 --bash 5.3 --rerun-failed 1 all: 60/60 PASS in 28 min, 9040 (5.2) / 9041 (5.3), __GATE__:PASS:60:60:0:0:0:0:0:18081:18081, summary.json valid",
+        "per_suite": "cells.tsv vs the G2 master sweep: only ktests differs, +29 (053 13 + 054 16); the 5.2 ktests suite 630/630 with no rerun (the worker had ENV fork failures at 1.2 GB free commit; 3.3 GB free at this run)",
+        "strays": "none, both runtimes"
+      }
     },
     "G4": {
       "name": "docs, brief template, final critic, round gate run with gate.sh",

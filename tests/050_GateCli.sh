@@ -1,6 +1,6 @@
 #!/bin/bash
 # GateCli (gate G2). ktests/tools/gate.sh's command line: options and their
-# values, the G3 options refused for now, suite resolution (all / id / unique
+# values (the G3 options' too), suite resolution (all / id / unique
 # last component; unknown and ambiguous are usage errors, rc 2, before
 # anything runs — no OUT dir is made), KT_GATE_BASHES, the parent-watch
 # opt-out (--nohup, nohup), the spec file a segment gets (paths, args, the
@@ -70,8 +70,8 @@ while IFS='|' read -r want args; do
 done <<'EOF'
 no suite given|
 unknown option --bogus|--bogus all
---mode must be threaded or single|--mode fast all
---cwd must be neutral or suite|--cwd up all
+--mode must be threaded, single or both|--mode fast all
+--cwd must be neutral, suite or both|--cwd up all
 --workers needs a number|--workers 0 all
 --timeout needs whole seconds|--timeout 1.5 all
 --timeout needs a value|all --timeout
@@ -82,16 +82,28 @@ unknown option --bogus|--bogus all
 EOF
 if [[ -z "$bad" ]]; then kt_test_pass "11 cases"; else kt_test_fail "$bad"; fi
 
-kt_test_start "the G3 options are refused for now: rc 2 'not yet implemented (gate G3)'"
+kt_test_start "the G3 options' values: rc 2 and a message for a bad one (no 'not yet implemented' left)"
 bad=""
-for args in "--compare LAST" "--compare=LAST" "--rerun-failed 1" "--changed" "--repeat 3" "--parallel" \
-            "--fail-fast" "--warm" "--mode both" "--cwd both" "--mode=both"; do
+while IFS='|' read -r want args; do
     read -r -a av <<< "$args"
-    kt050_gate "$TMP/g3.out" --root "$F" "${av[@]}" all
+    kt050_gate "$TMP/g3.out" --root "$F" "${av[@]}"
     o="$(cat "$TMP/g3.out")"
-    [[ "$RC" == 2 && "$o" == *"not yet implemented (gate G3)"* ]] || bad+="[$args -> rc $RC: ${o:0:100}] "
-done
-if [[ -z "$bad" ]]; then kt_test_pass "11 options"; else kt_test_fail "$bad"; fi
+    [[ "$RC" == 2 && "$o" == *"$want"* && "$o" != *"not yet implemented"* ]] || bad+="[$args -> rc $RC: ${o:0:120}] "
+done <<'EOT'
+--repeat needs a number 1-9999|--repeat 0 all
+--repeat needs a number 1-9999|--repeat x all
+--rerun-failed needs a number 0-99|--rerun-failed -1 all
+--rerun-failed needs a value|all --rerun-failed
+--compare needs a value|all --compare
+--changed takes no value|--changed=1 all
+--parallel takes no value|--parallel=1 all
+--fail-fast takes no value|--fail-fast=yes all
+--warm takes no value|--warm=1 all
+--mode must be threaded, single or both|--mode=all all
+--cwd must be neutral, suite or both|--cwd up all
+no suite given (name suites, or all, or --changed)|--repeat 2
+EOT
+if [[ -z "$bad" ]]; then kt_test_pass "12 cases"; else kt_test_fail "$bad"; fi
 
 # ---- suite resolution ----------------------------------------------------------
 # the resolver alone (gate.sh sourced: nothing runs on source)
