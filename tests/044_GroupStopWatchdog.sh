@@ -151,9 +151,9 @@ set +m
 for (( k = 0; k < 100; k++ )); do [[ -s "$d/ign" && -s "$d/good" ]] && break; sleep 0.1; done
 sleep 0.5
 i=$(<"$d/ign")
-t0=${EPOCHREALTIME/./}
+t0=${EPOCHREALTIME/[.,]/}
 kt_runner_group_stop "$g" 30
-dt=$(( (${EPOCHREALTIME/./} - t0) / 100000 ))
+dt=$(( (${EPOCHREALTIME/[.,]/} - t0) / 100000 ))
 kill -0 "$i" 2>/dev/null && ia=alive || ia=gone
 c=$(cat "$d/clean" 2>/dev/null)
 kill -KILL "$i" 2>/dev/null

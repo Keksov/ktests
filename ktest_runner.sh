@@ -622,9 +622,9 @@ kt_runner_group_end() {
     [[ -n "$P" && "$P" != *[!0-9]* ]] || return 0
     [[ -n "$g" && "$g" != *[!0-9]* ]] || g=30
     KT_GROUP_END_STATS=""
-    __kt_t0="${EPOCHREALTIME/./}"
+    __kt_t0="${EPOCHREALTIME/[.,]/}"
     kt_runner_group_scan "$P" "$self"
-    __kt_st=$(( ${EPOCHREALTIME/./} - __kt_t0 ))
+    __kt_st=$(( ${EPOCHREALTIME/[.,]/} - __kt_t0 ))
     __kt_out=${#__kt_ds[@]} __kt_mem="$__kt_gm"
     if ! kill -TERM -- "-$P" 2>/dev/null; then
         [[ "$P" != "$self" ]] && kill -TERM "$P" 2>/dev/null
@@ -632,12 +632,12 @@ kt_runner_group_end() {
     kill -CONT -- "-$P" 2>/dev/null || kill -CONT "$P" 2>/dev/null
     # a fork-free 0.1 s delay: read -t on a pty master that never has data
     exec {__kt_fd}<>/dev/ptmx 2>/dev/null || __kt_fd=""
-    __kt_end=$(( ${EPOCHREALTIME/./} + g * 100000 ))
+    __kt_end=$(( ${EPOCHREALTIME/[.,]/} + g * 100000 ))
     while :; do
         __kt_n=$(( __kt_n + 1 ))
-        __kt_t0="${EPOCHREALTIME/./}"
+        __kt_t0="${EPOCHREALTIME/[.,]/}"
         kt_runner_group_scan "$P" "$self"
-        __kt_st=$(( __kt_st + ${EPOCHREALTIME/./} - __kt_t0 ))
+        __kt_st=$(( __kt_st + ${EPOCHREALTIME/[.,]/} - __kt_t0 ))
         for __kt_q in "${!__kt_ds[@]}"; do
             kill -0 "$__kt_q" 2>/dev/null || unset "__kt_ds[$__kt_q]"
         done
@@ -660,7 +660,7 @@ kt_runner_group_end() {
                         kill -TERM "$__kt_q" 2>/dev/null
                         kill -CONT "$__kt_q" 2>/dev/null
                     done
-                    __kt_t="${EPOCHREALTIME/./}"
+                    __kt_t="${EPOCHREALTIME/[.,]/}"
                     (( __kt_end < __kt_t + 1000000 )) && __kt_end=$(( __kt_t + 1000000 ))
                 fi
             fi
@@ -668,7 +668,7 @@ kt_runner_group_end() {
             __kt_e=0
         fi
         if (( ${#__kt_ds[@]} > 0 || __kt_e < 2 )); then
-            __kt_t="${EPOCHREALTIME/./}"
+            __kt_t="${EPOCHREALTIME/[.,]/}"
             if (( __kt_t >= __kt_end )); then
                 # at most 10 KILL rounds, and never more than 3 s past the grace
                 (( __kt_k++ >= 10 || __kt_t >= __kt_end + 3000000 )) && break
