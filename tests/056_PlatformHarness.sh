@@ -108,7 +108,7 @@ else
     kt_test_fail "backend [$be] want [$want] (${KT_PROC_WHY:-no reason}) $OSTYPE"
 fi
 
-kt_test_start "this shell and a child in the table: ppid, process group, session, command line; a start time never earlier than the real start, never in the future [H1, H2]"
+kt_test_start "this shell and a child in the table: ppid, process group, session, command line; a start time never earlier than the real start by more than KT_PROC_START_EARLY_MS, never in the future [H1, H2]"
 source "$ST"
 T1="$EPOCHREALTIME"
 bash -c 'exec -a "kt056-$1-child" bash -c "$KT056_LOOP"' _ "$N" </dev/null >/dev/null 2>&1 &
@@ -125,9 +125,9 @@ bad=""
 [[ -n "$sd" && "${KT_PROC_SID[$CP]:-}" == "$sd" && "${KT_PROC_SID[$$]:-}" == "$sd" ]] || bad+="[session ${KT_PROC_SID[$CP]:-}/${KT_PROC_SID[$$]:-}, want $sd] "
 [[ "${KT_PROC_CMD[$CP]:-}" == "kt056-$N-child -c "* ]] || bad+="[cmd '${KT_PROC_CMD[$CP]:0:60}'] "
 st="${_KTS_ST[$CP]:-0}"
-(( st >= t1 - 20 && st <= now + 20 )) || bad+="[start $st not in [$t1-20, $now+20] (age $(( (now - st) / 1000 )) s)] "
+(( st >= t1 - KT_PROC_START_EARLY_MS && st <= now + 20 )) || bad+="[start $st not in [$t1-$KT_PROC_START_EARLY_MS, $now+20] (age $(( (now - st) / 1000 )) s)] "
 if [[ -z "$bad" ]]; then
-    kt_test_pass "child $CP: ppid $$, pgid ${KT_PROC_PG[$CP]}, session $sd, started $(( st - t1 )) ms after T1 (resolution ${KT_PROC_START_RES_MS} ms)"
+    kt_test_pass "child $CP: ppid $$, pgid ${KT_PROC_PG[$CP]}, session $sd, started $(( st - t1 )) ms after T1 (resolution ${KT_PROC_START_RES_MS} ms, early ${KT_PROC_START_EARLY_MS} ms)"
 else
     kt_test_fail "$bad"
 fi

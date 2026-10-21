@@ -143,6 +143,29 @@ case "$scen" in
         echo "labels=${!KT_SUITEJOB_STRAY_LABELS[*]}"
         kt_suitejob_strays "again"; echo "s2=$?"
         ;;
+    early)
+        # launch L2.7-K: the backend's tolerance, then a start estimate 9 ms
+        # before a job's T0 (the linux backend: up to a tick early) against one
+        # 30 ms before it — the scan is replaced by two fake strays
+        kt_proc_init; echo "be=$KT_PROC_BACKEND early=$KT_PROC_START_EARLY_MS"
+        kt_suitejob_init "$EPOCHREALTIME" "$N"
+        kt_suitejob_run sE true
+        t0="${KT_SUITEJOB_T0[0]}"
+        kt_strays_scan() {
+            KT_STRAYS=( 999991 999992 ); RESULT=2; KT_STRAYS_UNKNOWN=""
+            KT_STRAYS_START=( [999991]=$(( t0 - 9 )) [999992]=$(( t0 - 30 )) )
+            KT_STRAYS_FLAG=( [999991]=yes [999992]=yes ); KT_STRAYS_PPID=( [999991]=1 [999992]=1 )
+            KT_STRAYS_AGE=( [999991]=0 [999992]=0 ); KT_STRAYS_CMD=( [999991]="kt049-$N-e9" [999992]="kt049-$N-e30" )
+        }
+        kt_strays_stop() { KT_STRAYS=(); RESULT=0; return 0; }
+        kt_proc_bbtimeout() { return 1; }
+        _kt_strays_nap() { :; }
+        for e in 20 0; do
+            KT_PROC_START_EARLY_MS=$e; KT_SUITEJOB_STRAY_ROWS=()
+            kt_suitejob_strays "early $e" >/dev/null
+            echo "e$e=${KT_SUITEJOB_STRAY_ROWS[*]}"
+        done
+        ;;
 esac
 EOF
 
@@ -188,5 +211,17 @@ else
     kt_test_fail "a-left [$la] c0 [$lc] b [$lb] | ${o//$'\n'/ | }"
 fi
 kt049_cleanup
+
+kt_test_start "strays: a start up to KT_PROC_START_EARLY_MS (linux 20, cygwin/ps 0) before a job's T0 is labelled with that job, one earlier is not (launch L2.7-K)"
+o="$(timeout 60 bash "$TMP/drv.sh" "$SJ" early "$TMP/early" "$N" "$M" 2>&1)"
+want=0; [[ "$o" == "be=linux "* ]] && want=20
+e9="pid 999991 (yes) started during" e30="pid 999992 (yes) started during (before the first suite): kt049-$N-e30"
+if [[ "$o" == "be="*" early=$want"$'\n'* \
+      && "$o" == *$'\n'"e20=$e9 sE: kt049-$N-e9 $e30"$'\n'* \
+      && "$o" == *$'\n'"e0=$e9 (before the first suite): kt049-$N-e9 $e30" ]]; then
+    kt_test_pass "${o//$'\n'/ | }"
+else
+    kt_test_fail "want early=$want | ${o//$'\n'/ | }"
+fi
 
 kt_test_log "049_SuiteJob.sh completed"

@@ -19,10 +19,12 @@
 #   OPTS: --session SID|self (only processes of that session — `self` = this
 #   shell's — and the STRICT rule, see below; the master sweep uses it),
 #   --since EPOCH (only processes started at/after EPOCH, seconds, a fraction
-#   allowed; a plain time filter), --match TEXT (only processes whose command
-#   line contains TEXT; the tests use a nonce), --older-than MIN (unfiltered
-#   rule: a detached tree younger than MIN minutes is ORPHAN=young, default
-#   120 = KT_STRAYS_OLDER_DEFAULT), --width N (COMMAND column, default 100).
+#   allowed, less max(20 ms, KT_PROC_START_EARLY_MS); a time filter),
+#   --match TEXT (only processes whose command line contains TEXT; the tests
+#   use a nonce),
+#   --older-than MIN (unfiltered rule: a detached tree younger than MIN
+#   minutes is ORPHAN=young, default 120 = KT_STRAYS_OLDER_DEFAULT), --width N
+#   (COMMAND column, default 100).
 #
 # LIBRARY (source it; nothing runs on source):
 #   kt_strays_scan [OPTS] [SINCE]  KT_STRAYS = the listed pids (ascending),
@@ -86,7 +88,10 @@
 #
 # START TIME. /proc/PID/stat field 22 (starttime, ms since boot on cygwin) +
 # boot epoch (EPOCHREALTIME - /proc/uptime) — the same on both runtimes; the
-# estimate is never earlier than the real start (+20 ms tolerance on --since).
+# estimate is never earlier than the real start there. Off cygwin it can be
+# (Linux: up to one tick): KT_PROC_START_EARLY_MS (set by ../ktest_proc.sh per
+# backend: linux 20, cygwin 0, ps 0 — launch L2.7-K); --since allows
+# max(20 ms, KT_PROC_START_EARLY_MS) — the old 20 ms margin is the floor.
 #
 # RUNTIMES. Git-for-Windows' bash 5.2.37 and MSYS2's bash 5.3.9 are different
 # cygwin runtimes with separate process tables: this script sees (and stops)
@@ -96,8 +101,8 @@
 # cygwin the code below as it always was; on Linux /proc/PID/stat (state,
 # ppid, pgrp, session and start time in ONE read; start = boot + ticks/HZ)
 # and /proc/PID/cmdline; without /proc (FreeBSD, macOS) one `ps` per table
-# (start time to the second — the estimate is never earlier than the real
-# start). Off cygwin the ORPHAN RULE is read per session: a process is
+# (start time to the second; the estimate is the end of that second). Off
+# cygwin the ORPHAN RULE is read per session: a process is
 # reparented to pid 1 OR TO A SUBREAPER (`systemd --user` on a desktop, a
 # container's init) — so the ROOT is the topmost ancestor still in the SAME
 # SESSION, and the tree is DETACHED when that root is no session leader
@@ -384,7 +389,10 @@ kt_strays_scan() {
     _kt_strays_init
     _kt_strays_table
     if [[ -n "$since" ]]; then
-        _kt_strays_ms "$since"; since_ms=$(( REPLY - 20 ))
+        # the tolerance: KT_PROC_START_EARLY_MS, at least the old 20 ms margin
+        _kt_strays_ms "$since"; since_ms=${KT_PROC_START_EARLY_MS:-0}
+        (( since_ms < 20 )) && since_ms=20
+        since_ms=$(( REPLY - since_ms ))
     fi
     # off cygwin (PLATFORMS): roots per session (sscope); no session column (nosid)
     local sscope=0 nosid=0 sarg="$sess"

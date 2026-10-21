@@ -16,7 +16,11 @@
 #           ") "), /proc/PID/cmdline for the command line. No fork. The start
 #           epoch = (now - /proc/uptime) + ticks * 1000 / HZ; HZ (USER_HZ) is
 #           taken as 100 when this shell's own start time agrees with it,
-#           else read once with `getconf CLK_TCK`.
+#           else read once with `getconf CLK_TCK`. Both /proc/uptime and the
+#           ticks truncate to a tick (10 ms), so the estimate can be up to one
+#           tick EARLIER than the real start (measured: 3-5 % of the forks
+#           taken right after a window start look 5-10 ms early — launch
+#           L2.7-K): KT_PROC_START_EARLY_MS=20.
 #   ps      no /proc (FreeBSD, macOS) or a Linux without it: ONE `ps` fork per
 #           snapshot, `TZ=UTC0 LC_ALL=C ps -A -ww -o pid= -o ppid= -o pgid=
 #           -o sid= -o state= -o etimes= -o lstart= -o args=` (one -o per
@@ -42,7 +46,11 @@
 #   kt_proc_init          KT_PROC_BACKEND, KT_PROC_WHY, KT_PROC_HAS_SID (0/1:
 #                         a session column exists), KT_PROC_HAS_STATE;
 #                         KT_PROC_START_RES_MS (how coarse start times are:
-#                         cygwin 1, Linux 10 = a clock tick, ps 1000); rc 0
+#                         cygwin 1, Linux 10 = a clock tick, ps 1000);
+#                         KT_PROC_START_EARLY_MS (how much EARLIER than the
+#                         real start an estimate can be: linux 20, cygwin 0,
+#                         ps 0 — every comparison of a start with a window
+#                         start allows it: START + EARLY >= T0); rc 0
 #                         when a backend works, 1 for none
 #   kt_proc_snapshot [--cmd] [PREFIX]   the whole table into the global
 #                         assoc arrays PREFIX{PP,PG,SID,STATE,RAW,ST,CMD}
@@ -82,7 +90,7 @@ fi
 _KT_PROC_SOURCED=1
 
 declare -g  KT_PROC_BACKEND="${KT_PROC_BACKEND:-}" KT_PROC_WHY="" KT_PROC_HAS_SID=0 KT_PROC_HAS_STATE=0
-declare -g  KT_PROC_START_RES_MS=1
+declare -g  KT_PROC_START_RES_MS=1 KT_PROC_START_EARLY_MS=0
 declare -g  KT_PROC_NOW_MS=0 _KTP_READY="" _KTP_HZ=100 _KTP_PSLS=0 _KTP_PSET=etimes _KTP_PSSTK=state
 declare -ga _KTP_PSARGS=() _KTP_PSVARS=()
 # KT_TMO_BOUND — the `timeout` options that keep it a plain time bound for a
@@ -209,7 +217,10 @@ kt_proc_init() {
         else f=ps; fi
     fi
     case "$f" in
-        cygwin) KT_PROC_HAS_SID=1 KT_PROC_HAS_STATE=1 KT_PROC_START_RES_MS=1 ;;
+        # KT_PROC_START_EARLY_MS (launch L2.7-K): cygwin 0 — the boot epoch
+        # from a truncated /proc/uptime is late, the start in ms (measured: no
+        # fork right after t0 looked early, 500 of 500 on both runtimes)
+        cygwin) KT_PROC_HAS_SID=1 KT_PROC_HAS_STATE=1 KT_PROC_START_RES_MS=1 KT_PROC_START_EARLY_MS=0 ;;
         linux)
             line=""; { IFS= read -r line < /proc/self/stat; } 2>/dev/null
             rest="${line##*) }"; a=( $rest )
@@ -217,7 +228,7 @@ kt_proc_init() {
                 KT_PROC_WHY="/proc/self/stat unreadable or not in the Linux format"; f=none
             else
                 KT_PROC_HAS_SID=1 KT_PROC_HAS_STATE=1
-                KT_PROC_START_RES_MS=10
+                KT_PROC_START_RES_MS=10 KT_PROC_START_EARLY_MS=20
                 # USER_HZ: 100 unless this shell's start (ticks) would lie in
                 # the future at 100/s; then ask getconf once
                 up=0; { read -r up _ < /proc/uptime; } 2>/dev/null
@@ -227,7 +238,12 @@ kt_proc_init() {
                     [[ "$s" =~ ^[1-9][0-9]*$ ]] && _KTP_HZ=$s
                 fi
             fi ;;
-        ps) KT_PROC_START_RES_MS=1000; _kt_proc_ps_probe || f=none ;;
+        # ps 0: the END of the start's second — FreeBSD's and macOS' lstart is
+        # the kernel's own start time (and ps-clock - etime(s) cannot name an
+        # earlier second); a procps ps on Linux (only when forced: procps needs
+        # /proc) builds lstart on the whole-second btime and can be up to 1 s
+        # early — nothing compares windows that way
+        ps) KT_PROC_START_RES_MS=1000 KT_PROC_START_EARLY_MS=0; _kt_proc_ps_probe || f=none ;;
         none) KT_PROC_WHY="${KT_PROC_WHY:-forced (KT_PROC_BACKEND=none)}" ;;
     esac
     KT_PROC_BACKEND="$f"

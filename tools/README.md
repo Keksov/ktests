@@ -403,9 +403,14 @@ it always was. `tests/056_PlatformHarness.sh` pins what follows.
 | backend | where | source | start time | cost |
 |---|---|---|---|---|
 | `cygwin` | Git-bash, MSYS2 | `/proc/PID/{ppid,pgid,sid,cmdline}`; `stat` only for the few candidates (~20 ms each there) | ms | no fork |
-| `linux` | any Linux (glibc, musl) | ONE `/proc/PID/stat` read: state, ppid, pgrp, session, start (fields counted from the LAST `") "` — a comm may hold spaces and parentheses) + `cmdline` | clock ticks (USER_HZ, 100 checked against this shell's own start, else `getconf CLK_TCK`) on the `/proc/uptime` boot epoch: 10 ms | no fork |
+| `linux` | any Linux (glibc, musl) | ONE `/proc/PID/stat` read: state, ppid, pgrp, session, start (fields counted from the LAST `") "` — a comm may hold spaces and parentheses) + `cmdline` | clock ticks (USER_HZ, 100 checked against this shell's own start, else `getconf CLK_TCK`) on the `/proc/uptime` boot epoch: 10 ms, and up to a tick EARLY (both truncate) | no fork |
 | `ps` | FreeBSD, macOS, a Linux without `/proc` | ONE `TZ=UTC0 LC_ALL=C ps -A -ww -o pid= -o ppid= -o pgid= -o sid= -o state= -o etimes= -o lstart= -o args=` per snapshot (one `-o` per keyword: BSD ps takes the rest of `-o a=,b=` as a's header), split by `read`; keywords probed once — POSIX `pid ppid pgid etime args` is the floor, `sid`, `state`, `lstart` optional | to the SECOND (lstart, else ps's clock minus etime(s): BSD truncates both); the estimate is the END of that second — never earlier than the real start, at most 1 s later (`KT_PROC_START_RES_MS`) | one fork (~3 ms) |
 | `none` | nothing works | — | — | `strays.sh list/stop` print `strays: UNKNOWN (no process table: WHY)` and exit 3; the gate prints a `[WARN] … stray checks are n/a`; the suite-job check says `n/a` — never a blind "none" |
+
+Every comparison of a start with a window start allows
+`KT_PROC_START_EARLY_MS` (set per backend — linux 20, cygwin 0, ps 0; launch
+L2.7-K): the suite-job label `START + EARLY >= T0`; `strays.sh --since`
+allows `max(20 ms, EARLY)` (its old 20 ms margin is the floor).
 
 `KT_PROC_BACKEND=cygwin|linux|ps|none` in the environment forces one (056 runs
 the ps backend on Linux and the none path everywhere). The runner's group stop

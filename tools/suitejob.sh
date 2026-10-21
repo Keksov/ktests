@@ -233,8 +233,10 @@ kt_suitejob_strays() {
     echo "[WARN] $RESULT stray process(es) found after $label:"
     for p in "${KT_STRAYS[@]}"; do
         s="$KT_SUITEJOB_BEFORE"
+        # an estimate may be up to KT_PROC_START_EARLY_MS early (Linux: a
+        # tick; ../ktest_proc.sh — launch L2.7-K)
         for (( i = 0; i < ${#KT_SUITEJOB_T0[@]}; i++ )); do
-            (( KT_STRAYS_START[$p] >= KT_SUITEJOB_T0[i] )) && s="${KT_SUITEJOB_NAMES[i]}"
+            (( KT_STRAYS_START[$p] + ${KT_PROC_START_EARLY_MS:-0} >= KT_SUITEJOB_T0[i] )) && s="${KT_SUITEJOB_NAMES[i]}"
         done
         KT_SUITEJOB_STRAY_LABELS["$s"]=1
         c="${KT_STRAYS_CMD[$p]//$'\n'/ }"; (( ${#c} > 100 )) && c="${c:0:97}..."
