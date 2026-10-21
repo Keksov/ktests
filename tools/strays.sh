@@ -92,15 +92,44 @@
 # cygwin runtimes with separate process tables: this script sees (and stops)
 # only the processes of the runtime it runs in. Run it once under each bash.
 #
+# PLATFORMS (launch L2.1). The process table comes from ../ktest_proc.sh: on
+# cygwin the code below as it always was; on Linux /proc/PID/stat (state,
+# ppid, pgrp, session and start time in ONE read; start = boot + ticks/HZ)
+# and /proc/PID/cmdline; without /proc (FreeBSD, macOS) one `ps` per table
+# (start time to the second — the estimate is never earlier than the real
+# start). Off cygwin the ORPHAN RULE is read per session: a process is
+# reparented to pid 1 OR TO A SUBREAPER (`systemd --user` on a desktop, a
+# container's init) — so the ROOT is the topmost ancestor still in the SAME
+# SESSION, and the tree is DETACHED when that root is no session leader
+# (sid != pid): its parent died, whoever adopted it. A REAPER among the
+# caller's own ancestors (FreeBSD's `timeout` without --foreground adopts all
+# below it, in the caller's session) cuts the walk too: a child of an
+# ancestor `timeout` that is not on the caller's chain was adopted (GNU
+# timeout has that one child only). Without a session column
+# (a `ps` that has none, e.g. macOS) a root that leads its process group
+# counts as a leader, --session filters nothing and the strict rule needs a
+# marker. Kernel threads (session 0) are never listed. With no process table
+# at all the CLI prints `strays: UNKNOWN (no process table: WHY)` and exits 3
+# — never a blind "none"; the library sets KT_STRAYS_UNKNOWN=WHY.
+#
 # FORK-LIGHT. The scan reads /proc with bash builtins only (`read`, `mapfile`,
-# a builtin `cd` for the tests.sh cwd check): one pass, no fork. Waits are
+# a builtin `cd` for the tests.sh cwd check): one pass, no fork (the ps
+# backend: one fork per table). Waits are
 # `read -t` on a pty master of their own (/dev/ptmx: nothing ever arrives),
-# no forked `sleep` (fallback: `sleep` when no pty can be opened).
+# no forked `sleep` (FreeBSD has no /dev/ptmx: a FIFO of its own, opened
+# read-write and unlinked — kt_proc_napfd; `sleep` only when neither works).
 
 if [[ -n "${_KT_STRAYS_SOURCED:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
 _KT_STRAYS_SOURCED=1
+
+if ! declare -F kt_proc_init >/dev/null; then
+    __kt_st_src="${BASH_SOURCE[0]}"
+    __kt_st_dir="${__kt_st_src%/*}"; [[ "$__kt_st_dir" == "$__kt_st_src" ]] && __kt_st_dir=.
+    source "$__kt_st_dir/../ktest_proc.sh"
+    unset __kt_st_src __kt_st_dir
+fi
 
 declare -ga KT_STRAYS=()
 declare -gA KT_STRAYS_PPID=() KT_STRAYS_AGE=() KT_STRAYS_FLAG=() KT_STRAYS_CMD=() KT_STRAYS_START=()
@@ -108,7 +137,7 @@ declare -g  _KT_STRAYS_ROOT="" _KT_STRAYS_READY=""
 declare -ga _KT_STRAYS_PATHS=()
 # the process table of the last _kt_strays_table
 declare -gA _KTS_PP=() _KTS_PG=() _KTS_SID=() _KTS_ST=() _KTS_RAW=() _KTS_STATE=() _KTS_CMD=()
-declare -g  _KTS_BOOT_MS=0 _KTS_NOW_MS=0 _KTS_NAP_FD=""
+declare -g  _KTS_BOOT_MS=0 _KTS_NOW_MS=0 _KTS_NAP_FD="" KT_STRAYS_UNKNOWN=""
 # the unfiltered age limit in minutes (--older-than): longer than a full master
 # sweep (~35 min measured), so an agent's live background sweep is never hit
 declare -g  KT_STRAYS_OLDER_DEFAULT=120
@@ -186,10 +215,15 @@ _kt_strays_timeout_ms() {
 # _kt_strays_nap_open / _kt_strays_nap SEC / _kt_strays_nap_close — a
 # fork-free wait: `read -t` on a pty master nothing writes to (Windows timer
 # granularity: a 0.02 s nap takes ~30 ms). Opened per stop/settle and closed
-# after, so no child inherits it. Without a pty: `sleep`.
+# after, so no child inherits it. Without a pty: a FIFO of its own
+# (kt_proc_napfd, FreeBSD), else `sleep`.
 _kt_strays_nap_open() {
     [[ -n "$_KTS_NAP_FD" ]] && return 0
-    exec {_KTS_NAP_FD}<>/dev/ptmx 2>/dev/null || _KTS_NAP_FD=""
+    # a pty master; a FIFO of its own where there is no /dev/ptmx (FreeBSD).
+    # REPLY is the caller's (_kt_gate_spawn returns the stub pid in it)
+    local __kts_r="${REPLY-}"
+    kt_proc_napfd; _KTS_NAP_FD="$REPLY"
+    REPLY="$__kts_r"
     return 0
 }
 _kt_strays_nap() {
@@ -214,6 +248,14 @@ _kt_strays_nap_close() {
 _kt_strays_table() {
     local f p up c pp pg sd IFS=$' \t\n'
     local -a argv
+    KT_STRAYS_UNKNOWN=""
+    if ! kt_proc_init || [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        # off cygwin: the whole table at once (state, start, command line
+        # included), see PLATFORMS; none: an empty table, KT_STRAYS_UNKNOWN
+        kt_proc_snapshot --cmd _KTS_ || KT_STRAYS_UNKNOWN="no process table: $KT_PROC_WHY"
+        _KTS_NOW_MS=$KT_PROC_NOW_MS
+        return 0
+    fi
     _KTS_PP=(); _KTS_PG=(); _KTS_SID=(); _KTS_ST=(); _KTS_RAW=(); _KTS_STATE=(); _KTS_CMD=()
     { read -r up _ < /proc/uptime; } 2>/dev/null || up=0
     _kt_strays_ms "$EPOCHREALTIME"; _KTS_NOW_MS=$REPLY
@@ -237,7 +279,12 @@ _kt_strays_table() {
 # (Z = zombie, X = gone), _KTS_RAW (starttime, ms since boot: the identity of
 # a pid across scans), _KTS_ST (start, epoch ms). rc 1 when it is gone.
 _kt_strays_stat() {
-    [[ -n "${_KTS_STATE[$1]+x}" ]] && { [[ "${_KTS_STATE[$1]}" != X ]]; return; }
+    [[ -n "${_KTS_STATE[$1]+x}" ]] && { [[ "${_KTS_STATE[$1]}" != X ]]; return $?; }
+    # off cygwin the table holds every live pid with its stat: not in it = gone
+    if [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        _KTS_STATE[$1]=X; _KTS_RAW[$1]=""; _KTS_ST[$1]=0
+        return 1
+    fi
     local line="" rest c IFS=$' \t\n'
     local -a a
     { IFS= read -r line < "/proc/$1/stat"; } 2>/dev/null
@@ -273,6 +320,10 @@ _kt_strays_marker() {
     if (( rc != 0 )) && [[ -n "$_KT_STRAYS_ROOT" ]] \
        && [[ "$c" == tests.sh || "$c" == tests.sh\ * || "$c" == *\ tests.sh || "$c" == *\ tests.sh\ * \
              || "$c" == */tests.sh || "$c" == */tests.sh\ * ]]; then
+        if [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+            kt_proc_cwd "$1"; d="$REPLY"
+            [[ -n "$d" ]] && [[ "$d" == "$_KT_STRAYS_ROOT" || "$d" == "$_KT_STRAYS_ROOT"/* ]] && rc=0
+        else
         old="$PWD"; oldold="${OLDPWD-}"
         if builtin cd -P -- "/proc/$1/cwd" 2>/dev/null; then
             d="$PWD"
@@ -280,6 +331,7 @@ _kt_strays_marker() {
             [[ "$d" == "$_KT_STRAYS_ROOT" || "$d" == "$_KT_STRAYS_ROOT"/* ]] && rc=0
         fi
         OLDPWD="$oldold"
+        fi
     fi
     (( nc )) || shopt -u nocasematch
     return $rc
@@ -298,7 +350,11 @@ _kt_strays_self_chain() {
             ex[$p]=1
             pp="${_KTS_PP[$p]:-}"
             if [[ -z "$pp" ]]; then
-                { read -r pp < "/proc/$p/ppid"; } 2>/dev/null || pp=""
+                if [[ "$KT_PROC_BACKEND" == cygwin ]]; then
+                    { read -r pp < "/proc/$p/ppid"; } 2>/dev/null || pp=""
+                else
+                    kt_proc_ppid "$p"; pp="$REPLY"
+                fi
             fi
             [[ -n "$pp" ]] || break
             p="$pp"
@@ -330,26 +386,42 @@ kt_strays_scan() {
     if [[ -n "$since" ]]; then
         _kt_strays_ms "$since"; since_ms=$(( REPLY - 20 ))
     fi
+    # off cygwin (PLATFORMS): roots per session (sscope); no session column (nosid)
+    local sscope=0 nosid=0 sarg="$sess"
+    if [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        if (( KT_PROC_HAS_SID )); then sscope=1; else nosid=1; fi
+    fi
     if [[ "$sess" == self ]]; then
         sess="${_KTS_SID[$BASHPID]:-${_KTS_SID[$$]:-}}"
     fi
     KT_STRAYS=(); KT_STRAYS_PPID=(); KT_STRAYS_AGE=(); KT_STRAYS_FLAG=(); KT_STRAYS_CMD=(); KT_STRAYS_START=()
 
-    local p q pp n mine s
+    local p q pp n mine s r
     local -A ex=() root=() kids=() take=() tclass=()
     # this process and its ancestors
     _kt_strays_self_chain
-    # roots (topmost process still in /proc); own descendants; children lists
+    # roots (topmost process still in /proc; off cygwin: in the same session);
+    # own descendants; children lists
     for p in "${!_KTS_PP[@]}"; do
-        q="$p"; mine=0; n=0
+        q="$p"; mine=0; n=0; r=""
         while :; do
             [[ "$q" == "$BASHPID" || "$q" == "$$" ]] && mine=1
             pp="${_KTS_PP[$q]}"
-            [[ "$pp" == 1 || -z "${_KTS_PP[$pp]+x}" ]] && break
+            # ppid 0 / its own pid: init and the kernel processes (FreeBSD ps lists
+            # pid 0 with ppid 0 — the walk would spin to 500; L2.1 review)
+            [[ "$pp" == 1 || "$pp" == 0 || "$pp" == "$q" || -z "${_KTS_PP[$pp]+x}" ]] && break
+            if (( sscope )) && [[ -z "$r" && "${_KTS_SID[$pp]}" != "${_KTS_SID[$q]}" ]]; then r="$q"; fi
+            # a REAPER among this shell's ancestors adopted q: FreeBSD's
+            # `timeout` (without --foreground) is the reaper of everything
+            # below it, in the caller's own session. Its one real child is on
+            # the caller's chain; any other child of it was adopted (also safe
+            # for GNU timeout, which has only that one child)
+            if (( sscope )) && [[ -z "$r" && -n "${ex[$pp]+x}" && -z "${ex[$q]+x}" ]] \
+               && [[ "${_KTS_CMD[$pp]}" == timeout\ * || "${_KTS_CMD[$pp]}" == */timeout\ * ]]; then r="$q"; fi
             q="$pp"
             (( ++n > 500 )) && break
         done
-        root[$p]="$q"
+        root[$p]="${r:-$q}"
         (( mine )) && ex[$p]=1
         pp="${_KTS_PP[$p]}"
         # DT12: the caller's un-started fork for the other side of a pipe
@@ -361,17 +433,33 @@ kt_strays_scan() {
         # line but not that stdin, so it is still listed (review F4).
         [[ -n "${ex[$pp]+x}" && -n "${_KTS_CMD[$p]:-}" && "${_KTS_CMD[$p]}" == "${_KTS_CMD[$pp]:-}" \
            && -p "/proc/$p/fd/0" && "/proc/$p/fd/0" -ef "/proc/$BASHPID/fd/1" ]] && ex[$p]=1
+        # off cygwin the same check through kt_proc_samepipe (no /proc: fstat)
+        [[ "$KT_PROC_BACKEND" != cygwin && -z "${ex[$p]+x}" && -n "${ex[$pp]+x}" && -n "${_KTS_CMD[$p]:-}" \
+           && "${_KTS_CMD[$p]}" == "${_KTS_CMD[$pp]:-}" ]] && kt_proc_samepipe "$p" 0 "$BASHPID" 1 && ex[$p]=1
         [[ -n "${_KTS_PP[$pp]+x}" ]] && kids[$pp]+=" $p"
     done
     # each tree's class: no (live) / yes / young / live-session (see the header)
-    local age lim strict=0 myroot="${root[$BASHPID]:-${root[$$]:-}}" cls lead
+    local age lim strict=0 myroot="${root[$BASHPID]:-${root[$$]:-}}" cls lead det
     [[ -n "$sess" ]] && strict=1
+    (( nosid )) && [[ -n "$sarg" ]] && strict=1
     _kt_strays_tclass() {   # $1 = a root -> REPLY = its class (memoised)
         local r="$1"
         if [[ -n "${tclass[$r]+x}" ]]; then REPLY="${tclass[$r]}"; return 0; fi
         REPLY=no
-        if [[ "$r" != "$myroot" && "${_KTS_SID[$r]}" != "$r" ]] \
+        det=0
+        if (( sscope )); then
+            # its parent died (the root's parent is 1, gone or of another
+            # session: init or a subreaper adopted it) and it leads no
+            # session; session 0 = a kernel thread
+            [[ "$r" != "$myroot" && "${_KTS_SID[$r]}" != "$r" && "${_KTS_SID[$r]}" != 0 ]] && det=1
+        elif (( nosid )); then
+            [[ "$r" != "$myroot" && "${_KTS_PG[$r]}" != "$r" ]] \
+               && [[ "${_KTS_PP[$r]}" == 1 || -z "${_KTS_PP[${_KTS_PP[$r]}]+x}" ]] && det=1
+        elif [[ "$r" != "$myroot" && "${_KTS_SID[$r]}" != "$r" ]] \
            && [[ "${_KTS_PP[$r]}" == 1 || -z "${_KTS_PP[${_KTS_PP[$r]}]+x}" ]]; then
+            det=1
+        fi
+        if (( det )); then
             REPLY=yes
             if (( ! strict )); then
                 lead="${_KTS_SID[$r]}"
@@ -399,7 +487,7 @@ kt_strays_scan() {
         [[ -z "$match" || "${_KTS_CMD[$p]}" == *"$match"* ]] || continue
         _kt_strays_tclass "${root[$p]}"; cls="$REPLY"
         # the marker rule; the sweep (--session + --since) takes any detached process
-        if ! (( strict && since_ms >= 0 )) || [[ "$cls" == no ]]; then
+        if ! (( strict && since_ms >= 0 )) || [[ "$cls" == no ]] || (( nosid )); then
             _kt_strays_marker "$p" || continue
         fi
         [[ "$cls" == yes ]] || (( all )) || continue
@@ -614,7 +702,17 @@ kt_strays_group_settle() {
     done
     _kt_strays_init
     _kt_strays_table
-    _kt_strays_members "$g"
+    if [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        # off cygwin the members from THIS table: a second snapshot (the
+        # runner's) could name a member forked meanwhile that _kt_strays_stat
+        # would read as gone (L2.1 review)
+        REPLY=""
+        for p in "${!_KTS_PG[@]}"; do
+            [[ "${_KTS_PG[$p]}" == "$g" && "$p" != "$BASHPID" && "$p" != "$$" ]] && REPLY+="$p "
+        done
+    else
+        _kt_strays_members "$g"
+    fi
     for p in $REPLY; do
         _kt_strays_stat "$p" && [[ "${_KTS_STATE[$p]}" != Z ]] || continue
         __kts_tgt[$p]="${_KTS_RAW[$p]}"
@@ -678,6 +776,19 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
             [[ "$_st_b" == / ]] && { _st_rt="$_st_a"; break; }
         done < /proc/mounts
     fi
+    # off cygwin the runtime id may be "none" (no /proc/mounts): name the
+    # process table instead
+    if kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin && "$_st_rt" == "?" ]]; then
+        _st_rt="${OSTYPE:-?}, process table $KT_PROC_BACKEND"
+    fi
+    case "$_st_cmd" in
+        list|stop)
+            # never a blind "none" (L2.1): without a process table say so, rc 3
+            if ! kt_proc_init; then
+                printf 'strays: UNKNOWN (no process table: %s; bash %s)\n' "$KT_PROC_WHY" "$BASH_VERSION"
+                exit 3
+            fi ;;
+    esac
     case "$_st_cmd" in
         list)
             kt_strays_scan "${_st_opts[@]}"

@@ -93,7 +93,10 @@ mkdir -p "$TMP/t1"
 # ktests.sh itself under timeout: a suite's tests.sh wrapper dies on TERM at
 # once and timeout returns while ktests.sh is still cleaning up
 rc=0
-TMPDIR="$TMP/t1" timeout -s TERM --preserve-status 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 >/dev/null 2>&1 || rc=$?
+# busybox's timeout has no --preserve-status — and needs none: it execs the
+# command, whose own status is the exit status (launch L2.1)
+kt042_ps=( --preserve-status ); [[ "$(timeout --help 2>&1)" == *BusyBox* ]] && kt042_ps=()
+TMPDIR="$TMP/t1" timeout -s TERM "${kt042_ps[@]}" 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 >/dev/null 2>&1 || rc=$?
 left="$(kt042_left "$TMP/t1")"
 if [[ -z "$left" && "$rc" == 143 ]]; then
     kt_test_pass "rc=$rc, TMPDIR empty"
@@ -203,7 +206,8 @@ printf '%s\n' "$mine" > "$S/kt_iso.${d[0]}/.kt_owner"
 printf '%s\n' "other-install" > "$S/kt_iso.${d[1]}/.kt_owner"
 printf '%s\n' "other-install" > "$S/kt_iso.${d[2]}/.kt_owner"
 printf '%s\n' "$mine" > "$S/kt_iso.$PPID/.kt_owner"
-touch -d '2 days ago' "$S/kt_iso.${d[2]}" "$S/kt_iso.${d[4]}.results.abc"
+# touch -t (POSIX), not GNU's -d '2 days ago' (launch L2.1)
+printf -v kt_ts '%(%Y%m%d%H%M.%S)T' $(( EPOCHSECONDS - 172800 )); touch -t "$kt_ts" "$S/kt_iso.${d[2]}" "$S/kt_iso.${d[4]}.results.abc"
 got="$(
     TMPDIR="$S"
     kt_runner_iso_begin
@@ -218,12 +222,18 @@ else
 fi
 
 kt_test_start "the owner marker is the pid namespace only: the same for /bin/bash and /usr/bin/bash, no version or path in it [N3]"
+# both paths exist where /bin is /usr/bin (Windows, merged-usr Linux); FreeBSD
+# and Alpine have one bash path only (launch L2.1)
+if [[ ! -x /usr/bin/bash || ! -x /bin/bash ]]; then
+    kt_test_pass "skipped: not both /usr/bin/bash and /bin/bash here ($BASH)"
+else
 m1="$(/usr/bin/bash -c 'source "$1/ktest.sh"; kt_runner_iso_owner; printf "%s" "$REPLY"' _ "$LIB" 2>&1)"
 m2="$(/bin/bash -c 'source "$1/ktest.sh"; kt_runner_iso_owner; printf "%s" "$REPLY"' _ "$LIB" 2>&1)"
 if [[ -n "$m1" && "$m1" == "$m2" && "$m1" != *"|"* && "$m1" != *"$BASH_VERSION"* ]]; then
     kt_test_pass "marker '$m1'"
 else
     kt_test_fail "/usr/bin/bash '$m1' vs /bin/bash '$m2'"
+fi
 fi
 
 kt_test_log "042_KilledRunCleanup.sh completed"

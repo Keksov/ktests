@@ -2,7 +2,8 @@
 # GateSignals (gate G2). ktests/tools/gate.sh when it is stopped or killed
 # from outside while a cell runs (GATE_PLAN 4.1, 6.4): TERM to the launcher,
 # SIGKILL, `taskkill /F` (no trap: the segment sees the heartbeat go stale),
-# the launcher's PARENT killed at the Windows level (the parent watch),
+# the launcher's PARENT killed at the Windows level (the parent watch; also
+# through a `timeout` between them: launch L2.1),
 # `taskkill /F /T` on the launcher (a tree kill) and on the segment itself
 # (the exec'd watchdog stops the cell: `segment-killed`) — in both directions
 # launcher 5.2 -> segment 5.3 and 5.3 -> 5.2 when a second runtime exists
@@ -50,6 +51,10 @@ TK="$(cygpath -u "${SYSTEMROOT:-C:\Windows}" 2>/dev/null)/System32/taskkill.exe"
 
 R="$TMP/root"
 bash "$MK" "$R" pass=a_pass hang=b_hang
+# the sampler's pace: cygwin reads one /proc file a process, the table
+# backends a whole snapshot per sample (Linux /proc/PID/stat, ps) — fewer
+# samples under load (launch L2.1)
+KT052_MINSAMP=30; kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin ]] && KT052_MINSAMP=10
 
 # the driver: DRV SCEN SEGBASH OUT ROOT GATE TK SAMPLER — runs in the LAUNCHER's
 # runtime; writes KEY=VALUE lines to OUT.drv
@@ -64,8 +69,8 @@ wdkill() {
 }
 drv_cleanup() { [[ -n "$P" ]] && kill -KILL "$P" 2>/dev/null; [[ -n "$LP" ]] && kill -KILL "$LP" 2>/dev/null; return 0; }
 trap drv_cleanup EXIT; trap 'exit 143' TERM; trap 'exit 130' INT; trap 'exit 129' HUP
-exec 4<>/dev/ptmx 2>/dev/null || exec 4</dev/null
-nap() { read -t "$1" -u 4 _ 2>/dev/null || :; }
+{ [[ -c /dev/ptmx ]] && exec 4<>/dev/ptmx; } 2>/dev/null || exec 4</dev/null
+nap() { read -t "$1" -u 4 _ 2>/dev/null; (( $? > 128 )) || sleep "$1"; }   # no pty (FreeBSD): sleep
 say() { printf '%s\n' "$1" >> "$OUT.drv"; }
 ms() { local t="${EPOCHREALTIME/[.,]/}"; REPLY=$(( 10#$t / 1000 )); }
 export KT_GATE_HB_TICKS=6 KT_GATE_HB_EVERY=1
@@ -75,6 +80,11 @@ set -m
 if [[ $SC == parent ]]; then
     # an intermediate parent, killed at the Windows level below
     bash -c 'bash "$1" --root "$2" --out "$3" --timeout "$5" --bash "$4" all > "$3.stdout" 2>&1; echo "rc=$?" > "$3.lrc"' _ "$G" "$ROOT" "$OUT" "$SB" "$TMO" </dev/null &
+elif [[ $SC == tparent ]]; then
+    # the same through `timeout` (launch L2.1: a killed tool left
+    # `timeout` + the gate running): the launcher's parent is the timeout,
+    # which outlives the intermediate shell — the launcher watches that too
+    bash -c 'timeout -k 10 300 bash "$1" --root "$2" --out "$3" --timeout "$5" --bash "$4" all > "$3.stdout" 2>&1; echo "rc=$?" > "$3.lrc"' _ "$G" "$ROOT" "$OUT" "$SB" "$TMO" </dev/null &
 else
     # segtree with --warm: the watchdog's segment-killed path removes seg-1.ckk too (G4 review R10)
     WARM=(); [[ $SC == segtree ]] && WARM=( --warm )
@@ -92,10 +102,10 @@ say "cur=$cur"
 nap 0.5
 LP="" LW=""
 { read -r _ _ LP LW _ < "$OUT/.kt_gate"; } 2>/dev/null
-[[ $SC == parent ]] || [[ "$LP" == "$P" ]] || say "warn=launcher pid $LP is not the driver's child $P"
+[[ $SC == parent || $SC == tparent ]] || [[ "$LP" == "$P" ]] || say "warn=launcher pid $LP is not the driver's child $P"
 say "launcher=$LP $LW"
 if [[ -n "$SAMPLER" ]]; then
-    env -i PATH="${SB%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$SB" "$SAMPLER" "$OUT" 3 > "$OUT.sample" 2>&1 </dev/null
+    env -i PATH="${SB%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$SB" "$SAMPLER" "$OUT" 3 "${G%/*}/../ktest_proc.sh" > "$OUT.sample" 2>&1 </dev/null
 fi
 ms; t0=$REPLY
 case $SC in
@@ -106,10 +116,14 @@ case $SC in
     kill) kill -KILL "$LP" ;;
     taskkill) MSYS2_ARG_CONV_EXCL='*' "$TK" /F /PID "$LW" >/dev/null 2>&1 ;;
     tree) MSYS2_ARG_CONV_EXCL='*' "$TK" /F /T /PID "$LW" >/dev/null 2>&1 ;;
-    parent) pw=""; { read -r pw < "/proc/$P/winpid"; } 2>/dev/null
-            MSYS2_ARG_CONV_EXCL='*' "$TK" /F /PID "$pw" >/dev/null 2>&1 ;;
-    segtree) sw=""; { read -r _ sw _ < "$OUT/seg-1.pid"; } 2>/dev/null
-             MSYS2_ARG_CONV_EXCL='*' "$TK" /F /T /PID "$sw" >/dev/null 2>&1 ;;
+    # without taskkill (Linux, BSD; launch L2.1): SIGKILL of the parent / of
+    # the segment main — the parent watch / the exec'd watchdog must act
+    parent|tparent) if [[ -x "$TK" ]]; then pw=""; { read -r pw < "/proc/$P/winpid"; } 2>/dev/null
+                MSYS2_ARG_CONV_EXCL='*' "$TK" /F /PID "$pw" >/dev/null 2>&1
+            else kill -KILL "$P"; fi ;;
+    segtree) if [[ -x "$TK" ]]; then sw=""; { read -r _ sw _ < "$OUT/seg-1.pid"; } 2>/dev/null
+                 MSYS2_ARG_CONV_EXCL='*' "$TK" /F /T /PID "$sw" >/dev/null 2>&1
+             else sp=""; { read -r sp _ < "$OUT/seg-1.pid"; } 2>/dev/null; kill -KILL "$sp"; fi ;;
 esac
 say "sent=$?"
 gone=n
@@ -119,16 +133,18 @@ for (( i = 0; i < 600; i++ )); do
 done
 ms; say "ms=$(( REPLY - t0 ))"
 say "gone=$gone"
-if [[ $SC != parent ]]; then wait "$P" 2>/dev/null; say "lrc=$?"; P=""; else P=""; fi
+if [[ $SC != parent && $SC != tparent ]]; then wait "$P" 2>/dev/null; say "lrc=$?"; P=""; else P=""; fi
 LP=""
 EOF
 
-# the sampler: SAMPLER OUT SECONDS — in the SEGMENT's runtime: the children of
-# the segment's main and of its watchdog, sampled for SECONDS
+# the sampler: SAMPLER OUT SECONDS PROC — in the SEGMENT's runtime: the children of
+# the segment's main and of its watchdog, sampled for SECONDS (cygwin: its
+# /proc/PID/ppid; elsewhere the process table of PROC = ktest_proc.sh, L2.1)
 cat > "$TMP/sample.sh" <<'EOF'
-OUT=$1 S=$2 main="" wd="" known="" extra="" n=0 f="" p="" pp=""
+OUT=$1 S=$2 PROC=${3:-} main="" wd="" known="" extra="" n=0 f="" p="" pp=""
 { read -r main _ < "$OUT/seg-1.pid"; } 2>/dev/null
-exec 3<>/dev/ptmx 2>/dev/null || exec 3</dev/null
+{ [[ -c /dev/ptmx ]] && exec 3<>/dev/ptmx; } 2>/dev/null || exec 3</dev/null
+if [[ -r /proc/$BASHPID/ppid || -z "$PROC" ]]; then
 for f in /proc/[0-9]*; do
     pp=""; { read -r pp < "$f/ppid"; } 2>/dev/null
     [[ "$pp" == "$main" ]] || continue
@@ -147,29 +163,47 @@ while (( SECONDS < end )); do
     n=$(( n + 1 ))
     read -r -t 0.01 -u 3 _ 2>/dev/null
 done
+else
+source "$PROC"
+kt_proc_napfd && exec 3<&"$REPLY"   # a pty, else a FIFO of its own: no sleep fork per sample
+kt_proc_snapshot --cmd
+for p in "${!KT_PROC_PP[@]}"; do
+    [[ "${KT_PROC_PP[$p]}" == "$main" ]] || continue
+    known+=" $p"
+    [[ "${KT_PROC_CMD[$p]}" == *" --watchdog "* ]] && wd="$p"
+done
+end=$(( SECONDS + S ))
+while (( SECONDS < end )); do
+    kt_proc_snapshot
+    for p in "${!KT_PROC_PP[@]}"; do
+        pp="${KT_PROC_PP[$p]}"
+        [[ -n "$pp" && ( "$pp" == "$main" || "$pp" == "$wd" ) ]] || continue
+        [[ " $known " == *" $p "* || " $extra " == *" $p("* ]] || extra+=" $p(ppid $pp)"
+    done
+    n=$(( n + 1 ))
+    read -r -t 0.01 -u 3 _ 2>/dev/null || (( $? > 128 )) || sleep 0.01
+done
+fi
 printf 'main=%s wd=%s known=[%s] samples=%s extra=[%s]\n' "$main" "$wd" "${known# }" "$n" "${extra# }"
 EOF
 
-# the scan: SCAN TEXT [kill] — this runtime's processes whose command line has TEXT
+# the scan: SCAN PROC TEXT [kill] — this runtime's processes whose command line
+# has TEXT (PROC = ktest_proc.sh: /proc or ps, launch L2.1)
 cat > "$TMP/scan.sh" <<'EOF'
-out=""
-for f in /proc/[0-9]*/cmdline; do
-    a=(); { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-    p="${f#/proc/}"; p="${p%/cmdline}"
-    [[ "$p" == "$$" ]] && continue
-    [[ "${a[*]}" == *"$1"* ]] || continue
-    out+="$p "
-done
+source "$1"; shift
+# what is LEFT: a lingering busybox timeout watcher is waited out (~1 s)
+if [[ "${2:-}" == kill ]]; then kt_proc_pids "$1"; else kt_proc_pids_gone "$1"; fi
+out="$REPLY"
 [[ "${2:-}" == kill && -n "$out" ]] && kill -KILL $out 2>/dev/null
-printf '%s\n' "${out% }"
+printf '%s\n' "$out"
 EOF
 
 # kt052_scan B — REPLY = what is left of this file's runs in B's runtime
 kt052_scan() {
-    REPLY="$(env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$TMP/scan.sh" "$TMP/" 2>/dev/null </dev/null)"
+    REPLY="$(env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$TMP/scan.sh" "$LIB/ktest_proc.sh" "$TMP/" 2>/dev/null </dev/null)"
 }
 kt052_scan_kill() {
-    env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$TMP/scan.sh" "$TMP/" kill >/dev/null 2>&1 </dev/null
+    env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$TMP/scan.sh" "$LIB/ktest_proc.sh" "$TMP/" kill >/dev/null 2>&1 </dev/null
 }
 kt052_cleanup() {
     kt052_scan_kill "$BASH"
@@ -185,7 +219,15 @@ trap 'trap "" TERM INT HUP; exit 129' HUP
 # kt052_strays B — REPLY = `strays.sh list --all --match TMP/` in B's runtime
 # (the marker rule, independent of the command-line scan above, review R14)
 kt052_strays() {
-    REPLY="$(env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$LIB/tools/strays.sh" list --all --match "$TMP/" 2>&1 </dev/null)"
+    local i
+    # where `timeout` is busybox's, up to 3 s for none: its watcher lingers ~1 s;
+    # elsewhere one look, as always (launch L2.1)
+    for (( i = 0; i < 6; i++ )); do
+        REPLY="$(env -i PATH="${1%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" "$1" "$LIB/tools/strays.sh" list --all --match "$TMP/" 2>&1 </dev/null)"
+        [[ "$REPLY" == "strays: none"* ]] && return 0
+        kt_proc_bbtimeout || return 0
+        sleep 0.5
+    done
 }
 
 # kt052_case N SCEN LAUNCHER_BASH SEGMENT_BASH [sample] — one scenario
@@ -221,7 +263,7 @@ kt052_case() {
                 lim=15000 ;;
         int)    [[ "$st" == stopped && "${D[lrc]:-}" == 130 && "$last" == "__GATE__:INTERRUPTED:2:1:"* && "$intr" == *"launcher: INT"* ]] || bad+="[int: status=$st lrc=${D[lrc]:-} last=$last] "
                 lim=15000 ;;
-        parent) [[ "$st" == stopped && "$intr" == *"parent is gone"* ]] || bad+="[parent: status=$st] "
+        parent|tparent) [[ "$st" == stopped && "$intr" == *"parent is gone"* ]] || bad+="[$sc: status=$st] "
                 lim=15000 ;;
         kill|taskkill|tree)
                 [[ "$st" == stopped && "$intr" == *"heartbeat stale"* && "$lr" == *"heartbeat stale"* ]] || bad+="[$sc: status=$st reason=$lr] "
@@ -240,7 +282,7 @@ kt052_case() {
     (( ${D[ms]:-99999} <= lim )) || bad+="[took ${D[ms]:-?} ms > $lim] "
     if [[ -n "$smp" ]]; then
         local s; s="$(cat "$o.sample" 2>/dev/null)"
-        [[ "$s" =~ wd=[0-9]+\ known=\[[0-9]+\ [0-9]+\]\ samples=([0-9]+)\ extra=\[\]$ ]] && (( BASH_REMATCH[1] >= 30 )) \
+        [[ "$s" =~ wd=[0-9]+\ known=\[[0-9]+\ [0-9]+\]\ samples=([0-9]+)\ extra=\[\]$ ]] && (( BASH_REMATCH[1] >= KT052_MINSAMP )) \
             || bad+="[forks in the segment while a cell ran: $s] "
         D[sample]="$s"
     fi
@@ -262,9 +304,9 @@ if [[ -n "$OTHER" ]]; then
     OV="$("$OTHER" -c 'printf %s "${BASH_VERSION%%(*}"' 2>/dev/null </dev/null)"
     DIRS=( "$SELF_B|$OTHER|${BASH_VERSION%%(*} -> $OV|term int kill taskkill parent tree segtree wdterm"
            "$OTHER|$SELF_B|$OV -> ${BASH_VERSION%%(*}|term kill taskkill parent tree segtree"
-           "$SELF_B|$SELF_B|${BASH_VERSION%%(*} -> ${BASH_VERSION%%(*}|kill tree int wdtimeout wdterm" )
+           "$SELF_B|$SELF_B|${BASH_VERSION%%(*} -> ${BASH_VERSION%%(*}|kill tree int tparent wdtimeout wdterm" )
 else
-    DIRS=( "$SELF_B|$SELF_B|${BASH_VERSION%%(*} -> ${BASH_VERSION%%(*}|term int kill taskkill parent tree segtree wdtimeout wdterm" )
+    DIRS=( "$SELF_B|$SELF_B|${BASH_VERSION%%(*} -> ${BASH_VERSION%%(*}|term int kill taskkill parent tparent tree segtree wdtimeout wdterm" )
 fi
 i=0
 for dir in "${DIRS[@]}"; do
@@ -278,13 +320,15 @@ for dir in "${DIRS[@]}"; do
             kill) what="SIGKILL of the launcher: the heartbeat goes stale, the segment stops the cell" ;;
             taskkill) what="taskkill /F of the launcher: the heartbeat goes stale, the segment stops the cell" ;;
             parent) what="the launcher's parent killed at the Windows level: the parent watch stops the run" ;;
+            tparent) what="\`timeout\` between them, the shell above it killed: the parent watch sees through the timeout, stops the run" ;;
             tree) what="taskkill /F /T of the launcher: nothing of the run survives it unseen" ;;
             segtree) what="taskkill /F /T of the SEGMENT: the exec'd watchdog stops the cell, segment-killed, the gate FAILs (rc 1)" ;;
             wdtimeout) what="the watchdog KILLed during a cell: the launcher starts a rescue watchdog, --timeout is still enforced (TIMEOUT)" ;;
             wdterm) what="the watchdog KILLed, then TERM to the launcher: a rescue watchdog stops the cell, the segment's result is written, nothing left" ;;
         esac
         kt_test_start "[$label] $what"
-        if [[ ! -x "$TK" && ( "$sc" == taskkill || "$sc" == parent || "$sc" == tree || "$sc" == segtree ) ]]; then
+        # parent / segtree have a POSIX form (SIGKILL); taskkill / tree have none
+        if [[ ! -x "$TK" && ( "$sc" == taskkill || "$sc" == tree ) ]]; then
             kt_test_pass "skipped: no taskkill ($TK)"
             continue
         fi

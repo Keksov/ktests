@@ -29,20 +29,7 @@ NODE="$(type -P node 2>/dev/null)"
 export GIT_CEILING_DIRECTORIES="$(cygpath -m "$TMP" 2>/dev/null || echo "$TMP")"
 GC=( -c user.name=gate-test -c user.email=gate@test -c init.defaultBranch=main -c core.autocrlf=false )
 
-kt053_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt053_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybox timeout watcher waited out — launch L2.1)
 # kt053_gate OUTFILE ARGS... — gate.sh bounded; RC; the output in OUTFILE
 kt053_gate() {
     local of="$1"; shift
@@ -123,7 +110,9 @@ else
     kt_test_fail "rc=$RC | $(tr '\t' '|' < "$OA/cells.tsv" | tr '\n' ' ') | ${oa//$'\n'/ | }"
 fi
 if [[ -n "$NODE" ]]; then
-    kt053_js "$OA/summary.json" 'Object.keys(j).join(",")' 'Object.keys(j.gate).join(",")' 'j.gate.out.endsWith("outA") && j.gate.root.endsWith("rootA") && j.gate.out.indexOf(":") == 1' \
+    # the OUT in the mixed C:/ form with cygpath, an absolute POSIX path without (launch L2.1)
+    outform='j.gate.out.indexOf(":") == 1'; command -v cygpath >/dev/null 2>&1 || outform='j.gate.out.startsWith("/")'
+    kt053_js "$OA/summary.json" 'Object.keys(j).join(",")' 'Object.keys(j.gate).join(",")' "j.gate.out.endsWith(\"outA\") && j.gate.root.endsWith(\"rootA\") && $outform" \
         'j.gate.argv' 'j.gate.repos' 'j.bashes[0].version' 'j.totals' 'j.cells.length' 'j.cells[2].flaky' 'j.cells[2].verdict' \
         'j.cells[1].fails.length' 'j.verdict+" "+j.exit' 'j.machine' 'typeof j.cells[0].idx+" "+typeof j.cells[0].rc+" "+j.cells[0].attempt1' \
         '/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}$/.test(j.gate.started) && j.gate.finished >= j.gate.started' 'j.gate.options.rerun_failed'
@@ -298,7 +287,7 @@ printf '%s\n' 'source "$KTEST_SOURCE_PATH"' 'kt_test_init "GfxQuote" "$KT_TESTS_
 kt053_gate "$TMP/d.out" --root "$RD" --out "$OD" --mode single --rerun-failed 1 all
 kt053_tsv "$OD/cells.tsv"
 kt_test_start "sanitising: cells.tsv keeps one line per cell and its field count (tab -> space) with a quoted suite id, a tab in a file name"
-nl="$(wc -l < "$OD/cells.tsv")"
+nl=$(( $(wc -l < "$OD/cells.tsv") ))   # BSD wc pads the count (launch L2.1)
 if [[ "$RC" == 1 && "$nl" == 2 && "$TSV_N" == 1 && -z "$TSV_BAD" && "${TSV[1:suite]}" == 'q"z' \
       && "${TSV[1:reason]}" == '1 rerun(s) of 002_t a"b.sh failed (last: FAIL 0/1)' ]]; then
     kt_test_pass "suite [${TSV[1:suite]}] reason [${TSV[1:reason]}]"

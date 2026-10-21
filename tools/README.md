@@ -83,9 +83,12 @@ again (`no-watchdog`) → [WARN], exit 1.
 *launcher* (as started) writes a spec per runtime (`OUT/seg-N.spec`, mixed
 `C:/…` paths, the caller's locale/TZ/COMSPEC…), starts one *segment* per
 runtime (`env --default-signal=INT,QUIT -i`: INT/QUIT stay trappable in every
-cell; a session of its own; no inherited fd), never signals it —
+cell; a session of its own; no inherited fd) — without a GNU env: perl or
+`set -m`, see [Platforms](#platforms--windows-linux-freebsd-busybox-launch-l21), never signals it —
 `OUT/seg-N.result` is its verdict — relays its lines, rewrites `OUT/hb` every
-5 s, watches its own parent (parent gone = TERM; `--nohup` or `nohup gate.sh`
+5 s, watches its own parent (parent gone = TERM; a parent that is `timeout`
+— `timeout N gate.sh` — is seen through: its parent is watched too, since a
+`timeout` outlives a killed caller; `--nohup` or `nohup gate.sh`
 turns that off for a run detached on purpose) and the watchdog's
 `OUT/seg-N.wdhb` (silent 30 s → a rescue watchdog). The *segment* (`gate.sh
 --segment`) runs its cells through `suitejob.sh` (`kt_suitejob_run`: a
@@ -94,7 +97,11 @@ cell that a watchdog lives, and the stray check after each cell and at its
 end; its exec'd *watchdog* (`gate.sh --watchdog`, builtins, 1 s tick) sends
 USR1 — only while a cell runs, repeated until acknowledged — on `OUT/STOP`
 (launcher TERM/INT/HUP), on a stale heartbeat (launcher killed: 30 ticks) and
-at the running cell's deadline; when the segment itself is killed (a tree
+at the running cell's deadline — a tick that took longer than
+`KT_GATE_SUSPEND_GAP` (default 30 s: the host slept, e.g. a laptop on battery)
+moves that deadline by the gap and the cell's row says `host suspended Ns, not
+counted against --timeout` (launch L2.1: a sleep during a gate turned a
+3-minute cell into a 57-minute TIMEOUT); when the segment itself is killed (a tree
 kill) the watchdog stops the cells and writes `segment-killed`. A *cell* runs
 with its own HOME, TMPDIR/TMP/TEMP, USERPROFILE, ProgramData, `__KK_CFG_ETC`,
 `KKLASS_CKK_DIR`, cwd (`OUT/cells/NNN/…`), stdin `/dev/null`, fds 0–2,
@@ -144,7 +151,8 @@ the watchdog killed, both directions, no fork in the segment),
 `053_GateReports.sh` (cells.tsv, summary.json via node, `--compare`, an
 interrupted run's reports, sanitising), `054_GateSelection.sh` (`--changed`
 on a scratch git fixture, `--rerun-failed`/FLAKY, the matrix options,
-`--fail-fast`, `--warm`, `--parallel`).
+`--fail-fast`, `--warm`, `--parallel`), `056_PlatformHarness.sh` (the
+segment start modes, and the platform layer below).
 
 ## Load tools for timing tests (forkstorm.sh, timing_check.sh)
 
@@ -268,7 +276,8 @@ pid `KT_STRAYS_PPID/_AGE/_FLAG/_CMD/_START`), `kt_strays_stop`,
   Run it once under each.
 * Fork-light: one pass over `/proc` with builtins (`read`, `mapfile`); start
   times from `/proc/PID/stat` starttime + `/proc/uptime`; waits are
-  `read -t` on a pty master of their own.
+  `read -t` on a pty master of their own (Linux and FreeBSD: see
+  [Platforms](#platforms--windows-linux-freebsd-busybox-launch-l21) — the orphan rule is read per session there).
 
 Where it runs by itself: the master sweep `tests/tests.sh` checks after every
 suite (and once at the end) with `--session self --since START` — every
@@ -380,3 +389,116 @@ PROCESSOR_ARCHITECTURE OS COMPUTERNAME`) and each `--pass-env NAME`
 (repeatable) — nothing else, no exported function; path values arrive as the
 same folder. The header then says `(re-executed from bash V)`.
 `tests/055_TimingCheckReexec.sh` pins it, same runtime and across.
+
+## Platforms — Windows, Linux, FreeBSD, busybox (launch L2.1)
+
+The harness was built on cygwin (Git-bash 5.2, MSYS2 5.3); since L2.1 the same
+scripts run on Linux (GNU and busybox userland) and FreeBSD (BSD userland,
+with or without the g-prefixed GNU tools). On Windows every path is the one
+it always was. `tests/056_PlatformHarness.sh` pins what follows.
+
+**Process table** — one library, `../ktest_proc.sh` (sourced by the runner,
+`strays.sh`, `forkstorm.sh`), backend chosen once per process:
+
+| backend | where | source | start time | cost |
+|---|---|---|---|---|
+| `cygwin` | Git-bash, MSYS2 | `/proc/PID/{ppid,pgid,sid,cmdline}`; `stat` only for the few candidates (~20 ms each there) | ms | no fork |
+| `linux` | any Linux (glibc, musl) | ONE `/proc/PID/stat` read: state, ppid, pgrp, session, start (fields counted from the LAST `") "` — a comm may hold spaces and parentheses) + `cmdline` | clock ticks (USER_HZ, 100 checked against this shell's own start, else `getconf CLK_TCK`) on the `/proc/uptime` boot epoch: 10 ms | no fork |
+| `ps` | FreeBSD, macOS, a Linux without `/proc` | ONE `TZ=UTC0 LC_ALL=C ps -A -ww -o pid= -o ppid= -o pgid= -o sid= -o state= -o etimes= -o lstart= -o args=` per snapshot (one `-o` per keyword: BSD ps takes the rest of `-o a=,b=` as a's header), split by `read`; keywords probed once — POSIX `pid ppid pgid etime args` is the floor, `sid`, `state`, `lstart` optional | to the SECOND (lstart, else ps's clock minus etime(s): BSD truncates both); the estimate is the END of that second — never earlier than the real start, at most 1 s later (`KT_PROC_START_RES_MS`) | one fork (~3 ms) |
+| `none` | nothing works | — | — | `strays.sh list/stop` print `strays: UNKNOWN (no process table: WHY)` and exit 3; the gate prints a `[WARN] … stray checks are n/a`; the suite-job check says `n/a` — never a blind "none" |
+
+`KT_PROC_BACKEND=cygwin|linux|ps|none` in the environment forces one (056 runs
+the ps backend on Linux and the none path everywhere). The runner's group stop
+(`kt_runner_group_scan/_members/_proc_start`) uses the same table: on Linux
+the descendants outside a group (a test's `timeout N cmd`, a `set -m`
+subgroup) are tracked and KILLed by the deadline as on cygwin — before L2.1
+they were invisible there.
+
+**Orphan rule off cygwin** — a process is re-parented to pid 1 *or to a
+subreaper* (`systemd --user`, a container's init), so "ppid 1" is no test.
+The root of a process is the topmost ancestor **in the same session**; the
+tree is detached when that root leads no session (its parent died, whoever
+adopted it). A REAPER among the caller's own ancestors cuts the walk too:
+FreeBSD's `timeout` (without `--foreground`) adopts everything below it, in
+the caller's session — a child of an ancestor `timeout` that is not on the
+caller's chain was adopted (GNU timeout has that one child only). Without a
+session column (macOS ps) a group leader counts as a leader and the strict
+rule needs a marker. Kernel threads (session 0) are never listed. The
+pipe-fork exclusion (`strays.sh … | while`) compares `/proc/PID/fd` links, on
+FreeBSD the pipe addresses of `fstat -p`; the `tests.sh`-cwd marker reads
+`/proc/PID/cwd`, on FreeBSD `procstat -f`.
+
+**Segment start (H4)** — an `&` child of a shell without job control starts
+with SIGINT/SIGQUIT ignored, and no bash can trap an ignored-at-entry signal
+again. The launcher decides once (`_kt_gate_spawn_detect`):
+
+1. **GNU env** (`env`, else `genv`) with `--default-signal`: `env
+   --default-signal=INT,QUIT -i …` as before, a session of its own through
+   `setsid`(1), else perl — Windows, GNU Linux, Alpine with coreutils;
+2. **perl** with POSIX, no GNU env: perl sets INT/QUIT to SIG_DFL itself (bash
+   may not) and calls `setsid()` — FreeBSD (perl is in `clean` too, a git
+   dependency), macOS;
+3. **`set -m`** (neither — busybox Alpine): bash ignores nothing in an async
+   child when job control is on; the segment leads a process group of its
+   own, and `setsid` runs as a plain child of a subshell that leads that
+   group (no group leader → `setsid()` needs no fork: busybox's setsid has
+   no `-w`), the subshell is the stub the launcher watches. Without
+   `setsid`(1) the segment shares the caller's session (the `[WARN] no
+   setsid/perl` line, as before); INT/QUIT ignored when the launcher itself
+   started cannot be undone in this mode (a `[WARN]`).
+
+`KT_GATE_SPAWN=env|perl|jobctl` forces a mode (a test knob; 056 runs all three
+wherever they exist).
+
+**Parent watch** off cygwin: the launcher's parent is gone once its own ppid
+is no longer `PPID` (re-parented) — a reused pid cannot fool that
+(`/proc/PID/stat`; FreeBSD: one `ps` a second). The segment records its
+session in `seg-N.pid` from the table (the watchdog's `segment-killed` stop
+uses it).
+
+**Smaller fixes (H5-H8)**: the STRAY rewrite of a cell result without `sed -i`
+(`_kt_gate_setkv`); the runner's output filter drops a trailing CR in bash
+(`${line%$'\r'}`, no `sed 's/\r$//'`); the group stop's clock is
+`${EPOCHREALTIME/[.,]/}` (a decimal-comma locale left the comma in and
+`$(( ))` read it as the comma operator — ktest.sh pins `LC_ALL=C.UTF-8`, the
+guard protects the runner used under another locale); the per-file shell and
+the threaded workers start `"$BASH"`, not the first `bash` on PATH; `--changed`
+falls back from `grep --include` (busybox has none) to `find … -exec grep -H`.
+
+**Naps** — the fork-free waits read with `-t` from a pty master
+(`/dev/ptmx`); FreeBSD has no `/dev/ptmx` (and `<>` would try to create it):
+`kt_proc_napfd` then opens a FIFO of its own read-write and unlinks it (one
+`mkfifo`, then no fork per nap — a `sleep` child would show up as a fork of
+the gate's watchdog). Test fixtures wait on a FIFO of their test file there.
+
+**Platform quirks the tests know** (each guarded where it is met):
+
+* FreeBSD's `timeout` is the reaper of all below it and **waits** for every
+  descendant (`timeout 60 forkstorm.sh start` would hold 60 s, then kill the
+  worker): `"${KT_TMO_BOUND[@]}"` (= `--foreground` there) for a command that
+  leaves a process on purpose.
+* FreeBSD ssh sessions start with SIGTSTP/TTIN/TTOU **ignored**: the Ctrl-Z
+  tests (044 N6, 050) skip with that reason.
+* busybox `timeout` execs the command and leaves a WATCHER beside it (`timeout
+  N cmd` in its command line) for up to a second: "nothing left" checks wait it
+  out (`kt_proc_pids_gone`); it has no `--foreground` (044 probes it).
+* BSD `wc` pads its count; GNU `touch -d 'N ago'`, `sed -i`, the regex `\b`
+  are not portable — the tests use `$(( ))`, `touch -t`, a temp file + `mv`,
+  `(^|[^[:alnum:]_])`.
+* busybox and Alpine's coreutils are MULTI-CALL binaries that run the applet
+  their argv[0] names: `exec -a NAME sleep` does not run there — the leak
+  fixture probes it and waits in a renamed bash instead.
+* A KILLed orphan is a zombie until init reaps it — at once almost
+  everywhere; the tests' "alive" checks ignore zombies (`kill -0` alone
+  counts them).
+
+**macOS — known gaps** (the generic ps path, not run yet; input for L5):
+
+* no `lstart` keyword in a ps → the start identity is derived from etime and
+  may jitter by ±1 s between snapshots (a "reused pid" false alarm skips a
+  signal);
+* no `sid` keyword (macOS ps has none; `sess` is a kernel pointer) →
+  `--session self` filters nothing and the strict rule needs a marker, but an
+  explicit `--session SID` filters EVERYTHING (no row carries a session);
+* no state column → zombies are not recognised: they stay group members and
+  "alive" until reaped.

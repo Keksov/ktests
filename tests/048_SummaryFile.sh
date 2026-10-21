@@ -23,20 +23,7 @@ LIB="$(cd "$KTESTS_LIB_DIR" && pwd)"
 N="kt048x$$x$RANDOM$RANDOM"
 
 # kt048_pids TEXT — REPLY = the pids (not this shell) whose command line contains TEXT
-kt048_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt048_pids() { kt_proc_pids "$1"; }   # ktest_proc.sh: /proc or ps (launch L2.1)
 kt048_cleanup() {
     kt048_pids "$N"
     [[ -n "$REPLY" ]] && kill -KILL $REPLY 2>/dev/null
@@ -82,7 +69,7 @@ kt048_file envy 003_msg 'kt_test_start m; kt_test_fail "expected the message: ba
 # this file's shell is gone)
 kt048_file slow 001_s "kt_test_start s
 : > \"\$KT048_STARTED\"
-bash -c 'exec -a kt048-$N-slow bash -c \"while kill -0 $$ 2>/dev/null; do read -t 0.3 -u 3 _ 3<>/dev/ptmx || sleep 1; done\"' &
+bash -c 'exec -a kt048-$N-slow bash -c \"while kill -0 $$ 2>/dev/null; do read -t 0.3 -u 3 _ 2>/dev/null 3<>/dev/ptmx || sleep 1; done\"' &
 wait
 kt_test_pass s"
 

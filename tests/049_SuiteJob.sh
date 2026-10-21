@@ -26,23 +26,14 @@ N="kt049x$$x$RANDOM$RANDOM"
 M="kt049y$$y$RANDOM$RANDOM"
 
 export KT049_OWNER="$$"
-export KT049_LOOP='exec 3<>/dev/ptmx 2>/dev/null || exec 3</dev/null; while kill -0 "$KT049_OWNER" 2>/dev/null; do read -t 0.3 -u 3 _ || (( $? > 128 )) || sleep 1; done'
+# no /dev/ptmx (FreeBSD): the fixtures wait on a FIFO of this file instead,
+# never on a `sleep` child (it would be listed with them) — launch L2.1
+export KT049_FIFO=""
+if [[ ! -c /dev/ptmx ]]; then KT049_FIFO="$TMP/nap.fifo"; mkfifo "$KT049_FIFO" 2>/dev/null || KT049_FIFO=""; fi
+export KT049_LOOP='{ [[ -c /dev/ptmx ]] && exec 3<>/dev/ptmx; } 2>/dev/null || { [[ -p "$KT049_FIFO" ]] && exec 3<>"$KT049_FIFO"; } 2>/dev/null || exec 3</dev/null; while kill -0 "$KT049_OWNER" 2>/dev/null; do read -t 0.3 -u 3 _ || (( $? > 128 )) || sleep 1; done'
 
 # kt049_pids TEXT — REPLY = the pids (not this shell) whose command line contains TEXT
-kt049_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt049_pids() { kt_proc_pids "$1"; }   # ktest_proc.sh (launch L2.1)
 kt049_cleanup() {
     local t
     for t in "$N" "$M"; do
@@ -100,21 +91,19 @@ fi
 # ---- the job -----------------------------------------------------------------
 # the driver: sources suitejob.sh, runs one scenario, reports KEY=VALUE lines
 cat > "$TMP/drv.sh" <<'EOF'
+PROC="${1%/*}/../ktest_proc.sh"   # the process table (launch L2.1)
 source "$1"; shift
 scen="$1" out="$2" N="$3" M="$4"
-# drv_orphan NAME — a process NAME whose parent exits at once (ppid 1, this
-# session); waits until it is reparented
+# drv_orphan NAME — a process NAME whose parent exits at once (this session);
+# waits until it is adopted: ppid 1, or a subreaper of another session or
+# a `timeout` (FreeBSD's is a reaper; kt_proc_adopted)
 drv_orphan() {
     bash -c '(exec -a "$1" bash -c "$KT049_LOOP") </dev/null >/dev/null 2>&1 & exit' _ "$1"
-    local i f p pp
-    local -a a
+    local i p
     for (( i = 0; i < 50; i++ )); do
-        for f in /proc/[0-9]*/cmdline; do
-            a=(); { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-            [[ "${a[0]:-}" == "$1" ]] || continue
-            p="${f#/proc/}"; p="${p%/cmdline}"
-            pp=""; { read -r pp < "/proc/$p/ppid"; } 2>/dev/null
-            [[ "$pp" == 1 ]] && return 0
+        kt_proc_pid0 "$1"
+        for p in $REPLY; do
+            kt_proc_adopted "$p" && return 0
         done
         sleep 0.1
     done
@@ -123,7 +112,7 @@ drv_orphan() {
 case "$scen" in
     run)
         kt_suitejob_init "$EPOCHREALTIME" "$N"
-        kt_suitejob_run L1 bash -c 'read -r pg < /proc/$$/pgid; echo "$$ $pg" > "$1.grp"; trap -p TTOU > "$1.ttou"; trap -p INT > "$1.int"; IFS= read -r l; printf "%s" "$l" > "$1.stdin"; exit 3' _ "$out"
+        kt_suitejob_run L1 bash -c 'source "$2"; kt_proc_pgid $$; pg="$REPLY"; echo "$$ $pg" > "$1.grp"; trap -p TTOU > "$1.ttou"; trap -p INT > "$1.int"; IFS= read -r l; printf "%s" "$l" > "$1.stdin"; exit 3' _ "$out" "$PROC"
         echo "rc=$? jobrc=$KT_SUITEJOB_RC pid=[$KT_SUITEJOB_PID] cur=$KT_SUITEJOB_CUR names=${KT_SUITEJOB_NAMES[*]} t0=${#KT_SUITEJOB_T0[@]} mon=[${-//[!m]/}]"
         ;;
     break)
@@ -143,11 +132,12 @@ case "$scen" in
         echo "after=[$KT_SUITEJOB_PID] sigrc=$KT_SUITEJOB_SIGNAL_RC group=$g"
         ;;
     strays)
-        drv_orphan "kt049-$N-c0"; sleep 0.5          # before the window: never listed
+        drv_orphan "kt049-$N-c0"; sleep 0.5; (( KT_PROC_START_RES_MS >= 1000 )) && sleep 1          # before the window: never listed
         kt_suitejob_init "$EPOCHREALTIME" "$N"
-        drv_orphan "kt049-$N-a0"; sleep 0.5          # in the window, before the first job
+        drv_orphan "kt049-$N-a0"; sleep 0.5; (( KT_PROC_START_RES_MS >= 1000 )) && sleep 1          # in the window, before the first job
+        # (ps: start times to the second — a gap of more than 1 s, launch L2.1)
         drv_orphan "kt049-$M-b"                      # in the window, not matching
-        kt_suitejob_run sX bash -c "$(declare -f drv_orphan); drv_orphan kt049-$N-a1; exit 0"
+        kt_suitejob_run sX bash -c "source '$PROC'; $(declare -f drv_orphan); drv_orphan kt049-$N-a1; exit 0"
         kt_suitejob_strays "after sX"; echo "s1=$?"
         printf 'row=%s\n' "${KT_SUITEJOB_STRAY_ROWS[@]}"
         echo "labels=${!KT_SUITEJOB_STRAY_LABELS[*]}"
@@ -180,7 +170,9 @@ fi
 kt049_cleanup
 
 kt_test_start "strays: only the window's matching orphans, each with the label running when it started; stopped; the others untouched"
-o="$(timeout 90 bash "$TMP/drv.sh" "$SJ" strays "$TMP/str" "$N" "$M" 2>&1)"
+# c0 and b are left alive on purpose: FreeBSD's timeout would wait for them
+# (KT_TMO_BOUND, ktest_proc.sh — launch L2.1)
+o="$(timeout "${KT_TMO_BOUND[@]}" 90 bash "$TMP/drv.sh" "$SJ" strays "$TMP/str" "$N" "$M" 2>&1)"
 kt049_pids "kt049-$N-a"; la="$REPLY"
 kt049_pids "kt049-$N-c0"; lc="$REPLY"
 kt049_pids "kt049-$M-b"; lb="$REPLY"

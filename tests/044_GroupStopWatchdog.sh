@@ -24,12 +24,16 @@ kt_test_init "GroupStopWatchdog" "$SCRIPT_DIR" "$@"
 
 TMP="$(kt_fixture_tmpdir)"
 LIB="$(cd "$KTESTS_LIB_DIR" && pwd)"
+# `timeout --foreground` where timeout has it (GNU, FreeBSD); busybox's has not
+# (Alpine; launch L2.1) — there the child is not put in a group of its own
+# either: the bound is all that is needed here
+KT044_TFG=(); timeout --foreground 5 true </dev/null >/dev/null 2>&1 && KT044_TFG=( --foreground )
 
 # ---- N1: a STOPPED group is still stopped and reaped by kt_runner_group_stop -
 kt_test_start "kt_runner_group_stop ends a stopped group at once (TERM + CONT), the group is gone [N1]"
 rm -f "$TMP/n1.pgid"
 rc=0
-timeout --foreground 20 bash -c '
+timeout "${KT044_TFG[@]}" 20 bash -c '
 source "$1/ktest.sh"
 set -m
 ( while :; do sleep 1; done ) < /dev/null &
@@ -64,7 +68,7 @@ fi
 # what is left after its grace (here 0.5 s, 20 groups; its /proc snapshot before
 # the TERM usually outlasts the exec handover already).
 kt_test_start "kt_runner_group_stop also ends a member forked just before the stop (a lost TERM: KILLed after the grace) [R1, sweep flake]"
-out="$(timeout --foreground 120 bash -c '
+out="$(timeout "${KT044_TFG[@]}" 120 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 surv=0 list=""
@@ -93,7 +97,7 @@ fi
 # to `kill -0 -- -PGID` for tens of ms, so kt_runner_group_stop reads the
 # members from /proc too (kt_runner_group_members: no fork, zombies dropped).
 kt_test_start "kt_runner_group_members lists exactly a live group's members from /proc, nothing for a gone group [R1, sweep flake]"
-out="$(timeout --foreground 60 bash -c '
+out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 set -m
@@ -115,8 +119,8 @@ kill -KILL "$s" 2>/dev/null
 n=0; for p in $live; do n=$(( n + 1 )); done
 [[ "$live" == *" $g "* && "$live" == *" $s "* && $n == 2 && "$mine" != *" $g "* && -z "$gone" ]] && echo OK || echo "live=[$live] mine=[$mine] gone=[$gone] g=$g s=$s"
 ' _ "$LIB" "$TMP" 2>&1)"
-if [[ ! -r /proc/$$/pgid ]]; then
-    kt_test_pass "no /proc/<pid>/pgid here (not cygwin): the stop falls back to kill -0 -- -PGID"
+if ! kt_proc_init; then
+    kt_test_pass "no process table here ($KT_PROC_WHY): the stop falls back to kill -0 -- -PGID"
 elif [[ "$out" == OK ]]; then
     kt_test_pass "leader + sleep listed, not in the caller's group, empty once stopped"
 else
@@ -128,7 +132,7 @@ fi
 # TERM inside its EXIT trap exits bash at once) and never ended a member that
 # ignores TERM.
 kt_test_start "kt_runner_group_stop: a TERM-ignoring member is KILLed after the grace, a member's 0.8 s cleanup trap runs to its end [R1, P3b review]"
-out="$(timeout --foreground 60 bash -c '
+out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 d="$2/gs"; mkdir -p "$d"; rm -f "$d"/*
@@ -138,7 +142,7 @@ set -m
     echo "$!" > "$d/ign"
     (
         # 0.8 s of cleanup without forking (a forked sleep can take 0.3 s under load)
-        trap "exec {w}<>/dev/ptmx && read -t 0.8 -u \$w _; echo done > \"$d/clean\"" EXIT
+        trap "if [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; then read -t 0.8 -u \$w _; else sleep 0.8; fi; echo done > \"$d/clean\"" EXIT
         trap "exit 143" TERM
         sleep 12 &
         echo "$BASHPID" > "$d/good"
@@ -167,7 +171,7 @@ else
 fi
 
 kt_test_start "a group's shell ignores SIGTTOU and SIGTTIN (a write to a tostop terminal does not stop it) [N1]"
-out="$(timeout --foreground 20 bash -c '
+out="$(timeout "${KT044_TFG[@]}" 20 bash -c '
 source "$1/ktest.sh"
 set -m
 ( kt_runner_group_watchdog "" ""; trap -p TTOU TTIN ) < /dev/null &
@@ -188,13 +192,14 @@ fi
 # loads its parts from an exported KTESTS_LIB_DIR: the child must not see it.)
 mkdir -p "$TMP/lib"
 cp "$LIB"/*.sh "$TMP/lib/"
-sed -i '/__kt_l/s/{ IFS= read/{ sleep 2; IFS= read/' "$TMP/lib/ktest_runner.sh"
+# no `sed -i` (BSD sed takes the script as the backup suffix; launch L2.1)
+sed '/__kt_l/s/{ IFS= read/{ sleep 2; IFS= read/' "$TMP/lib/ktest_runner.sh" > "$TMP/lib/r.new" && mv -f "$TMP/lib/r.new" "$TMP/lib/ktest_runner.sh"
 kt_test_start "a watchdog that starts after the runner closed its writer exits; no orphan [N4]"
 if ! grep -q '{ sleep 2; IFS= read' "$TMP/lib/ktest_runner.sh"; then
     kt_test_fail "could not inject the delay into the watchdog"
 else
     rm -f "$TMP/n4.fifo" "$TMP/n4.wd"
-    timeout --foreground 20 env -u KTESTS_LIB_DIR bash -c '
+    timeout "${KT044_TFG[@]}" 20 env -u KTESTS_LIB_DIR bash -c '
 source "$1/ktest.sh"
 fifo="$2/n4.fifo"
 kt_runner_group_open "$fifo" || exit 4
@@ -236,8 +241,16 @@ for n in 001 002 003; do
         "kt_test_pass \"z$n\"" > "$TMP/tstp/${n}_z.sh"
 done
 kt044_ndone() { local f n=0; for f in "$TMP"/tstp.done.*; do [[ -e "$f" ]] && n=$(( n + 1 )); done; printf '%s' "$n"; }
+# SIGTSTP ignored when this file started (inherited: a FreeBSD ssh session
+# has TSTP/TTIN/TTOU ignored — launch L2.1): no shell below can trap it
+# (never on cygwin: there the case must run and pass as it always did)
+kt044_tstp_ign=0; [[ "$OSTYPE" != msys* && "$OSTYPE" != cygwin* && "$(trap -p TSTP)" == *"''"* ]] && kt044_tstp_ign=1
 for mode in threaded single; do
     kt_test_start "$mode: TSTP to ktests.sh stops the run (no test file progresses), CONT resumes it to a normal end [N6]"
+    if (( kt044_tstp_ign )); then
+        kt_test_pass "skipped: SIGTSTP is ignored in this environment (inherited) - no trap can be set"
+        continue
+    fi
     rm -f "$TMP"/tstp.done.* "$TMP/tstp.pids"; mkdir -p "$TMP/tstp.tmp.$mode"
     TMPDIR="$TMP/tstp.tmp.$mode" bash "$LIB/ktests.sh" "$TMP/tstp" Z '/[0-9][0-9][0-9]_' -m "$mode" -w 3 > "$TMP/tstp.out.$mode" 2>&1 &
     rp=$!
@@ -247,7 +260,7 @@ for mode in threaded single; do
     d1="$(kt044_ndone)"
     sleep 3
     d2="$(kt044_ndone)"
-    st="$(cut -d' ' -f3 "/proc/$rp/stat" 2>/dev/null)"
+    kt_proc_state "$rp"; st="$REPLY"   # ktest_proc.sh: /proc or ps (launch L2.1)
     kill -CONT "$rp"
     rc=0
     # the run must end on its own now; never leave it stopped or running
@@ -266,11 +279,22 @@ for mode in threaded single; do
 done
 
 # kt044_procs TEXT — REPLY = "pid:argv0 …" of the processes whose command line
-# contains TEXT (no fork)
+# contains TEXT (no fork on /proc; the ps backend: one — launch L2.1)
 kt044_procs() {
     local f p
     local -a a
     REPLY=""
+    if kt_proc_init && [[ "$KT_PROC_BACKEND" == ps ]]; then
+        kt_proc_snapshot --cmd _KT044_
+        REPLY=""   # the snapshot used REPLY
+        for p in "${!_KT044_CMD[@]}"; do
+            [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
+            f="${_KT044_CMD[$p]}"
+            [[ "$f" == *"$1"* ]] && { f="${f%% *}"; REPLY+="$p:${f##*/} "; }
+        done
+        REPLY="${REPLY% }"
+        return 0
+    fi
     for f in /proc/[0-9]*; do
         p="${f#/proc/}"
         [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
@@ -279,6 +303,7 @@ kt044_procs() {
     done
     REPLY="${REPLY% }"
 }
+declare -gA _KT044_PP=() _KT044_PG=() _KT044_SID=() _KT044_STATE=() _KT044_RAW=() _KT044_ST=() _KT044_CMD=()
 # kt044_gone TEXT SECONDS — rc 0 once no process carries TEXT (polled 0.1 s)
 kt044_gone() {
     local i
@@ -359,7 +384,7 @@ done
 # then (kt_runner_proc_same: start time, or the recorded process group). A
 # reuse is simulated by a wrong record for a live process with a child.
 kt_test_start "kt_runner_group_scan adopts a tracked pid's children only while it is the recorded process (a reused pid: dropped, children not adopted) [critic P3b r2 N3]"
-out="$(timeout --foreground 60 bash -c '
+out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP
 set -m
@@ -402,7 +427,7 @@ for mode in threaded single; do
         printf '%s\n' "source \"$LIB/ktest.sh\"" \
             "kt_test_init \"C$k\" \"\$(dirname \"\$0\")\"" \
             'kt_test_start "c"' \
-            "trap 'exec {w}<>/dev/ptmx && read -t 0.8 -u \$w _; echo done > \"$x/clean.$k\"' EXIT; trap 'exit 143' TERM" \
+            "trap 'if [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; then read -t 0.8 -u \$w _; else sleep 0.8; fi; echo done > \"$x/clean.$k\"' EXIT; trap 'exit 143' TERM" \
             "echo \$BASHPID > '$x/up.$k'; sleep 20 & wait" \
             'kt_test_pass "c"' > "$d/${k}_c.sh"
     done

@@ -37,37 +37,21 @@ N="kt045x$$x$RANDOM$RANDOM"
 # pty the loop polls with `sleep 1` (never a busy loop). Owner and loop
 # travel in the ENVIRONMENT, never in a command line.
 export KT045_OWNER="$$"
-export KT045_LOOP='exec 3<>/dev/ptmx 2>/dev/null || exec 3</dev/null; while kill -0 "$KT045_OWNER" 2>/dev/null; do read -t 0.3 -u 3 _ || (( $? > 128 )) || sleep 1; done'
+# no /dev/ptmx (FreeBSD): the fixtures wait on a FIFO of this file instead,
+# never on a `sleep` child (it would be listed with them) — launch L2.1
+export KT045_FIFO=""
+if [[ ! -c /dev/ptmx ]]; then KT045_FIFO="$TMP/nap.fifo"; mkfifo "$KT045_FIFO" 2>/dev/null || KT045_FIFO=""; fi
+export KT045_LOOP='{ [[ -c /dev/ptmx ]] && exec 3<>/dev/ptmx; } 2>/dev/null || { [[ -p "$KT045_FIFO" ]] && exec 3<>"$KT045_FIFO"; } 2>/dev/null || exec 3</dev/null; while kill -0 "$KT045_OWNER" 2>/dev/null; do read -t 0.3 -u 3 _ || (( $? > 128 )) || sleep 1; done'
 
 # kt045_pids TEXT — REPLY = the pids (not this shell) whose command line contains TEXT
-kt045_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
 # kt045_pid0 NAME — REPLY = the pids whose argv[0] is exactly NAME
-kt045_pid0() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[0]:-}" == "$1" ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+# (ktest_proc.sh: /proc where there is one, else ps — launch L2.1)
+kt045_pids() { kt_proc_pids "$1"; }
+kt045_pid0() { kt_proc_pid0 "$1"; }
+# kt045_adopted PID — rc 0 once PID has been ADOPTED: its parent is pid 1, or a
+# process of another session (a subreaper — `systemd --user`, a container's
+# init — took it over; launch L2.1); FreeBSD's `timeout` too (ktest_proc.sh)
+kt045_adopted() { kt_proc_adopted "$1"; }
 # kt045_cleanup — KILL everything that carries the nonce (twice: a dying
 # parent's last fork)
 kt045_cleanup() {
@@ -105,8 +89,7 @@ kt045_orphan() {
         kt045_pid0 "$1"
         p="${REPLY%% *}"
         if [[ -n "$p" ]]; then
-            pp=""; { read -r -a pp < "/proc/$p/stat"; } 2>/dev/null
-            if [[ "${pp[3]:-}" == 1 ]]; then
+            if kt045_adopted "$p"; then
                 # with CHILD: its child must have been exec'd too
                 [[ -z "${2:-}" ]] && break
                 kt045_pid0 "$2"; [[ -n "$REPLY" ]] && break
@@ -127,7 +110,10 @@ kt045_row() {
     done <<< "$1"
     return 1
 }
-kt045_alive() { kill -0 "$1" 2>/dev/null; }
+# alive = signallable and no zombie: a KILLed orphan stays a zombie until init
+# reaps it — at once on Windows and most systems, seconds later on a stalled VM
+# (busybox init on kb-alpine; launch L2.1)
+kt045_alive() { kill -0 "$1" 2>/dev/null || return 1; kt_proc_state "$1"; [[ -n "$REPLY" && "$REPLY" != Z ]]; }
 
 # ---- the marker + orphan rules ----------------------------------------------
 kt045_orphan "kt_iso-$N-orph"; P_ORPH="$REPLY"
@@ -199,7 +185,7 @@ for (( i = 0; i < 100; i++ )); do [[ -s "$TMP/dt.out" ]] && break; sleep 0.1; do
 OUTD="$(cat "$TMP/dt.out" 2>/dev/null)"
 kt045_pid0 "kt_iso-$N-dtchild"; P_DTC="${REPLY%% *}"
 kt045_pid0 "kt_iso-$N-dtroot"; P_DTR="${REPLY%% *}"
-pp=""; [[ -n "$P_DTR" ]] && { read -r pp < "/proc/$P_DTR/ppid"; } 2>/dev/null
+pp=""; [[ -n "$P_DTR" ]] && { kt_proc_ppid "$P_DTR"; pp="$REPLY"; kt045_adopted "$P_DTR" && pp=1; }
 if [[ -n "$P_DTC" && "$pp" == 1 ]] && kt045_row "$OUTD" "$P_DTC" && [[ "$REPLY" == no ]] && ! kt045_row "$OUTD" "$P_DTR"; then
     kt_test_pass "detached root $P_DTR (ppid 1): its child $P_DTC is ORPHAN=no, the root (an ancestor) not listed"
 else
@@ -359,7 +345,7 @@ fi
 kt_test_start "stop: an orphaned ktests run is TERMed once at its root — the test file's cleanup completes, nothing is left"
 mkdir -p "$TMP/rs" "$TMP/rs.tmp"
 printf '%s\n' 'source "$KTEST_SOURCE_PATH"' 'kt_test_init R "$KT_TESTS_DIR"' 'kt_test_start r' \
-    "trap 'exec {w}<>/dev/ptmx && read -t 0.8 -u \$w _; echo done >> \"$TMP/rs.clean\"' EXIT; trap 'exit 143' TERM" \
+    "trap 'if [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; then read -t 0.8 -u \$w _; else sleep 0.8; fi; echo done >> \"$TMP/rs.clean\"' EXIT; trap 'exit 143' TERM" \
     "echo \$BASHPID > '$TMP/rs.up'" \
     "bash -c 'exec -a rsloop-$N bash -c \"\$KT045_LOOP\"' & wait" 'kt_test_pass r' > "$TMP/rs/001_r.sh"
 rm -f "$TMP/rs.clean" "$TMP/rs.up"
@@ -396,16 +382,24 @@ fi
 # looks like: ppid 1, sid == pid) is not an orphan — needs setsid (MSYS2 only)
 if command -v setsid >/dev/null 2>&1; then
     kt_test_start "orphan rule: a session leader with ppid 1 (sid == pid) is not an orphan"
-    bash -c 'setsid -f bash -c "exec -a \"kt_iso-$1-leader\" bash -c \"\$KT045_LOOP\"" </dev/null >/dev/null 2>&1; exit' _ "$N"
+    # `setsid … &` from a shell without job control: no group leader, so
+    # setsid() needs no fork (util-linux and busybox alike: busybox has no -f)
+    bash -c 'echo $$ > "$2"; setsid bash -c "exec -a \"kt_iso-$1-leader\" bash -c \"\$KT045_LOOP\"" </dev/null >/dev/null 2>&1 & exit' _ "$N" "$TMP/leader.parent"
     for (( i = 0; i < 50; i++ )); do kt045_pid0 "kt_iso-$N-leader"; [[ -n "$REPLY" ]] && break; sleep 0.1; done
     P_LEAD="${REPLY%% *}"
     sleep 0.3
     OUTL="$(bash "$ST" list --all --match "$N-leader" 2>&1)"
-    st=(); { read -r -a st < "/proc/$P_LEAD/stat"; } 2>/dev/null
-    if [[ -n "$P_LEAD" ]] && kt045_row "$OUTL" "$P_LEAD" && [[ "$REPLY" == no && "${st[3]:-}" == 1 && "${st[5]:-}" == "$P_LEAD" ]]; then
+    st=( "" "" "" "" "" "" ); kt_proc_ppid "$P_LEAD"; st[3]="$REPLY"; kt_proc_sid "$P_LEAD"; st[5]="$REPLY"
+    # its parent (the shell that started it) is gone: ppid 1 — or, on a system
+    # with a subreaper, adopted by it AND that original parent no longer alive
+    pl=""; { read -r pl < "$TMP/leader.parent"; } 2>/dev/null
+    ad=no
+    if [[ "${st[3]:-}" == 1 ]]; then ad=yes
+    elif [[ -n "$P_LEAD" && -n "$pl" && "${st[3]:-}" != "$pl" ]] && ! kill -0 "$pl" 2>/dev/null && kt045_adopted "$P_LEAD"; then ad=yes; fi
+    if [[ -n "$P_LEAD" ]] && kt045_row "$OUTL" "$P_LEAD" && [[ "$REPLY" == no && "$ad" == yes && "${st[5]:-}" == "$P_LEAD" ]]; then
         kt_test_pass "leader $P_LEAD: ppid 1, sid $P_LEAD, ORPHAN=no"
     else
-        kt_test_fail "leader $P_LEAD stat ppid=${st[3]:-} sid=${st[5]:-}: $OUTL"
+        kt_test_fail "leader $P_LEAD stat ppid=${st[3]:-} (parent was $pl) sid=${st[5]:-}: $OUTL"
     fi
     kt045_pids "kt_iso-$N-leader"; [[ -n "$REPLY" ]] && kill -KILL $REPLY 2>/dev/null
 fi
@@ -523,8 +517,17 @@ fi
 # PIPES the CLI's output: the pipeline's other element is a FORK of the caller
 # (a compound consumer stays one for its life) — a sibling of strays.sh, not an
 # ancestor, with the caller's command line. It was listed as a live row.
+# busybox's timeout is no parent of its command: it execs the command and
+# leaves a WATCHER process (`timeout 60 bash …strays.sh …` in its command line,
+# a marker) beside it — a live non-ancestor the listing rightly shows; the
+# shape is GNU/BSD timeout's (launch L2.1)
+kt045_bbtmo=0; [[ "$(timeout --help 2>&1)" == *BusyBox* ]] && kt045_bbtmo=1
 for shape in while group timeout; do
     kt_test_start "list --all from a marker caller piping its output ($shape) shows no row for the caller's own fork"
+    if [[ "$shape" == timeout ]] && (( kt045_bbtmo )); then
+        kt_test_pass "skipped: busybox timeout (a watcher beside the command, not its parent)"
+        continue
+    fi
     rm -f "$TMP/pipe.out"
     case "$shape" in
         while)   c="bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
@@ -573,8 +576,7 @@ P_SAME=""
 for (( i = 0; i < 50; i++ )); do
     kt045_pids "$N-same"
     for p in $REPLY; do
-        pp=""; { read -r pp < "/proc/$p/ppid"; } 2>/dev/null
-        [[ "$pp" == 1 ]] && P_SAME="$p"
+        kt045_adopted "$p" && P_SAME="$p"
     done
     [[ -n "$P_SAME" ]] && break
     sleep 0.1
@@ -621,8 +623,8 @@ for who in sweep wrapper; do
         tgt=""
         kt045_pids "$F/d_slow/tests"
         for p in $REPLY; do
-            pp=""; { read -r pp < "/proc/$p/ppid"; } 2>/dev/null
-            [[ "$pp" == "$P_M" ]] && tgt="$p"
+            kt_proc_ppid "$p"
+            [[ "$REPLY" == "$P_M" ]] && tgt="$p"
         done
     fi
     [[ -n "$tgt" ]] && kill -TERM "$tgt"

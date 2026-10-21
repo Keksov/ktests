@@ -34,20 +34,7 @@ export GIT_CEILING_DIRECTORIES="$(cygpath -m "$TMP" 2>/dev/null || echo "$TMP")"
 GC=( -c user.name=gate-test -c user.email=gate@test -c init.defaultBranch=main -c core.autocrlf=false
      -c advice.addEmbeddedRepo=false -c advice.detachedHead=false )
 
-kt054_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt054_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybox timeout watcher waited out — launch L2.1)
 kt054_gate() {
     local of="$1"; shift
     timeout -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
@@ -139,7 +126,7 @@ cj=""
 NODE="$(type -P node 2>/dev/null)"
 if [[ -n "$NODE" ]]; then
     cj="$("$NODE" -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(JSON.stringify(j.changed.paths)+" "+Object.keys(j.changed.suites).join(",")+" "+j.changed.all+" "+j.gate.options.changed)' \
-        "$(cygpath -m "$TMP/c1out/summary.json" 2>/dev/null)" 2>&1)"
+        "$(cygpath -m "$TMP/c1out/summary.json" 2>/dev/null || echo "$TMP/c1out/summary.json")" 2>&1)"
 fi
 if [[ "$RC" == 0 && "$o" == *"gate cells: 6 = 1 bash x 6 suite(s) (kcl kcl/ua kcl/ub kcl/uc kcl/ud kk)"* \
       && "$pre" == *"gate changed: 1 path(s) select 5 suite(s)"* && "$pre" == *"gate changed:   kk  <- named on the command line"* \
@@ -322,8 +309,8 @@ kt054_gate "$TMP/w2.out" --root "$RW" --out "$TMP/outW2" --keep --repeat 2 all; 
 kt054_gate "$TMP/w3.out" --root "$RW" --out "$TMP/outW3" --warm --repeat 2 all; rw3=$RC
 kt054_kv "$TMP/outW1/cells/001/result" ckk; k1="$REPLY"; kt054_kv "$TMP/outW1/cells/002/result" ckk; k2="$REPLY"
 kt054_kv "$TMP/outW2/cells/001/result" ckk; k3="$REPLY"; kt054_kv "$TMP/outW2/cells/002/result" ckk; k4="$REPLY"
-n1="$(wc -l < "$TMP/outW1/seg-1.ckk/cells.log" 2>/dev/null)"
-n3="$(cat "$TMP/outW2/cells/001/ckk/cells.log" "$TMP/outW2/cells/002/ckk/cells.log" 2>/dev/null | wc -l)"
+n1=$(( $(wc -l < "$TMP/outW1/seg-1.ckk/cells.log" 2>/dev/null) + 0 ))   # BSD wc pads the count (launch L2.1)
+n3=$(( $(cat "$TMP/outW2/cells/001/ckk/cells.log" "$TMP/outW2/cells/002/ckk/cells.log" 2>/dev/null | wc -l) ))
 kt_test_start "--warm: the cells of a segment share one .ckk dir (seg-N.ckk: both cells wrote into it); without it each cell has its own; removed without --keep"
 if [[ "$rw1$rw2$rw3" == 000 && "$k1" == seg-1.ckk && "$k2" == seg-1.ckk && "$n1" == 2 && "$k3" == cells/001/ckk \
       && "$k4" == cells/002/ckk && "$n3" == 2 && ! -e "$TMP/outW3/seg-1.ckk" && "$(cat "$TMP/w1.out")" == *"--warm (one .ckk dir per runtime)"* ]]; then

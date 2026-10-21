@@ -7,7 +7,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the open fds (before any redirection; the glob's own dir fd, closed by the
 # time it is looked at, is skipped)
-__gfx_fds=""; for __gfx_f in /proc/$$/fd/*; do [[ -e "$__gfx_f" ]] && __gfx_fds+="${__gfx_f##*/} "; done
+__gfx_fdd="/proc/$$/fd"; [[ -d "$__gfx_fdd" ]] || __gfx_fdd=/dev/fd   # no /proc: fdescfs (FreeBSD; launch L2.1)
+__gfx_fds=""; for __gfx_f in "$__gfx_fdd"/*; do [[ -e "$__gfx_f" ]] && __gfx_fds+="${__gfx_f##*/} "; done
 { env; echo "PWD_AT_START=$PWD"; echo "FDS=${__gfx_fds% }"; declare -Fx; } > "$SCRIPT_DIR/.gfx_cell_env.$$" 2>&1
 __gfx_d="$SCRIPT_DIR"; while [[ "$__gfx_d" == */* && ! -f "$__gfx_d/ktests/ktests.sh" ]]; do __gfx_d="${__gfx_d%/*}"; done
 exec "$__gfx_d/ktests/ktests.sh" "$SCRIPT_DIR" "gate fixture probe" "$@"

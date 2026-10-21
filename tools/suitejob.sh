@@ -209,10 +209,27 @@ kt_suitejob_signal() {
 kt_suitejob_strays() {
     local label="$1" p i s c
     kt_strays_scan "${_KT_SUITEJOB_OPTS[@]}" "$KT_SUITEJOB_SINCE"
+    # no process table at all (launch L2.1): say so, never a silent "none"
+    [[ -n "$KT_STRAYS_UNKNOWN" ]] && { echo "[WARN] stray check after $label: n/a ($KT_STRAYS_UNKNOWN)"; return 0; }
     (( RESULT == 0 )) && return 0
     _kt_strays_nap_open; _kt_strays_nap 1; _kt_strays_nap_close
     kt_strays_scan "${_KT_SUITEJOB_OPTS[@]}" "$KT_SUITEJOB_SINCE"
     (( RESULT == 0 )) && return 0
+    # busybox's `timeout N cmd` leaves its WATCHER (argv `timeout N cmd…`, a
+    # detached root: adopted by init) for up to ~1 s after cmd ended: while
+    # such a row is among the hits, look again — at most 3 s more (launch L2.1)
+    if kt_proc_bbtimeout; then   # (ktest_proc.sh; _KTP_BBTMO=1: a test seam)
+        for (( i = 0; i < 6; i++ )); do
+            c=0
+            for p in "${KT_STRAYS[@]}"; do
+                [[ "${KT_STRAYS_FLAG[$p]}" == yes && "${KT_STRAYS_CMD[$p]}" == "timeout "* ]] && c=1
+            done
+            (( c )) || break
+            _kt_strays_nap_open; _kt_strays_nap 0.5; _kt_strays_nap_close
+            kt_strays_scan "${_KT_SUITEJOB_OPTS[@]}" "$KT_SUITEJOB_SINCE"
+            (( RESULT == 0 )) && return 0
+        done
+    fi
     echo "[WARN] $RESULT stray process(es) found after $label:"
     for p in "${KT_STRAYS[@]}"; do
         s="$KT_SUITEJOB_BEFORE"

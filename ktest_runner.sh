@@ -16,6 +16,15 @@ if [[ -z "${_KTEST_CORE_SOURCED:-}" ]]; then
     return 1
 fi
 
+# The process table per platform (launch L2.1): the group stop below reads
+# cygwin's /proc as it always did, Linux's /proc/PID/stat or one `ps` per scan
+# elsewhere (ktest_proc.sh; it also gives the tests kt_proc_pids & co.)
+if ! declare -F kt_proc_init >/dev/null; then
+    __kt_rn_d="${BASH_SOURCE[0]%/*}"; [[ "$__kt_rn_d" == "${BASH_SOURCE[0]}" ]] && __kt_rn_d=.
+    source "$__kt_rn_d/ktest_proc.sh" || return 1
+    unset __kt_rn_d
+fi
+
 # ============================================================================
 # Global Variables and Constants
 # ============================================================================
@@ -121,7 +130,7 @@ kt_runner_find_last_counts_line() {
             if [[ "$line" =~ ^__COUNTS__: ]]; then
                 counts="$line"
             fi
-        done < <(printf '%s' "$output")
+        done <<< "${output%$'\n'}"   # == printf %s: no process substitution (L2.1: FreeBSD bash makes it a FIFO in TMPDIR)
     fi
 
     printf '%s' "$counts"
@@ -159,7 +168,7 @@ kt_runner_print_output_without_counts() {
             if [[ ! "$line" =~ ^__COUNTS__: ]]; then
                 printf '%s\n' "$line"
             fi
-        done < <(printf '%s' "$output")
+        done <<< "${output%$'\n'}"   # == printf %s: no process substitution (L2.1: FreeBSD bash makes it a FIFO in TMPDIR)
     fi
 }
 
@@ -200,7 +209,7 @@ kt_runner_scan_capture() {
                 _kt_scan_diag="${BASH_REMATCH[2]##*/}:${BASH_REMATCH[3]}: ${BASH_REMATCH[4]}"
             fi
         fi
-    done < <(printf '%s' "$output")
+    done <<< "${output%$'\n'}"   # == printf %s: no process substitution (L2.1: FreeBSD bash makes it a FIFO in TMPDIR)
     return 0
 }
 
@@ -525,7 +534,9 @@ kt_runner_iso_begin() {
         pid="${pid%%.*}"
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
         [[ "$pid" == "$$" ]] && continue
-        kill -0 "$pid" 2>/dev/null && continue
+        # alive = signallable and no zombie: a KILLed runner stays a zombie until
+        # init reaps it (seconds on a stalled VM; L2.1 review) — its dir is dead
+        if kill -0 "$pid" 2>/dev/null; then kt_proc_state "$pid"; [[ "$REPLY" == Z ]] || continue; fi
         mark=""
         [[ -f "$d/.kt_owner" ]] && { IFS= read -r mark < "$d/.kt_owner"; } 2>/dev/null
         if [[ "$mark" != "$own" ]]; then
@@ -631,7 +642,7 @@ kt_runner_group_end() {
     fi
     kill -CONT -- "-$P" 2>/dev/null || kill -CONT "$P" 2>/dev/null
     # a fork-free 0.1 s delay: read -t on a pty master that never has data
-    exec {__kt_fd}<>/dev/ptmx 2>/dev/null || __kt_fd=""
+    __kt_q="${REPLY-}"; kt_proc_napfd; __kt_fd="$REPLY"; REPLY="$__kt_q"   # a pty master; FreeBSD: a FIFO of its own
     __kt_end=$(( ${EPOCHREALTIME/[.,]/} + g * 100000 ))
     while :; do
         __kt_n=$(( __kt_n + 1 ))
@@ -701,13 +712,21 @@ kt_runner_group_end() {
 # ~30 us each on cygwin, /proc/<pid>/stat ~16 ms (it queries Windows): stat
 # is read only for a member (zombies dropped), once for a new descendant and
 # once per scan for a tracked parent.
-# Off cygwin (no /proc/<pid>/pgid) both stay empty and the caller relies on
+# Off cygwin (launch L2.1) the same from ONE kt_proc_snapshot per scan
+# (_kt_runner_group_scan_tbl: Linux /proc/PID/stat, no fork; else one `ps`);
+# with no process table at all both stay empty and the caller relies on
 # kill -0 alone.
+declare -gA _KT_RUNNER_PT_PP=() _KT_RUNNER_PT_PG=() _KT_RUNNER_PT_SID=() _KT_RUNNER_PT_STATE=() \
+    _KT_RUNNER_PT_RAW=() _KT_RUNNER_PT_ST=() _KT_RUNNER_PT_CMD=()
 kt_runner_group_scan() {
     local __kt_f __kt_q __kt_g __kt_p __kt_l __kt_c=1
     local -A __kt_par=() __kt_in=() __kt_mb=() __kt_ok=()
     local -a __kt_x
     __kt_gm=""
+    if ! kt_proc_init || [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        _kt_runner_group_scan_tbl "$@"
+        return 0
+    fi
     for __kt_f in /proc/[0-9]*/pgid; do
         __kt_q="${__kt_f#/proc/}"; __kt_q="${__kt_q%/pgid}"
         { read -r __kt_g < "$__kt_f"; } 2>/dev/null || continue
@@ -749,6 +768,45 @@ kt_runner_group_scan() {
     __kt_gm="${__kt_gm% }"
     return 0
 }
+# _kt_runner_group_scan_tbl PGID SELF — kt_runner_group_scan off cygwin: the
+# same rules over one kt_proc_snapshot (_KT_RUNNER_PT_*; ps: the ps process
+# itself is not in it, so a SELF watchdog's own snapshot never counts)
+_kt_runner_group_scan_tbl() {
+    local __kt_q __kt_p __kt_c=1
+    local -A __kt_in=() __kt_mb=() __kt_ok=()
+    __kt_gm=""
+    kt_proc_snapshot _KT_RUNNER_PT_ || return 0
+    for __kt_q in "${!_KT_RUNNER_PT_PP[@]}"; do
+        [[ "${_KT_RUNNER_PT_PG[$__kt_q]}" == "$1" ]] || continue
+        __kt_in[$__kt_q]=1; __kt_mb[$__kt_q]=1
+        [[ "$__kt_q" == "${2:-}" ]] && continue
+        [[ "${_KT_RUNNER_PT_STATE[$__kt_q]}" == Z ]] && continue
+        __kt_gm+="$__kt_q "
+    done
+    for __kt_q in "${!__kt_ds[@]}"; do __kt_in[$__kt_q]=1; done
+    while (( __kt_c )); do
+        __kt_c=0
+        for __kt_q in "${!_KT_RUNNER_PT_PP[@]}"; do
+            [[ -n "${__kt_in[$__kt_q]+x}" ]] && continue
+            __kt_p="${_KT_RUNNER_PT_PP[$__kt_q]}"
+            [[ "$__kt_p" != 1 && -n "${__kt_in[$__kt_p]+x}" ]] || continue
+            if [[ -z "${__kt_mb[$__kt_p]+x}" && -z "${__kt_ok[$__kt_p]+x}" && -n "${__kt_ds[$__kt_p]+x}" ]]; then
+                if kt_runner_proc_same "$__kt_p" "${__kt_ds[$__kt_p]}" "$1"; then
+                    __kt_ok[$__kt_p]=1
+                else
+                    unset "__kt_ds[$__kt_p]" "__kt_in[$__kt_p]"
+                    continue
+                fi
+            fi
+            __kt_in[$__kt_q]=1; __kt_ok[$__kt_q]=1; __kt_c=1
+            [[ "$__kt_q" == "$BASHPID" || "$__kt_q" == "$$" ]] && continue
+            kt_runner_proc_start "$__kt_q"
+            [[ -n "$REPLY" ]] && __kt_ds[$__kt_q]="$REPLY"
+        done
+    done
+    __kt_gm="${__kt_gm% }"
+    return 0
+}
 # kt_runner_proc_same PID RECORD PGID — rc 0 when PID is still the process
 # recorded as RECORD ("start time:pgid", from kt_runner_proc_start): the same
 # start time, or still in the recorded process group, or in PGID (on the Git
@@ -760,11 +818,24 @@ kt_runner_proc_same() {
     [[ "${REPLY%%:*}" == "${2%%:*}" || "${REPLY#*:}" == "${2#*:}" || "${REPLY#*:}" == "$3" ]]
 }
 # kt_runner_proc_start PID — REPLY = "<start time>:<pgid>" of PID (fields 22
-# and 5 of /proc/PID/stat), "" when it is gone or a zombie. No fork. rc 0.
+# and 5 of /proc/PID/stat — cygwin and Linux alike), "" when it is gone or a
+# zombie. No fork. rc 0. The ps backend: from the last scan's snapshot (its
+# start identity, see ktest_proc.sh).
 kt_runner_proc_start() {
     local __kt_l=""
     local -a __kt_x
+    kt_proc_init
     REPLY=""
+    if [[ "$KT_PROC_BACKEND" == ps ]]; then
+        # a live pid the last snapshot does not know (none taken yet): a new one
+        if [[ -z "${_KT_RUNNER_PT_PP[$1]+x}" ]] && kill -0 "$1" 2>/dev/null; then
+            kt_proc_snapshot _KT_RUNNER_PT_
+            REPLY=""
+        fi
+        [[ -n "${_KT_RUNNER_PT_PP[$1]+x}" && "${_KT_RUNNER_PT_STATE[$1]}" != Z ]] || return 0
+        REPLY="${_KT_RUNNER_PT_RAW[$1]}:${_KT_RUNNER_PT_PG[$1]}"
+        return 0
+    fi
     { IFS= read -r __kt_l < "/proc/$1/stat"; } 2>/dev/null || return 0
     __kt_x=( ${__kt_l##*) } )
     [[ "${__kt_x[0]:-}" == Z ]] && return 0
@@ -779,6 +850,19 @@ kt_runner_proc_start() {
 kt_runner_group_members() {
     local __kt_f __kt_g __kt_l __kt_out=""
     local -a __kt_x
+    if ! kt_proc_init || [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        # off cygwin: one kt_proc_snapshot (launch L2.1)
+        REPLY=""
+        kt_proc_snapshot _KT_RUNNER_PT_ || return 0
+        for __kt_f in "${!_KT_RUNNER_PT_PG[@]}"; do
+            [[ "${_KT_RUNNER_PT_PG[$__kt_f]}" == "$1" ]] || continue
+            [[ "${_KT_RUNNER_PT_STATE[$__kt_f]}" == Z ]] && continue
+            [[ -n "${2:-}" && "${_KT_RUNNER_PT_STATE[$__kt_f]}" != "$2" ]] && continue
+            __kt_out+="$__kt_f "
+        done
+        REPLY="${__kt_out% }"
+        return 0
+    fi
     for __kt_f in /proc/[0-9]*/pgid; do
         { read -r __kt_g < "$__kt_f"; } 2>/dev/null || continue
         [[ "$__kt_g" == "$1" ]] || continue
@@ -987,7 +1071,7 @@ kt_runner_execute_single_test() {
             HOME="$__kt_iso" \
             __KK_CFG_ETC="$__kt_iso/etc/kbool" \
             BASH_ENV="" \
-            bash -c '
+            "$BASH" -c '
                 unset KBOOL_CONFIG KBOOL_HOME USERPROFILE ProgramData PROGRAMDATA KT_ISO_ROOT BASH_ENV
                 export VERBOSITY KK_OUTPUT_COUNTS _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KT_TESTS_DIR KTESTS_LIB_DIR KTEST_SOURCE_PATH
                 _KT_END_NONCE="$KT_END_NONCE"; unset KT_END_NONCE
@@ -1074,7 +1158,10 @@ kt_runner_filter_output() {
         # A bash fatal diagnostic (KT_BASH_FATAL_DIAG_RE) is always shown; END markers never are.
         local lines=()
         local in_error_block=0
+        # a trailing CR is dropped in bash (launch L2.1, H6: no `sed 's/\r$//'`
+        # — two forks, and a sed without the \r escape strips a literal r)
         while IFS= read -r line; do
+            line="${line%$'\r'}"
             if [[ "$line" == *__KT_END_* && "$line" =~ $KT_END_MARKER_STRIP_RE ]]; then
                 line="${BASH_REMATCH[1]}"
                 [[ -z "$line" ]] && continue
@@ -1094,7 +1181,7 @@ kt_runner_filter_output() {
                     lines+=("$line")
                 fi
             fi
-        done < <(printf '%s\n' "$output" | sed -e 's/\r$//')
+        done <<< "$output"
         if (( ${#lines[@]} > 0 )); then
             printf '%s\n' "${lines[@]}"
         fi
@@ -1225,7 +1312,7 @@ kt_runner_execute_threaded() {
             # Use xargs for better parallelization if available
             # BASH_ENV="": a developer's BASH_ENV runs in no worker (U41 R6 of
             # the kbool `uses` U4 final review; each file's shell drops it too)
-            printf '%s\n' "${test_files[@]}" | BASH_ENV="" xargs -P "$num_workers" -I {} bash -c '
+            printf '%s\n' "${test_files[@]}" | BASH_ENV="" xargs -P "$num_workers" -I {} "$BASH" -c '
                 run_test "$1" "$2/$(basename "$1").result"
             ' _ {} "$results_dir"
         else

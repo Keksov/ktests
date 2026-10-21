@@ -184,12 +184,15 @@
 #             caller's locale etc.), starts the segment with `env
 #             --default-signal=INT,QUIT -i` (INT/QUIT trappable in the cells;
 #             plus setsid/perl for a new session in its own runtime; its nap
-#             fd closed), never signals it — except, in its own runtime, once
+#             fd closed; without a GNU env: perl, else `set -m` — see
+#             _kt_gate_spawn_detect), never signals it — except, in its own runtime, once
 #             when a stop goes unanswered for KT_GATE_STOP_WAIT — and never
 #             trusts its rc: OUT/seg-N.result is the verdict. A 1 s nap loop
 #             relays the segment's lines, checks the result and the stub,
 #             rewrites OUT/hb every 5 s, watches its own parent (kill -0 +
-#             /proc/PPID/winpid; parent gone = TERM) and the watchdog's
+#             /proc/PPID/winpid; off cygwin: its own ppid still PPID; parent
+#             gone = TERM; a parent that is `timeout`: its parent too) and
+#             the watchdog's
 #             OUT/seg-N.wdhb: silent for 30 ticks -> a rescue watchdog (the
 #             same `gate.sh --watchdog`, up to 3). TERM/INT/HUP: OUT/STOP,
 #             wait for the result, report, 128+N.
@@ -204,7 +207,9 @@
 #             USR1 — only while a cell runs, repeated until the segment
 #             acknowledges — on OUT/STOP, on 30 ticks without a fresh OUT/hb
 #             (launcher killed) and at the running cell's deadline
-#             (--timeout); when the segment itself is gone (a `taskkill /T`
+#             (--timeout; a tick gap over KT_GATE_SUSPEND_GAP s — the host
+#             slept — moves the deadline by the gap, the row says
+#             `host suspended Ns`); when the segment itself is gone (a `taskkill /T`
 #             tree kill) it stops the cells of the segment's session and
 #             writes the result (`segment-killed`).
 #   cell      the suite's tests.sh with HOME, TMPDIR/TMP/TEMP, USERPROFILE,
@@ -222,7 +227,7 @@
 #   summary.json, compare.txt (--compare), FAILFAST (+ FAILFAST.lock: one
 #   writer; --fail-fast: the first
 #   hard failure; segments stop before their next cell),
-#   seg-N.{spec,log,lines,cur,why,ack,pid,wdpid,wdhb,result,strays.txt}
+#   seg-N.{spec,log,lines,cur,why,ack,pid,wdpid,wdhb,susp,result,strays.txt}
 #   (+ seg-N.ckk with --warm), cells/NNN/{result,log.txt,summary,fails.txt,
 #   strays.txt} (+ log.1.txt, summary.1, fails.1.txt of an ENV first
 #   attempt; rerun-R/ of a --rerun-failed attempt: its own sandbox, log.txt,
@@ -241,7 +246,9 @@
 # spec): KT_GATE_HB_TICKS (stale heartbeat / silent watchdog, ticks, default
 # 30), KT_GATE_HB_EVERY (heartbeat period, ticks, default 5),
 # KT_GATE_STOP_WAIT (seconds the launcher waits for a stopping segment,
-# default 90).
+# default 90), KT_GATE_SUSPEND_GAP (a watchdog tick longer than this many
+# seconds is a host suspend, not the cell's time; default 30), KT_GATE_SPAWN (env|perl|jobctl: the segment start mode,
+# see _kt_gate_spawn_detect — the launcher only).
 #
 # Plain bash (DG2): no kbool/kkore/kklass. Sources suitejob.sh (and with it
 # strays.sh) and ../ktest_env_signatures.sh.
@@ -317,6 +324,24 @@ _kt_gate_readkv() {
     [[ -f "$1" ]] || return 1
     while IFS='=' read -r k v; do [[ -n "$k" ]] && _KT_GATE_KV["$k"]="$v"; done < "$1"
     return 0
+}
+
+# _kt_gate_setkv FILE KEY=VALUE... — the KEY=... lines of FILE replaced by
+# the given ones, the order kept, written atomically (_kt_gate_put). No
+# `sed -i` (launch L2.1, H5: BSD sed reads the script as the backup suffix).
+_kt_gate_setkv() {
+    local f="$1" l k
+    local -a L=() out=()
+    shift
+    [[ -f "$f" ]] || return 1
+    mapfile -t L < "$f"
+    for l in "${L[@]}"; do
+        for k in "$@"; do
+            [[ "$l" == "${k%%=*}="* ]] && { l="$k"; break; }
+        done
+        out+=( "$l" )
+    done
+    _kt_gate_put "$f" "${out[@]}"
 }
 
 # _kt_gate_line IDX VERDICT COUNTS WARN DUR_MS EXTRA — REPLY = the cell's
@@ -550,6 +575,11 @@ _kt_gate_chg_index() {
     [[ -d "$_KT_GATE_ROOT/kcl" ]] || return 0
     builtin cd -- "$_KT_GATE_ROOT" 2>/dev/null || return 0
     LC_ALL=C grep -rE --include='*.sh' -e '^[[:space:]]*kk\.(unit|uses)[[:space:]]' -- kcl > "$_KT_GATE_CHG_TMP" 2>/dev/null
+    # a grep without --include (busybox; PORTING H10): rc 2 -> find + grep -H
+    if (( $? > 1 )); then
+        LC_ALL=C find kcl -name '*.sh' -type f -exec grep -HE -e '^[[:space:]]*kk\.(unit|uses)[[:space:]]' {} + \
+            > "$_KT_GATE_CHG_TMP" 2>/dev/null
+    fi
     builtin cd -- "$old" 2>/dev/null
     while IFS= read -r line; do
         f="${line%%:*}" t="${line#*:}"
@@ -979,12 +1009,30 @@ _kt_gate_hb() { printf '%s\n' "$EPOCHREALTIME" > "$_KT_GATE_OUT/hb" 2>/dev/null;
 
 # _kt_gate_parent_ok — rc 1 when the launcher's parent is gone (also a
 # parent killed at the Windows level: cygwin keeps its pid, /proc loses it)
+# Off cygwin (launch L2.1; _KT_GATE_PPW=ppid): gone = this launcher was
+# reparented (its ppid now is not PP: init or a subreaper adopted it) — a
+# reused pid cannot fool that; an unreadable ppid (a failed ps) counts as alive
+# A parent that is `timeout` (`timeout N gate.sh …`) outlives its own parent
+# (a killed shell, a stopped tool: launch L2.1), so that one is watched the
+# same way (_KT_GATE_GP/_KT_GATE_GPW; ppid: the timeout's ppid still GP).
 _kt_gate_parent_ok() {
-    local w=""
     (( _KT_GATE_WATCH )) || return 0
-    kill -0 "$_KT_GATE_PP" 2>/dev/null || return 1
-    { read -r w < "/proc/$_KT_GATE_PP/winpid"; } 2>/dev/null
-    [[ -n "$w" && "$w" == "$_KT_GATE_PPW" ]]
+    _kt_gate_alive "$_KT_GATE_PP" "$_KT_GATE_PPW" "$$" || return 1
+    [[ -z "$_KT_GATE_GP" ]] || _kt_gate_alive "$_KT_GATE_GP" "$_KT_GATE_GPW" "$_KT_GATE_PP"
+}
+# _kt_gate_alive PID WINPID|ppid CHILD — rc 0 while PID lives as recorded:
+# its winpid unchanged (cygwin), or CHILD's ppid still PID (an unreadable
+# ppid — a failed ps — counts as alive)
+_kt_gate_alive() {
+    local w=""
+    kill -0 "$1" 2>/dev/null || return 1
+    if [[ "$2" == ppid ]]; then
+        kt_proc_ppid "$3"
+        [[ -z "$REPLY" || "$REPLY" == "$1" ]]
+        return $?
+    fi
+    { read -r w < "/proc/$1/winpid"; } 2>/dev/null
+    [[ -n "$w" && "$w" == "$2" ]]
 }
 
 _kt_gate_on_sig() { (( _KT_GATE_SIG )) || { _KT_GATE_SIG=$1; _KT_GATE_SIGWHY="$2"; }; }
@@ -1016,6 +1064,7 @@ kt_gate_spec() {
     KT_GATE_S_KEEP=$_KT_GATE_KEEP
     KT_GATE_S_WORKERS="$_KT_GATE_WORKERS"
     KT_GATE_S_HB_TICKS=$_KT_GATE_HB_TICKS
+    KT_GATE_S_SUSPEND_GAP=$_KT_GATE_SUSPEND_GAP
     KT_GATE_S_LAUNCHER="$$ ${_KT_GATE_RT}"
     KT_GATE_S_ARGS=( "${_KT_GATE_ARGS[@]}" )
     KT_GATE_S_ENV=()
@@ -1038,7 +1087,7 @@ kt_gate_spec() {
     done
     declare -p KT_GATE_S_VERSION KT_GATE_S_SEG KT_GATE_S_OUT KT_GATE_S_ROOT KT_GATE_S_SELF KT_GATE_S_BASH \
         KT_GATE_S_TOTAL KT_GATE_S_SW KT_GATE_S_VW KT_GATE_S_TIMEOUT KT_GATE_S_KEEP KT_GATE_S_WORKERS KT_GATE_S_HB_TICKS \
-        KT_GATE_S_LAUNCHER KT_GATE_S_ARGS KT_GATE_S_ENV KT_GATE_S_NREP KT_GATE_S_RERUN KT_GATE_S_FAILFAST KT_GATE_S_WARM \
+        KT_GATE_S_SUSPEND_GAP KT_GATE_S_LAUNCHER KT_GATE_S_ARGS KT_GATE_S_ENV KT_GATE_S_NREP KT_GATE_S_RERUN KT_GATE_S_FAILFAST KT_GATE_S_WARM \
         KT_GATE_S_C_IDX KT_GATE_S_C_SUITE KT_GATE_S_C_MODE \
         KT_GATE_S_C_CWD KT_GATE_S_C_REP > "$_KT_GATE_OUT/seg-$n.spec"
 }
@@ -1097,13 +1146,84 @@ _kt_gate_skip_put() {
         "flaky=" "ckk="
 }
 
-# _kt_gate_env_cmd K -> the array _KT_GATE_CMD: the start of runtime K's bash
-# with a clean environment (env -i), INT/QUIT default (see kt_gate_segment_run)
+# _kt_gate_spawn_detect — HOW a segment (and a rescue watchdog) is started
+# with SIGINT/SIGQUIT at their defaults, decided once per launcher (launch
+# L2.1, PORTING H4/H9). Why: an `&` child of a shell without job control
+# starts with INT and QUIT IGNORED, and a signal ignored at entry can never
+# be trapped again by that bash or its children (review R1: kcl/thttpserver
+# 006 lost its INT trap). _KT_GATE_SPAWN:
+#   env     a GNU env with --default-signal (`env`, else `genv`: FreeBSD's
+#           coreutils) resets them right before the exec of the target bash:
+#           `env --default-signal=INT,QUIT -i …`; a session of its own through
+#           setsid(1), else perl, in front of it — as before L2.1 (Windows,
+#           GNU Linux, Alpine with coreutils)
+#   perl    no GNU env, a perl with POSIX: `env -i … perl -MPOSIX -e '$SIG{INT}
+#           = $SIG{QUIT} = "DEFAULT"; POSIX::setsid(); exec @ARGV'` — perl
+#           resets them (unlike bash it may) and makes the session (FreeBSD,
+#           macOS)
+#   jobctl  neither (Alpine/busybox clean): the segment is started under
+#           `set -m` — bash ignores nothing in an async child when job control
+#           is on — so it leads a process group of its own; for a session of
+#           its own `setsid` runs as a plain child of a subshell that leads
+#           that group (no group leader: setsid() needs no fork, busybox's
+#           setsid neither waits nor has -w), and the subshell, which waits for
+#           it, is the stub. No setsid(1): the caller's session ([WARN]). INT
+#           and QUIT ignored when THIS launcher started cannot be undone then
+#           ([WARN]).
+# _KT_GATE_SESS = how a same-runtime segment gets its own session (setsid,
+# perl, jobctl-setsid, or "" = it shares the caller's).
+_kt_gate_spawn_detect() {
+    local e p want="${KT_GATE_SPAWN:-}"
+    # the test knob KT_GATE_SPAWN=env|perl|jobctl: only that mode (when it
+    # works here; else the next one down — jobctl always does)
+    case "$want" in env|perl|jobctl) ;; *) want="" ;; esac
+    _KT_GATE_SPAWN=jobctl _KT_GATE_ENVX="" _KT_GATE_PERLX="" _KT_GATE_SESS="" _KT_GATE_SPAWN_FORCED="$want"
+    [[ -z "$want" || "$want" == env ]] && for e in env genv; do
+        type -P "$e" >/dev/null 2>&1 || continue
+        if "$e" --default-signal=INT,QUIT -i "PATH=$PATH" true </dev/null >/dev/null 2>&1; then
+            _KT_GATE_SPAWN=env _KT_GATE_ENVX="$e"
+            break
+        fi
+    done
+    # cygwin (Git-bash, MSYS2) ships a GNU env: the mode is pinned there — a
+    # failed probe is an error, never a silent switch to perl or `set -m`
+    if [[ -z "$want" && "$_KT_GATE_SPAWN" != env && ( "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ) ]]; then
+        _kt_gate_usage_error "env --default-signal=INT,QUIT does not work in this cygwin runtime ($(type -P env 2>/dev/null || echo 'no env')): the segment start needs it here"
+    fi
+    if [[ "$_KT_GATE_SPAWN" == env ]]; then
+        if [[ -n "$_KT_GATE_SETSID" ]]; then _KT_GATE_SESS=setsid
+        elif [[ -n "$_KT_GATE_PERL" ]]; then _KT_GATE_SESS=perl; fi
+        return 0
+    fi
+    p=""; [[ "$want" != jobctl ]] && p="$(type -P perl 2>/dev/null)"
+    if [[ -n "$p" ]] && "$p" -MPOSIX -e 1 </dev/null >/dev/null 2>&1; then
+        _KT_GATE_SPAWN=perl _KT_GATE_PERLX="$p" _KT_GATE_SESS=perl
+    elif [[ -n "$_KT_GATE_SETSID" ]]; then
+        _KT_GATE_SESS=jobctl-setsid
+    fi
+    return 0
+}
+
+# _kt_gate_env_cmd K [SESSION] -> the array _KT_GATE_CMD: the start of runtime
+# K's bash with a clean environment (env -i), INT/QUIT default (see
+# _kt_gate_spawn_detect); SESSION 1 (perl only: the others add the session in
+# _kt_gate_seg_start/_kt_gate_spawn): setsid() too
 _kt_gate_env_cmd() {
     local b="${_KT_GATE_B_PATH[$1]}"
-    _KT_GATE_CMD=( env --default-signal=INT,QUIT -i "PATH=${b%/*}:$PATH" )
+    if [[ "${_KT_GATE_SPAWN:-env}" == env ]]; then
+        _KT_GATE_CMD=( "${_KT_GATE_ENVX:-env}" --default-signal=INT,QUIT -i "PATH=${b%/*}:$PATH" )
+    else
+        _KT_GATE_CMD=( env -i "PATH=${b%/*}:$PATH" )
+    fi
     [[ -n "${SYSTEMROOT:-}" ]] && _KT_GATE_CMD+=( "SYSTEMROOT=$SYSTEMROOT" )
     [[ -n "${WINDIR:-}" ]] && _KT_GATE_CMD+=( "WINDIR=$WINDIR" )
+    if [[ "${_KT_GATE_SPAWN:-env}" == perl ]]; then
+        if (( ${2:-0} )); then
+            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; POSIX::setsid(); exec @ARGV or exit 127' )
+        else
+            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; exec @ARGV or exit 127' )
+        fi
+    fi
     _KT_GATE_CMD+=( "$b" )
 }
 
@@ -1112,13 +1232,28 @@ _kt_gate_env_cmd() {
 # around it so no child inherits it (review R12); the other runtime's stub in
 # a process group of its own (a terminal's Ctrl-C reaches the launcher only —
 # a signal to the stub would TerminateProcess the child, G0). Not under
-# `set -m` in the own runtime: setsid() fails for a group leader.
+# `set -m` in the own runtime: setsid() fails for a group leader — except in
+# the jobctl spawn mode (_kt_gate_spawn_detect), where `set -m` is what keeps
+# INT/QUIT trappable; SAME 2 = the own runtime and a session of its own (the
+# segment: setsid from a subshell there).
 # REPLY = the stub's pid.
 _kt_gate_spawn() {
     local same=$1 log=$2
     shift 2
     _kt_strays_nap_close
-    if (( same )); then
+    if (( same )) && [[ "${_KT_GATE_SPAWN:-env}" == jobctl ]]; then
+        set -m 2>/dev/null
+        # no job control after all (`set -m` refused): the child gets INT/QUIT
+        # ignored — say so (L2.1 review)
+        [[ $- == *m* ]] || _kt_gate_say "[WARN] set -m did not take (no job control): this segment starts with SIGINT/SIGQUIT ignored"
+        if (( same == 2 )) && [[ "$_KT_GATE_SESS" == jobctl-setsid ]]; then
+            ( "$_KT_GATE_SETSID" "$@"; exit $? ) < /dev/null >> "$log" 2>&1 &
+        else
+            "$@" < /dev/null >> "$log" 2>&1 &
+        fi
+        REPLY=$!
+        set +m
+    elif (( same )); then
         "$@" < /dev/null >> "$log" 2>&1 &
         REPLY=$!
     else
@@ -1153,13 +1288,14 @@ _kt_gate_seg_start() {
     # control hands the child INT and QUIT as SIG_IGN, which no trap in the
     # segment or a cell can undo (review R1: kcl/thttpserver 006 lost its INT
     # trap); env resets them right before the exec of the target bash, through
-    # setsid/perl too
-    _kt_gate_env_cmd "$k"
+    # setsid/perl too — or perl, or `set -m` (_kt_gate_spawn_detect)
+    _kt_gate_env_cmd "$k" "${_KT_GATE_B_SAME[k]}"
     local -a cmd=( "${_KT_GATE_CMD[@]}" "$_KT_GATE_SELFM" --segment "$_KT_GATE_OUTM/seg-$n.spec" )
     # same runtime: a session of its own (the stray checks look at the
     # segment's session — never at the caller's other processes); the other
-    # runtime starts it as a session leader anyway
-    if (( _KT_GATE_B_SAME[k] )); then
+    # runtime starts it as a session leader anyway. The perl and jobctl spawn
+    # modes make it in _kt_gate_env_cmd / _kt_gate_spawn.
+    if (( _KT_GATE_B_SAME[k] )) && [[ "${_KT_GATE_SPAWN:-env}" == env ]]; then
         if [[ -n "$_KT_GATE_SETSID" ]]; then
             cmd=( "$_KT_GATE_SETSID" "${cmd[@]}" )
         elif [[ -n "$_KT_GATE_PERL" ]]; then
@@ -1170,7 +1306,7 @@ _kt_gate_seg_start() {
     _KT_GATE_K_POKED[k]=0 _KT_GATE_K_DONE[k]=0 _KT_GATE_K_STARTED[k]=1
     _kt_gate_hb
     : > "$_KT_GATE_OUT/seg-$n.log"
-    _kt_gate_spawn "${_KT_GATE_B_SAME[k]}" "$_KT_GATE_OUT/seg-$n.log" "${cmd[@]}"
+    _kt_gate_spawn "$(( _KT_GATE_B_SAME[k] ? 2 : 0 ))" "$_KT_GATE_OUT/seg-$n.log" "${cmd[@]}"
     _KT_GATE_K_STUB[k]=$REPLY
     _KT_GATE_SEG_T0[k]=$EPOCHREALTIME
 }
@@ -1828,6 +1964,7 @@ kt_gate_main() {
     kt_gate_bashes
     kt_gate_compare_base
     _KT_GATE_HB_TICKS="${KT_GATE_HB_TICKS:-30}"; [[ "$_KT_GATE_HB_TICKS" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_HB_TICKS=30
+    _KT_GATE_SUSPEND_GAP="${KT_GATE_SUSPEND_GAP:-30}"; [[ "$_KT_GATE_SUSPEND_GAP" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_SUSPEND_GAP=30
     _KT_GATE_HB_EVERY="${KT_GATE_HB_EVERY:-5}"; [[ "$_KT_GATE_HB_EVERY" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_HB_EVERY=5
     _KT_GATE_STOP_WAIT="${KT_GATE_STOP_WAIT:-90}"; [[ "$_KT_GATE_STOP_WAIT" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_STOP_WAIT=90
     _KT_GATE_SETSID="$(type -P setsid 2>/dev/null)"; _KT_GATE_PERL=""
@@ -1838,7 +1975,29 @@ kt_gate_main() {
     [[ "$(trap -p HUP)" == *"''"* ]] && _KT_GATE_NOHUP=1
     (( _KT_GATE_NOHUP )) && _KT_GATE_WATCH=0
     { read -r _KT_GATE_PPW < "/proc/$PPID/winpid"; } 2>/dev/null
+    # off cygwin: watched by this launcher's own ppid (_kt_gate_parent_ok)
+    if [[ -z "$_KT_GATE_PPW" ]] && kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        kt_proc_ppid "$$"; [[ "$REPLY" == "$PPID" ]] && _KT_GATE_PPW=ppid
+    fi
     [[ "$PPID" =~ ^[0-9]+$ ]] && (( PPID > 1 )) && [[ -n "$_KT_GATE_PPW" ]] || _KT_GATE_WATCH=0
+    # the parent is `timeout`: its parent is watched as well (_kt_gate_parent_ok)
+    _KT_GATE_GP="" _KT_GATE_GPW=""
+    if (( _KT_GATE_WATCH )); then
+        kt_proc_cmd "$PPID"; REPLY="${REPLY%% *}"
+        if [[ "${REPLY##*/}" == timeout || "${REPLY##*/}" == timeout.exe ]]; then
+            kt_proc_ppid "$PPID"
+            if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( REPLY > 1 )); then
+                _KT_GATE_GP=$REPLY
+                if [[ "$_KT_GATE_PPW" == ppid ]]; then _KT_GATE_GPW=ppid
+                else { read -r _KT_GATE_GPW < "/proc/$_KT_GATE_GP/winpid"; } 2>/dev/null; fi
+                [[ -n "$_KT_GATE_GPW" ]] || _KT_GATE_GP=""
+            fi
+        fi
+    fi
+    _kt_gate_spawn_detect
+    # INT/QUIT ignored when this launcher started: only env/perl undo that
+    _KT_GATE_INTIGN=0
+    [[ "$(trap -p INT QUIT)" == *"''"* ]] && _KT_GATE_INTIGN=1
 
     _KT_GATE_B_SAME=()
     for (( k = 0; k < ${#_KT_GATE_B_PATH[@]}; k++ )); do
@@ -1890,19 +2049,27 @@ kt_gate_main() {
     (( _KT_GATE_FAILFAST )) && l+=" --fail-fast"
     (( _KT_GATE_RERUN > 0 )) && l+=" --rerun-failed $_KT_GATE_RERUN"
     [[ -n "$l" ]] && _kt_gate_say "gate options:$l"
+    _kt_gate_say "gate: segment start = $_KT_GATE_SPAWN${_KT_GATE_SPAWN_FORCED:+ (forced by KT_GATE_SPAWN=$_KT_GATE_SPAWN_FORCED)}"
     for l in "${_KT_GATE_CHG_LINES[@]}"; do _kt_gate_say "$l"; done
     [[ -n "${_KT_GATE_OUT_WARN:-}" ]] && _kt_gate_say "$_KT_GATE_OUT_WARN"
     for l in "${_KT_GATE_CMP_NOTES[@]}"; do _kt_gate_say "$l"; done
     [[ -n "$_KT_GATE_COMPARE" ]] && _kt_gate_say "gate compare: base $_KT_GATE_CMP_FILE"
     (( _KT_GATE_ONE )) && _kt_gate_say "[WARN] one runtime only (no --bash, no KT_GATE_BASHES): $BASH_VERSION"
-    if [[ -z "$_KT_GATE_SETSID$_KT_GATE_PERL" ]]; then
+    if [[ -z "$_KT_GATE_SESS" ]]; then
         for (( k = 0; k < ${#_KT_GATE_B_PATH[@]}; k++ )); do
             [[ "${_KT_GATE_B_RT[k]}" == "$_KT_GATE_RT" ]] && { _kt_gate_say "[WARN] no setsid/perl: a same-runtime segment shares the caller's session (its stray checks see the caller's processes)"; break; }
         done
     fi
+    if [[ "$_KT_GATE_SPAWN" == jobctl ]] && (( _KT_GATE_INTIGN )); then
+        _kt_gate_say "[WARN] SIGINT/SIGQUIT were ignored when the gate started and neither a GNU env nor perl can reset them: the cells cannot trap INT/QUIT"
+    fi
+    if ! kt_proc_init; then
+        _kt_gate_say "[WARN] no process table ($KT_PROC_WHY): the stray checks are n/a - a STRAY cannot be seen"
+    fi
     if (( ! _KT_GATE_WATCH )); then
         if (( _KT_GATE_NOHUP )); then _kt_gate_say "gate: parent watch off (--nohup / SIGHUP ignored)"
-        else _kt_gate_say "gate: parent watch off (no cygwin parent to watch)"; fi
+        elif [[ "$KT_PROC_BACKEND" == cygwin ]]; then _kt_gate_say "gate: parent watch off (no cygwin parent to watch)"
+        else _kt_gate_say "gate: parent watch off (no parent to watch)"; fi
     fi
 
     if (( _KT_GATE_PARALLEL && ${#_KT_GATE_B_PATH[@]} > 1 )); then
@@ -2140,6 +2307,7 @@ _kt_gate_seg_attempt() {
     _kt_gate_seg_why
     [[ "$REPLY" == timeout\ * ]] && printf '%s\n' "$REPLY" > "$_KT_GATE_F_ACK"
     _kt_strays_ms "$EPOCHREALTIME"; t0=$REPLY
+    rm -f -- "$_KT_GATE_F_SUSP" 2>/dev/null   # before `run`: the watchdog's record is this attempt's
     printf 'run %s %s\n' "$idx" "$(( EPOCHSECONDS + KT_GATE_S_TIMEOUT ))" > "$_KT_GATE_F_CUR"
     KT_SUITEJOB_SINCE="$EPOCHREALTIME"     # this cell's stray window
     _KT_GATE_BRK=0
@@ -2197,6 +2365,11 @@ _kt_gate_seg_attempt() {
     fi
     _kt_gate_seg_scan_log "$log"
     _KT_GATE_A_T=$tt _KT_GATE_A_P=$pp _KT_GATE_A_F=$ff
+    # the host slept (or stalled) while the cell ran: the watchdog moved the
+    # deadline by it (seg-N.susp = `IDX SECONDS`); the duration still holds it
+    local sidx="" ssec=""
+    { read -r sidx ssec < "$_KT_GATE_F_SUSP"; } 2>/dev/null
+    [[ "$sidx" == "$idx" && "$ssec" =~ ^[1-9][0-9]*$ ]] || ssec=""
     if (( brk && ! timedout )); then
         v=INTERRUPTED
         case "$why" in
@@ -2239,6 +2412,7 @@ _kt_gate_seg_attempt() {
     else
         v=PASS
     fi
+    [[ -n "$ssec" ]] && r+="${r:+; }host suspended ${ssec}s, not counted against --timeout"
     _KT_GATE_A_VERDICT=$v _KT_GATE_A_REASON="$r"
     printf '%s\n' "${_KT_GATE_FAILS[@]}" > "$cd/fails.txt"
     [[ "$v" == INTERRUPTED ]] && return 2
@@ -2468,9 +2642,14 @@ kt_gate_segment_main() {
     _KT_GATE_F_LINES="$KT_GATE_S_OUT/seg-$n.lines" _KT_GATE_F_CUR="$KT_GATE_S_OUT/seg-$n.cur"
     _KT_GATE_F_WHY="$KT_GATE_S_OUT/seg-$n.why" _KT_GATE_F_ACK="$KT_GATE_S_OUT/seg-$n.ack"
     _KT_GATE_F_RES="$KT_GATE_S_OUT/seg-$n.result" _KT_GATE_F_WDPID="$KT_GATE_S_OUT/seg-$n.wdpid"
+    _KT_GATE_F_SUSP="$KT_GATE_S_OUT/seg-$n.susp"
     _KT_GATE_BRK=0 _KT_GATE_SEGSIG=0 _KT_GATE_WD_RESPAWN=0
     local sid="?" wp="?"
     { read -r sid < "/proc/$$/sid"; read -r wp < "/proc/$$/winpid"; } 2>/dev/null
+    # off cygwin: the session from the process table (no winpid there)
+    if [[ "$sid" == "?" ]] && kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin ]]; then
+        kt_proc_sid "$$"; [[ "$REPLY" =~ ^[0-9]+$ ]] && sid="$REPLY"
+    fi
     # pid winpid session start: for the launcher (tree-kill tests, a rescue
     # watchdog) and the watchdog (whose session to stop)
     printf '%s %s %s %s\n' "$$" "$wp" "$sid" "$_KT_GATE_SEG_START" > "$KT_GATE_S_OUT/seg-$n.pid"
@@ -2517,7 +2696,7 @@ kt_gate_segment_main() {
             printf -v f '%s/cells/%03d/result' "$KT_GATE_S_OUT" "$idx"
             _kt_gate_readkv "$f" || continue
             [[ "${_KT_GATE_KV[verdict]}" == STRAY || "${_KT_GATE_KV[verdict]}" == INTERRUPTED ]] && continue
-            sed -i "s|^verdict=.*|verdict=STRAY|; s|^reason=.*|reason=stray process(es) found by the segment's final check, stopped|" "$f"
+            _kt_gate_setkv "$f" "verdict=STRAY" "reason=stray process(es) found by the segment's final check, stopped"
             _kt_gate_cellvars "${KT_GATE_S_C_MODE[c]}" "${KT_GATE_S_C_CWD[c]}" "${KT_GATE_S_C_SUITE[c]}" "${KT_GATE_S_C_REP[c]}"
             _kt_gate_seg_failfast "$idx" STRAY "$c"
             _kt_gate_line "$idx" STRAY "${_KT_GATE_KV[passed]}/${_KT_GATE_KV[total]}" "${_KT_GATE_KV[warn]:-0}" \
@@ -2561,7 +2740,8 @@ _kt_gate_spec_native() {
 kt_gate_watchdog() {
     local main="$1" since="$2" n="$KT_GATE_S_SEG" o="$KT_GATE_S_OUT" miss=0 why="" new ack cur sid=""
     local mark="$o/seg-$n.mark.$$" fwhy="$o/seg-$n.why" fack="$o/seg-$n.ack" fcur="$o/seg-$n.cur" res="$o/seg-$n.result"
-    local wdhb="$o/seg-$n.wdhb"
+    local wdhb="$o/seg-$n.wdhb" fsusp="$o/seg-$n.susp" last now gap skew=0 skcur="" sa sb
+    local gmax="${KT_GATE_S_SUSPEND_GAP:-30}"
     trap 'rm -f -- "$mark"; exit 0' TERM
     trap '' INT HUP USR1
     [[ -e "$res" ]] && exit 0
@@ -2569,8 +2749,10 @@ kt_gate_watchdog() {
     printf '%s\n' "$$" > "$o/seg-$n.wdpid"
     _kt_strays_nap_open
     : > "$mark"
+    last=$EPOCHSECONDS
     while :; do
         _kt_strays_nap 1
+        now=$EPOCHSECONDS gap=$(( EPOCHSECONDS - last )) last=$EPOCHSECONDS
         : > "$wdhb"                         # alive (the launcher and the segment look)
         [[ -e "$res" ]] && { rm -f -- "$mark"; exit 0; }
         if ! kill -0 "$main" 2>/dev/null; then
@@ -2580,12 +2762,27 @@ kt_gate_watchdog() {
         fi
         if [[ "$o/hb" -nt "$mark" ]]; then : > "$mark"; miss=0; else miss=$(( miss + 1 )); fi
         cur=""; { IFS= read -r cur < "$fcur"; } 2>/dev/null
+        # a 1 s tick that took more than SUSPEND_GAP s: the host slept (or
+        # the machine stalled) — not the running cell's time: its deadline
+        # moves by the gap, recorded in seg-N.susp (`IDX SECONDS`: the
+        # segment notes it; a rescue watchdog takes it over)
+        if [[ "$cur" != "$skcur" ]]; then
+            skcur="$cur" skew=0
+            if [[ "$cur" =~ ^run\ ([0-9]+)\  ]]; then
+                sa="" sb=""; { read -r sa sb < "$fsusp"; } 2>/dev/null
+                [[ "$sa" == "${BASH_REMATCH[1]}" && "$sb" =~ ^[0-9]+$ ]] && skew=$sb
+            fi
+        fi
+        if (( gap > gmax )) && [[ "$cur" =~ ^run\ ([0-9]+)\  ]]; then
+            skew=$(( skew + gap - 1 ))
+            printf '%s %s\n' "${BASH_REMATCH[1]}" "$skew" > "$fsusp"
+        fi
         new=""
         if [[ -e "$o/STOP" ]]; then
             new=stop
         elif (( miss >= KT_GATE_S_HB_TICKS )); then
             new=stale
-        elif [[ "$cur" =~ ^run\ ([0-9]+)\ ([0-9]+)$ ]] && (( EPOCHSECONDS >= BASH_REMATCH[2] )); then
+        elif [[ "$cur" =~ ^run\ ([0-9]+)\ ([0-9]+)$ ]] && (( now >= BASH_REMATCH[2] + skew )); then
             new="timeout ${BASH_REMATCH[1]}"
         fi
         if [[ -n "$new" && "$new" != "$why" && "$why" != stop && "$why" != stale ]]; then

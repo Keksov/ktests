@@ -37,7 +37,7 @@ kt046_mark() { if [[ -d "$D" ]]; then echo "present ${D##*/}"; else echo "GONE $
 kt_fixture_cleanup_register kt046_mark
 echo "$$" > "$D/token"
 : > "$KT046_SYNC/ready.$$"
-exec {w}<>/dev/ptmx 2>/dev/null || exec {w}</dev/null
+{ [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; } 2>/dev/null || exec {w}</dev/null
 for (( i = 0; i < 100; i++ )); do
     r=( "$KT046_SYNC"/ready.* )
     (( ${#r[@]} >= 2 )) && break

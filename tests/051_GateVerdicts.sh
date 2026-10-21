@@ -4,7 +4,8 @@
 # code — PASS (0), warn=N (a column, still PASS), ENV on the first attempt
 # only (re-run once, PASS, both attempts kept), ENV on both (3), FAIL with its
 # [FAIL] lines (1), TIMEOUT with the group stopped, STRAY with the leaked
-# process stopped, CRASH (no summary) — and the hermetic cell: a polluted
+# process stopped, CRASH (no summary), a host suspend (a stopped watchdog:
+# the deadline moves, PASS with `host suspended Ns`) — and the hermetic cell: a polluted
 # caller (a `debug = quiet` config in its HOME/.kbool and USERPROFILE/.kbool —
 # fake ones in this file's tmp, never the real HOME —, KBOOL_HOME, BASH_ENV,
 # VERBOSITY, CDPATH, an exported variable and exported functions incl.
@@ -27,20 +28,7 @@ MK="$LIB/tests/gate_fixtures/mkroot.sh"
 unset KT_GATE_BASHES
 V="${BASH_VERSION%%(*}"
 
-kt051_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt051_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybox timeout watcher waited out — launch L2.1)
 # kt051_gate OUTFILE ARGS... — gate.sh bounded; RC; the output in OUTFILE
 kt051_gate() {
     local of="$1"; shift
@@ -138,10 +126,14 @@ kt051_pids "$RD"; leftD="$REPLY"
 kt_test_start "hang: TIMEOUT at --timeout 10 (reason in the line), its group stopped — nothing of it left"
 kt051_line "$od" 2; l2="$REPLY"
 kt051_kv "$OD/cells/002/result" verdict; v2="$REPLY"
-if [[ "$l2" =~ \ hang\ +TIMEOUT\  && "$l2" == *"(timeout 10s, group stopped)"* && "$v2" == TIMEOUT && -z "$leftD" ]]; then
-    kt_test_pass "[$l2]"
+# the stop itself (deadline -> the cell's end) is quick in every runtime:
+# under 60 s (launch L2.1: a 27-minute "stop" on cygwin was a host sleep)
+kt051_kv "$OD/cells/002/result" duration_ms; stopms=$(( ${REPLY:-999999} - 10000 ))
+if [[ "$l2" =~ \ hang\ +TIMEOUT\  && "$l2" == *"(timeout 10s, group stopped)"* && "$v2" == TIMEOUT && -z "$leftD" ]] \
+   && (( stopms < 60000 )); then
+    kt_test_pass "[$l2] stop ${stopms}ms after the deadline"
 else
-    kt_test_fail "[$l2] verdict=$v2 left=[$leftD]"
+    kt_test_fail "[$l2] verdict=$v2 left=[$leftD] stop=${stopms}ms"
 fi
 kt_test_start "leak: STRAY (the suite passed, it left a detached sleep) — listed with the cell, stopped"
 kt051_line "$od" 3; l3="$REPLY"
@@ -160,6 +152,47 @@ if [[ "$l1" =~ \ crash\ +CRASH\  && "$l1" == *"(no summary from the runner (rc 1
     kt_test_pass "[$l1]; run ${dt}s: ${od##*$'\n'}"
 else
     kt_test_fail "rc=$RC dt=$dt | ${od//$'\n'/ | }"
+fi
+
+# ---- S: a host suspend is not the cell's time (launch L2.1) --------------------------
+# A host that slept during a cell (a laptop on battery: Kernel-Power 42) made
+# a 3-minute cell a TIMEOUT at wake-up. Here the watchdog is SIGSTOPped past
+# the cell's deadline (--timeout 6, KT_GATE_SUSPEND_GAP=2) while the cell naps
+# (gate fixture nap: TMPDIR/gfx-nap.ready, then it waits for gfx-nap.go):
+# once CONTinued, the watchdog's tick gap moves the deadline — the cell ends
+# PASS when told, its row and result say `host suspended Ns`.
+RSU="$TMP/rootSU"; OSU="$TMP/outSU"
+bash "$MK" "$RSU" nap
+( export KT_GATE_SUSPEND_GAP=2; exec timeout -k 10 150 bash "$G" --root "$RSU" --out "$OSU" --timeout 6 all ) > "$TMP/su.out" 2>&1 < /dev/null &
+gpS=$!
+wdS="" okS="" dlS="" curS=""
+for (( i = 0; i < 600; i++ )); do   # the cell at its nap, the watchdog known: <= 60 s
+    { read -r wdS < "$OSU/seg-1.wdpid"; } 2>/dev/null
+    [[ -e "$OSU/cells/001/tmp/gfx-nap.ready" && "$wdS" =~ ^[0-9]+$ ]] && { okS=1; break; }
+    sleep 0.1
+done
+if [[ -n "$okS" ]] && kill -STOP "$wdS" 2>/dev/null; then
+    { read -r curS < "$OSU/seg-1.cur"; } 2>/dev/null
+    [[ "$curS" =~ ^run\ 1\ ([0-9]+)$ ]] && dlS=${BASH_REMATCH[1]}
+    # past the deadline by 2 s (bounded: 30 s)
+    for (( i = 0; i < 300 && ${dlS:-0} > 0 && EPOCHSECONDS < dlS + 2; i++ )); do sleep 0.1; done
+    kill -CONT "$wdS" 2>/dev/null
+    sleep 3                             # its ticks: the old watchdog stopped the cell here
+fi
+: > "$OSU/cells/001/tmp/gfx-nap.go"
+wait "$gpS"; RC=$?
+os="$(cat "$TMP/su.out")"
+kt051_line "$os" 1; lS="$REPLY"
+kt051_kv "$OSU/cells/001/result" verdict; vS="$REPLY"
+kt051_kv "$OSU/cells/001/result" reason; rS="$REPLY"
+suspS=""; { read -r suspS < "$OSU/seg-1.susp"; } 2>/dev/null
+kt_test_start "host suspend: the watchdog stopped past --timeout 6 -> the deadline moves, PASS, 'host suspended Ns' in the row"
+if [[ -n "$okS" && -n "$dlS" && "$RC" == 0 && "$vS" == PASS && "$lS" =~ \ nap\ +PASS\ +1/1\  \
+      && "$lS" == *"(host suspended "*"s, not counted against --timeout)"* && "$rS" == "host suspended "* \
+      && "$suspS" =~ ^1\ ([0-9]+)$ ]] && (( BASH_REMATCH[1] >= 6 )); then
+    kt_test_pass "[$lS] susp=[$suspS]"
+else
+    kt_test_fail "ready=$okS wd=$wdS cur=[$curS] rc=$RC verdict=$vS reason=[$rS] susp=[$suspS] | ${os//$'\n'/ | }"
 fi
 
 # ---- E: the hermetic cell ------------------------------------------------------------
@@ -217,7 +250,9 @@ for t in GFX_CALLER_VAR KBOOL_HOME KBOOL_CONFIG VERBOSITY= CDPATH= GLOBIGNORE= B
     [[ "$d2" == *"$t"* ]] && bad+="[$t] "
 done
 c='/.*/cells/001'
-for re in "LC_ALL=C" "HOME=$c/home" "USERPROFILE=[A-Za-z]:$c/home" "ProgramData=[A-Za-z]:$c/etc" "__KK_CFG_ETC=$c/etc" \
+# the Windows variables carry the mixed C:/ form — a plain path without cygpath (launch L2.1)
+drv=""; command -v cygpath >/dev/null 2>&1 && drv="[A-Za-z]:"
+for re in "LC_ALL=C" "HOME=$c/home" "USERPROFILE=$drv$c/home" "ProgramData=$drv$c/etc" "__KK_CFG_ETC=$c/etc" \
           "TMPDIR=$c/tmp" "TMP=$c/tmp" "TEMP=$c/tmp" "KKLASS_CKK_DIR=$c/ckk" "PWD_AT_START=$c/cwd" \
           "FDS=0 1 2( 255)?"; do
     kt051_has "$d2" "$re" || bad+="[no $re] "

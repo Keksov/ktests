@@ -63,7 +63,15 @@ if [[ -n "${_KT_FORKSTORM_SOURCED:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 _KT_FORKSTORM_SOURCED=1
 
+if ! declare -F kt_proc_init >/dev/null; then
+    __kt_fs_src="${BASH_SOURCE[0]}"
+    __kt_fs_dir="${__kt_fs_src%/*}"; [[ "$__kt_fs_dir" == "$__kt_fs_src" ]] && __kt_fs_dir=.
+    source "$__kt_fs_dir/../ktest_proc.sh"
+    unset __kt_fs_src __kt_fs_dir
+fi
+
 declare -ga KT_STORM_PIDS=()
+declare -gA _KT_STORM_PT_PP=() _KT_STORM_PT_PG=() _KT_STORM_PT_SID=() _KT_STORM_PT_STATE=() _KT_STORM_PT_RAW=() _KT_STORM_PT_ST=() _KT_STORM_PT_CMD=()
 declare -g  KT_STORM_TAG=""
 
 # The worker body. It must not contain the marker text itself (only $0 does),
@@ -97,6 +105,20 @@ _kt_storm_marker() { printf -v REPLY 'forkstorm-worker:%s' "$1"; }
 kt_storm_scan() {
     local tag="${1:-}" f n=0
     local -a argv
+    if kt_proc_init && [[ "$KT_PROC_BACKEND" == ps ]]; then
+        # no /proc (launch L2.1): the command lines of one ps, the marker as
+        # a whole word (argv[3] cannot be told apart in a joined line)
+        kt_proc_snapshot --cmd _KT_STORM_PT_
+        for f in "${!_KT_STORM_PT_CMD[@]}"; do
+            if [[ -n "$tag" ]]; then
+                [[ "${_KT_STORM_PT_CMD[$f]} " == *" forkstorm-worker:$tag "* ]] && n=$(( n + 1 ))
+            else
+                [[ "${_KT_STORM_PT_CMD[$f]}" == *" forkstorm-worker:"* ]] && n=$(( n + 1 ))
+            fi
+        done
+        RESULT=$n
+        return 0
+    fi
     for f in /proc/[0-9]*/cmdline; do
         argv=()
         { mapfile -d '' -t argv < "$f"; } 2>/dev/null || continue
@@ -116,6 +138,13 @@ _kt_storm_scan_pids() {
     local want="forkstorm-worker:$1" f p
     local -a argv
     KT_STORM_FOUND=()
+    if kt_proc_init && [[ "$KT_PROC_BACKEND" == ps ]]; then
+        kt_proc_snapshot --cmd _KT_STORM_PT_
+        for p in "${!_KT_STORM_PT_CMD[@]}"; do
+            [[ "${_KT_STORM_PT_CMD[$p]} " == *" $want "* ]] && KT_STORM_FOUND+=( "$p" )
+        done
+        return 0
+    fi
     for f in /proc/[0-9]*/cmdline; do
         argv=()
         { mapfile -d '' -t argv < "$f"; } 2>/dev/null || continue

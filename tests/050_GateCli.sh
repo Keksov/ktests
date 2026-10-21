@@ -20,24 +20,12 @@ kt_test_init "GateCli" "$SCRIPT_DIR" "$@"
 TMP="$(kt_fixture_tmpdir)"
 LIB="$(cd "$KTESTS_LIB_DIR" && pwd)"
 G="$LIB/tools/gate.sh"
+CYGP=""; command -v cygpath >/dev/null 2>&1 && CYGP=1   # Windows (cygwin) path forms only with cygpath (launch L2.1)
 MK="$LIB/tests/gate_fixtures/mkroot.sh"
 unset KT_GATE_BASHES
 
 # kt050_pids TEXT — REPLY = the pids (not this shell) whose command line contains TEXT
-kt050_pids() {
-    local f p
-    local -a a
-    REPLY=""
-    for f in /proc/[0-9]*/cmdline; do
-        a=()
-        { mapfile -d '' -t a < "$f"; } 2>/dev/null || continue
-        [[ "${a[*]}" == *"$1"* ]] || continue
-        p="${f#/proc/}"; p="${p%/cmdline}"
-        [[ "$p" == "$$" || "$p" == "$BASHPID" ]] && continue
-        REPLY+="$p "
-    done
-    REPLY="${REPLY% }"
-}
+kt050_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybox timeout watcher waited out — launch L2.1)
 
 # kt050_gate OUTFILE ARGS... — run gate.sh (bounded), rc in RC, output in OUTFILE
 kt050_gate() {
@@ -173,7 +161,7 @@ else
     kt_test_fail "progress differs: $([[ "$p" == "$o" ]] && echo no || echo yes) FINISHED [$fin] marker [$mk]"
 fi
 
-kt_test_start "the spec: mixed C:/... paths only (any mount prefix; review R11), the cells in order, args, the caller's locale and TZ"
+kt_test_start "the spec: mixed C:/... paths only (any mount prefix; review R11) — absolute POSIX paths without cygpath —, the cells in order, args, the caller's locale and TZ"
 spec="$(source "$O/seg-1.spec" 2>&1
         printf 'out=%s\nroot=%s\nself=%s\n' "$KT_GATE_S_OUT" "$KT_GATE_S_ROOT" "$KT_GATE_S_SELF"
         printf 'cells=%s\n' "${KT_GATE_S_C_IDX[*]}:${KT_GATE_S_C_SUITE[*]}:${KT_GATE_S_C_MODE[*]}:${KT_GATE_S_C_CWD[*]}:${KT_GATE_S_C_REP[*]}"
@@ -183,7 +171,7 @@ spec="$(source "$O/seg-1.spec" 2>&1
 bad=""
 for k in out root self; do
     v="$(sed -n "s/^$k=//p" <<< "$spec")"
-    [[ "$v" =~ ^[A-Za-z]:/ ]] || bad+="[$k=$v] "
+    if [[ -n "$CYGP" ]]; then [[ "$v" =~ ^[A-Za-z]:/ ]] || bad+="[$k=$v] "; else [[ "$v" == /* ]] || bad+="[$k=$v] "; fi
 done
 [[ "$spec" == *$'\ncells=1 2:c/uniq w:single single:neutral neutral:1 1\n'* ]] || bad+="[cells] "
 [[ "$spec" == *$'\nargs=-n 1\n'* ]] || bad+="[args] "
@@ -240,7 +228,7 @@ fi
 # ---- rotation --------------------------------------------------------------------
 # ---- rotation (review R3, F15) ------------------------------------------------
 bash -c 'exit 0' & dead=$!; wait "$dead"
-rt=""; while read -r a b c; do [[ "$b" == / ]] && { rt="$a"; break; }; done < /proc/mounts
+rt=none; [[ -r /proc/mounts ]] && while read -r a b c; do [[ "$b" == / ]] && { rt="$a"; break; }; done < /proc/mounts   # "none" without it, as gate.sh (launch L2.1)
 # kt050_mark DIR PID START CREATED RUNTIME [complete|incomplete] — a v2 marker
 kt050_mark() {
     mkdir -p "$1"
@@ -272,7 +260,8 @@ kt050_mark "$D/oth" "$dead" "$(( now - 100 ))" 1 other-runtime   # other runtime
 # other runtime, old, INTERRUPTED: its launcher alive (hb fresh) / gone (hb 10 min old) — R13
 kt050_mark "$D/othlive" "$dead" 1004 1 other-runtime; : > "$D/othlive/INTERRUPTED"; : > "$D/othlive/hb"
 kt050_mark "$D/othdead" "$dead" 1005 1 other-runtime; : > "$D/othdead/INTERRUPTED"; : > "$D/othdead/hb"
-touch -d '10 minutes ago' "$D/othdead/hb"
+# touch -t (POSIX), not GNU's -d '10 minutes ago' (launch L2.1)
+printf -v kt_ts '%(%Y%m%d%H%M.%S)T' $(( EPOCHSECONDS - 600 )); touch -t "$kt_ts" "$D/othdead/hb"
 kt050_mark "$D/inc" "$dead" "$(( now - 100 ))" 1 "$rt" incomplete # incomplete, young
 mkdir -p "$D/plain"
 TMPDIR="$TMP/rt" kt050_gate "$TMP/rot2.out" --root "$F" w
@@ -342,6 +331,11 @@ fi
 
 # ---- Ctrl-Z (review R13) ---------------------------------------------------------
 kt_test_start "TSTP to the launcher: '[WARN] suspending a gate is not supported', ignored, the run goes on"
+if [[ "$OSTYPE" != msys* && "$OSTYPE" != cygwin* && "$(trap -p TSTP)" == *"''"* ]]; then   # never skipped on cygwin
+    # TSTP ignored when this file started (inherited: a FreeBSD ssh session —
+    # launch L2.1): the launcher cannot trap it, there is nothing to see
+    kt_test_pass "skipped: SIGTSTP is ignored in this environment (inherited) - no trap can be set"
+else
 R13="$TMP/r13"; bash "$MK" "$R13" hang
 set -m
 timeout -k 10 120 bash "$G" --root "$R13" --out "$TMP/o13" --timeout 3 all > "$TMP/o13.out" 2>&1 < /dev/null &
@@ -358,6 +352,7 @@ if [[ "$rc" == 1 && "$o13" == *"[WARN] suspending a gate is not supported"* && "
 else
     kt_test_fail "rc=$rc lp=$lp | ${o13//$'\n'/ | }"
 fi
+fi
 
 kt_test_start "--out inside the tree under test: a [WARN] (the segments source OUT/seg-N.spec: a private dir is needed), the run goes on; outside it: no warning (G4 review R11)"
 kt050_gate "$TMP/oin.out" --root "$F" --out "$F/gate-out" c/uniq; rin=$RC
@@ -371,6 +366,13 @@ else
 fi
 
 kt_test_start "the default root is PRIVATE and the same for both launchers: TMPDIR unset -> %LOCALAPPDATA%/Temp, else the per-user folder (cygpath -F 28) — never MSYS2's /tmp, also with no environment at all (G4 review R13)"
+if [[ -z "$CYGP" ]]; then
+    # no cygpath (Linux, BSD, macOS): TMPDIR when set, else /tmp (launch L2.1)
+    pt="$( source "$G" || exit 9
+        unset TMPDIR LOCALAPPDATA; _kt_gate_ptmp; printf '%s|' "$REPLY"
+        TMPDIR="$TMP/given"; _kt_gate_ptmp; printf '%s' "$REPLY" )"
+    if [[ "$pt" == "/tmp|$TMP/given" ]]; then kt_test_pass "[$pt] (no cygpath: TMPDIR, else /tmp)"; else kt_test_fail "[$pt] want [/tmp|$TMP/given]"; fi
+else
 pt="$( source "$G" || exit 9; _KT_GATE_CYGPATH=1
     unset TMPDIR; LOCALAPPDATA="$(cygpath -m "$TMP/lad")"; mkdir -p "$TMP/lad/Temp"; _kt_gate_ptmp; printf '%s|' "$REPLY"
     unset LOCALAPPDATA; _kt_gate_ptmp; printf '%s|' "$REPLY"
@@ -387,6 +389,7 @@ if [[ "$p1" == "$want_la" && "$p2" == "$want_f28" && "$p3" == "$(cygpath -m "$TM
     kt_test_pass "[$pt] other: [${pto:-no second runtime}]"
 else
     kt_test_fail "[$pt] want [$want_la|$want_f28|…] other=[$pto]"
+fi
 fi
 kt_test_start "a 5.2 and a 5.3 launcher (TMPDIR unset, the same LOCALAPPDATA) land in ONE default root, and --compare LAST from either finds the other's run (G4 review R13)"
 if [[ -n "$OTHER" ]]; then

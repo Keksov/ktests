@@ -33,14 +33,17 @@ MK="$LIB/tests/gate_fixtures/mkroot.sh"
 V="${BASH_VERSION%%(*}"
 R="$TMP/root"
 TAG="${TMP##*/}/root"      # in every command line of the fixture runs, in either spelling
+TRUE="$(type -P true)"   # /usr/bin/true, /bin/true (busybox): any non-bash executable
 bash "$MK" "$R" tcenv
 TC="$R/ktests/tools/timing_check.sh"
 SUITE="$R/tcenv/tests"
 mkdir -p "$TMP/home" "$TMP/tdir"
 
 tc055_fn() { printf 'fn-ok'; }
+# kt055_m PATH — the mixed C:/ spelling (cygpath -m); PATH as is without cygpath (launch L2.1)
+kt055_m() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 P="/tmp/kt055-$$-nonexistent"
-P_M="$(cygpath -m "$P")"; TD_M="$(cygpath -m "$TMP/tdir")"; H_M="$(cygpath -m "$TMP/home")"
+P_M="$(kt055_m "$P")"; TD_M="$(kt055_m "$TMP/tdir")"; H_M="$(kt055_m "$TMP/home")"
 VAR="a b'c\"d \$e"
 
 OTHER="" OV=""
@@ -53,11 +56,12 @@ done
 # kt055_pids TEXT [BASH] — REPLY = pids whose command line holds TEXT (in
 # this runtime, or — with BASH — in that bash's runtime)
 kt055_pids() {
-    local scan='r=""; for f in /proc/[0-9]*/cmdline; do a=(); { mapfile -d "" -t a < "$f"; } 2>/dev/null || continue; [[ "${a[*]}" == *"$1"* ]] || continue; p=${f#/proc/}; p=${p%/cmdline}; [[ $p == $$ || $p == $BASHPID ]] && continue; r+="$p "; done; printf %s "${r% }"'
+    # ktest_proc.sh in that bash: /proc or ps (launch L2.1)
+    local scan='source "$1"; kt_proc_pids "$2"; printf %s "$REPLY"'
     if [[ -n "${2:-}" ]]; then
-        REPLY="$("$2" -c "$scan" _ "$1" < /dev/null 2>/dev/null)"
+        REPLY="$("$2" -c "$scan" _ "$LIB/ktest_proc.sh" "$1" < /dev/null 2>/dev/null)"
     else
-        REPLY="$(bash -c "$scan" _ "$1" < /dev/null 2>/dev/null)"
+        REPLY="$(bash -c "$scan" _ "$LIB/ktest_proc.sh" "$1" < /dev/null 2>/dev/null)"
     fi
 }
 # kt055_rxleft — REPLY = the private spec dirs left in the caller's TMPDIR
@@ -116,7 +120,7 @@ kt055_check() {
 }
 
 kt_test_start "same runtime: the child (env -i) gets the allowlist + --pass-env, not a secret-named / other var / function; paths, log, header; the spec dir in TMPDIR, gone after"
-kt055_run same "$(cygpath -m "$BASH")" root/tcenv
+kt055_run same "$(kt055_m "$BASH")" root/tcenv
 kt055_check same "$V"
 if [[ -z "$REPLY" ]]; then
     kt_test_pass "${OUT%%$'\n'*}"
@@ -126,7 +130,7 @@ fi
 
 kt_test_start "across runtimes: the same for the other bash (the allowlist + --pass-env arrive, nothing else; the same folders)"
 if [[ -n "$OTHER" ]]; then
-    kt055_run other "$(cygpath -m "$OTHER")" "$SUITE"
+    kt055_run other "$(kt055_m "$OTHER")" "$SUITE"
     kt055_check other "$OV"
     if [[ -z "$REPLY" ]]; then
         kt_test_pass "${OUT%%$'\n'*}"
@@ -138,7 +142,7 @@ else
 fi
 
 kt_test_start "--bash that is no bash (/usr/bin/true): rc 2 'its spec was never read', the private dir removed"
-out="$( ( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash /usr/bin/true --storm 0 --reps 1 root/tcenv ) 2>&1 < /dev/null )"; rc=$?
+out="$( ( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) 2>&1 < /dev/null )"; rc=$?
 kt055_rxleft
 if [[ "$rc" == 2 && "$out" == *"did not run timing_check (its spec was never read"* && -z "$REPLY" ]]; then
     kt_test_pass "$out"
@@ -172,7 +176,7 @@ kt055_release() {
 }
 
 kt_test_start "a SIGKILLed child: the parent ends, its EXIT trap removes the private dir"
-if kt055_held kill "$(cygpath -m "$BASH")"; then
+if kt055_held kill "$(kt055_m "$BASH")"; then
     cp=""; for d in "$TMP/tdir"/timing_check.*; do [[ -f "$d/pid" ]] && read -r cp < "$d/pid"; done
     [[ "$cp" =~ ^[0-9]+$ ]] && kill -KILL "$cp" 2>/dev/null
     wait "$PID"; rc=$?
@@ -190,7 +194,7 @@ fi
 
 kt_test_start "a TERM to the parent is passed on to the child of the other runtime (same runtime without one): rc 143, the run in flight stopped, the private dir gone, nothing left"
 TB="$BASH"; [[ -n "$OTHER" ]] && TB="$OTHER"
-if kt055_held term "$(cygpath -m "$TB")"; then
+if kt055_held term "$(kt055_m "$TB")"; then
     kill -TERM "$PID" 2>/dev/null
     wait "$PID"; rc=$?
     released=no; [[ -e "$TMP/hold.term.released" ]] && released=yes
@@ -212,7 +216,7 @@ else
 fi
 
 kt_test_start "a killed parent's private dir is swept by the next --bash run: dead owner of this runtime and an other-runtime one > 24 h go; a live owner, a young other-runtime one and an unmarked dir stay (G4 review R13)"
-RTN="$(bash -c 'r=none; while read -r a b c; do [[ $b == / ]] && { r=$a; break; }; done < /proc/mounts; printf %s "$r"')"
+RTN="$(bash -c 'r=none; [[ -r /proc/mounts ]] && while read -r a b c; do [[ $b == / ]] && { r=$a; break; }; done < /proc/mounts; printf %s "$r"')"
 dead="$(bash -c 'echo $$')"
 mkdir -p "$TMP/tdir/timing_check.sw_dead" "$TMP/tdir/timing_check.sw_live" "$TMP/tdir/timing_check.sw_oyoung" \
          "$TMP/tdir/timing_check.sw_oold" "$TMP/tdir/timing_check.sw_plain"
@@ -220,7 +224,7 @@ printf '%s %s %s\n' "$dead" "$RTN" "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timi
 printf '%s %s %s\n' "$$" "$RTN" "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timing_check.sw_live/owner"
 printf '%s %s %s\n' 4242 other-runtime "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timing_check.sw_oyoung/owner"
 printf '%s %s %s\n' 4242 other-runtime "$(( EPOCHSECONDS - 90000 ))" > "$TMP/tdir/timing_check.sw_oold/owner"
-( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash /usr/bin/true --storm 0 --reps 1 root/tcenv ) > /dev/null 2>&1 < /dev/null
+( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) > /dev/null 2>&1 < /dev/null
 kt055_rxleft; left="$REPLY"
 rm -rf "$TMP/tdir"/timing_check.sw_*
 if [[ "$left" == "timing_check.sw_live timing_check.sw_oyoung timing_check.sw_plain" ]]; then

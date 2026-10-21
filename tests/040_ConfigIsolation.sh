@@ -135,7 +135,8 @@ RT2="$TMP/rt2"; mkdir -p "$RT2/kt_iso.999999" "$RT2/kt_iso.999998.123" "$RT2/kt_
 # ktests round 5 review R6: a dead runner's folder is swept when it carries this
 # bash install's owner marker, or (unmarked, the old shape) once a day old
 kt_runner_iso_owner; printf '%s\n' "$REPLY" > "$RT2/kt_iso.999999/.kt_owner"
-touch -d '2 days ago' "$RT2/kt_iso.999998.123"
+# touch -t (POSIX), not GNU's -d '2 days ago' (launch L2.1)
+printf -v kt_ts '%(%Y%m%d%H%M.%S)T' $(( EPOCHSECONDS - 172800 )); touch -t "$kt_ts" "$RT2/kt_iso.999998.123"
 got="$(
     TMPDIR="$RT2"
     kt_runner_iso_begin "$FX/004_Home.sh"

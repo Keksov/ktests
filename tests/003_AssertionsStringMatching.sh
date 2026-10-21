@@ -74,7 +74,9 @@ fi
 
 # Test kt_assert_matches with word boundary pattern
 kt_test_start "kt_assert_matches with word boundary pattern"
-if kt_assert_matches "the word" "\bword\b" "Word boundary"; then
+# a POSIX ERE word boundary: GNU's backslash-b is an extension (BSD and musl
+# regex lack it; launch L2.1)
+if kt_assert_matches "the word" "(^|[^[:alnum:]_])word([^[:alnum:]_]|$)" "Word boundary"; then
     kt_test_pass "Assertion passed"
 else
     kt_test_fail "Assertion failed"
