@@ -101,12 +101,23 @@ at the running cell's deadline — a tick that took longer than
 `KT_GATE_SUSPEND_GAP` (default 30 s: the host slept, e.g. a laptop on battery)
 moves that deadline by the gap and the cell's row says `host suspended Ns, not
 counted against --timeout` (launch L2.1: a sleep during a gate turned a
-3-minute cell into a 57-minute TIMEOUT); when the segment itself is killed (a tree
+3-minute cell into a 57-minute TIMEOUT) — and at `KT_GATE_START_GRACE` (default
+120 s, 0 = off) into a cell that has shown no sign of its runner — output in
+its log (early output such as `-v info` counts), or a test file's shell
+(`__KT_END_` wrapper) or threaded worker in the segment's session, looked for
+every 5th tick from the cell's start (on the ps backend from the grace on);
+one sign and the cell is started for good. Past the grace, 3 looks at least
+15 s apart without a sign stop it as TIMEOUT `runner did not start (no
+result, no child within 120s)` (launch L2.7-G: a runner wedged in a cygwin
+FIFO open used to cost the whole `--timeout`). `KT_GATE_TEST_NOWINKILL=1`
+(a test knob) keeps the segment from the Windows-side kill; when the segment itself is killed (a tree
 kill) the watchdog stops the cells and writes `segment-killed`. A *cell* runs
 with its own HOME, TMPDIR/TMP/TEMP, USERPROFILE, ProgramData, `__KK_CFG_ETC`,
 `KKLASS_CKK_DIR`, cwd (`OUT/cells/NNN/…`), stdin `/dev/null`, fds 0–2,
 `KT_SUMMARY_FILE`, and nothing else of the caller's environment
-(deny-by-default; locale etc. from the spec).
+(deny-by-default; locale etc. from the spec) — plus `KT_GATE_PARALLEL=1`
+under `--parallel` (a test can tell that the other runtime's segment runs at
+the same time).
 
 **Outputs** in OUT (default `PRIVATE_TEMP/kt-gate/STAMP-PID` — PRIVATE_TEMP = TMPDIR when set, else
 `%LOCALAPPDATA%/Temp` (else the per-user folder from `cygpath -F 28`), in the C:/ form, the same
@@ -271,6 +282,13 @@ pid `KT_STRAYS_PPID/_AGE/_FLAG/_CMD/_START`), `kt_strays_stop`,
   20 KILLs over 2 s, still alive → a false "LEFT"); 045 pins it through a
   seam (a wrapped `_kt_strays_signal` holds the KILLs for a while — no
   OS-level suspend: a killed test must never leave a suspended process).
+  On cygwin a target still alive after that is ended from the Windows side
+  (`kt_proc_winkill` in `../ktest_proc.sh`: the runtime's own `kill -f -9
+  PID`, which opens and ends the Windows process by the cygwin pid in one
+  step; only if that fails a `taskkill /F` narrowed to that winpid and image) — launch L2.7-G: two runners on 2026-10-22 acted on no
+  cygwin signal for over an hour (wedged in the Git runtime, one spinning a
+  core). A survivor even of that is named with its winpid
+  (`could NOT be stopped (winpid PID=WINPID)`).
 * **Runtimes** — Git-bash 5.2 and MSYS2 5.3 are separate cygwin runtimes:
   `strays.sh` sees (and stops) only the processes of the bash that runs it.
   Run it once under each.
@@ -306,7 +324,7 @@ kt_suitejob_discover "$ROOT"                      # KT_SUITEJOB_SUITES: every DI
 trap kt_suitejob_tstp TSTP                         # Ctrl-Z suspends the job group with the caller
 trap kt_suitejob_break USR1                        # (G2 segment) a signal that ends the wait
 kt_suitejob_run "$LABEL" bash "$suite" "$@"       # rc 0: ended, status in KT_SUITEJOB_RC; rc 1: broken
-kt_suitejob_signal 143                             # stop the running job: TERM+CONT group, 15 s grace, KILL
+kt_suitejob_signal 143                             # stop the running job: TERM+CONT group, 15 s grace, KILL (cygwin: kill -f last)
 kt_suitejob_strays "$LABEL"                        # rc 1: strays reported with their label, stopped, recorded
 ```
 
@@ -322,7 +340,14 @@ kt_suitejob_strays "$LABEL"                        # rc 1: strays reported with 
   (`KT_SUITEJOB_PID` set) and the caller calls `kt_suitejob_signal`.
 * **Stop** — TERM + CONT to the group once, a fork-free grace while the
   leader lives (`KT_SUITEJOB_GRACE` tenths, default 150), KILL to the group,
-  reap. Traps are the caller's (the master ignores TERM/INT/HUP first).
+  reap. A leader that lives on is KILLed again up to `KT_STRAYS_KILL_MS`,
+  then (cygwin) given the Windows-side kill (`kill -f -9`) — never `wait`ed
+  for while alive (its `wait` used to hang the gate for ever; launch
+  L2.7-G). A leader that survives even that is `KT_SUITEJOB_LEADER_LEFT`
+  (`PID=WINPID`): the next `kt_suitejob_strays` and every final check report
+  it (`[WARN] job leader P of LABEL could NOT be stopped (winpid W)`), and the
+  gate makes its cell STRAY. Traps are the
+  caller's (the master ignores TERM/INT/HUP first).
 * **Strays** — `kt_strays_scan --session self --since START [--match TEXT]`;
   a hit is looked at again 1 s later, then each process is listed with the
   label that was running when it started (`KT_SUITEJOB_BEFORE` before the
@@ -332,7 +357,8 @@ kt_suitejob_strays "$LABEL"                        # rc 1: strays reported with 
 The header of `suitejob.sh` lists every global. `tests/049_SuiteJob.sh` pins
 the library (discovery order = the old walk, the job's group/signals/stdin,
 the USR1 break and stop, the narrowed stray check); `045_StrayGuard.sh` pins
-the master on top of it.
+the master on top of it; `057_GateDeafStop.sh` the Windows-side last step
+(a Windows-suspended stray and job leader, gate fixtures `deaf`/`deafjob`).
 
 ## timing_check.sh
 

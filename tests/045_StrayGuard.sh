@@ -277,6 +277,8 @@ printf '%s\n' 'source "$1"' \
     '    fi' \
     '    _kt045_real_signal "$@"' \
     '}' \
+    '# the Windows-side last step (launch L2.7-G) would end B for real: pinned by 057' \
+    'kt_proc_winkill() { REPLY=""; return 1; }' \
     '_kt_strays_ms "$EPOCHREALTIME"; t0=$REPLY' \
     'KT_STRAYS_KILL_MS=$4 kt_strays_stop --session self --match "$2"; rc=$?' \
     '_kt_strays_ms "$EPOCHREALTIME"' \

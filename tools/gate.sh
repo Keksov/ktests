@@ -209,7 +209,10 @@
 #             (launcher killed) and at the running cell's deadline
 #             (--timeout; a tick gap over KT_GATE_SUSPEND_GAP s — the host
 #             slept — moves the deadline by the gap, the row says
-#             `host suspended Ns`); when the segment itself is gone (a `taskkill /T`
+#             `host suspended Ns`) and at KT_GATE_START_GRACE for a cell
+#             that has not started (launch L2.7-G: a runner wedged at its
+#             start — a cygwin FIFO open — used to cost the whole --timeout);
+#             when the segment itself is gone (a `taskkill /T`
 #             tree kill) it stops the cells of the segment's session and
 #             writes the result (`segment-killed`).
 #   cell      the suite's tests.sh with HOME, TMPDIR/TMP/TEMP, USERPROFILE,
@@ -247,7 +250,15 @@
 # 30), KT_GATE_HB_EVERY (heartbeat period, ticks, default 5),
 # KT_GATE_STOP_WAIT (seconds the launcher waits for a stopping segment,
 # default 90), KT_GATE_SUSPEND_GAP (a watchdog tick longer than this many
-# seconds is a host suspend, not the cell's time; default 30), KT_GATE_SPAWN (env|perl|jobctl: the segment start mode,
+# seconds is a host suspend, not the cell's time; default 30),
+# KT_GATE_START_GRACE (seconds; a cell that has shown no sign of its runner
+# — output in its log, a test file's shell or a threaded worker in the
+# segment's session; looked for every 5th tick from the cell's start, from
+# the grace only on the ps backend — by then is stopped as TIMEOUT `runner
+# did not start` once 3 more looks at least 15 s apart saw nothing either;
+# default 120, 0 = off; launch L2.7-G), KT_GATE_TEST_NOWINKILL (1: the
+# segment never takes the Windows-side last step of a stop — a test of the
+# could-NOT-be-stopped path), KT_GATE_SPAWN (env|perl|jobctl: the segment start mode,
 # see _kt_gate_spawn_detect — the launcher only).
 #
 # Plain bash (DG2): no kbool/kkore/kklass. Sources suitejob.sh (and with it
@@ -1065,6 +1076,8 @@ kt_gate_spec() {
     KT_GATE_S_WORKERS="$_KT_GATE_WORKERS"
     KT_GATE_S_HB_TICKS=$_KT_GATE_HB_TICKS
     KT_GATE_S_SUSPEND_GAP=$_KT_GATE_SUSPEND_GAP
+    KT_GATE_S_START_GRACE=$_KT_GATE_START_GRACE
+    KT_GATE_S_NOWINKILL=$_KT_GATE_NOWINKILL KT_GATE_S_PARALLEL=$_KT_GATE_PARALLEL
     KT_GATE_S_LAUNCHER="$$ ${_KT_GATE_RT}"
     KT_GATE_S_ARGS=( "${_KT_GATE_ARGS[@]}" )
     KT_GATE_S_ENV=()
@@ -1087,7 +1100,7 @@ kt_gate_spec() {
     done
     declare -p KT_GATE_S_VERSION KT_GATE_S_SEG KT_GATE_S_OUT KT_GATE_S_ROOT KT_GATE_S_SELF KT_GATE_S_BASH \
         KT_GATE_S_TOTAL KT_GATE_S_SW KT_GATE_S_VW KT_GATE_S_TIMEOUT KT_GATE_S_KEEP KT_GATE_S_WORKERS KT_GATE_S_HB_TICKS \
-        KT_GATE_S_SUSPEND_GAP KT_GATE_S_LAUNCHER KT_GATE_S_ARGS KT_GATE_S_ENV KT_GATE_S_NREP KT_GATE_S_RERUN KT_GATE_S_FAILFAST KT_GATE_S_WARM \
+        KT_GATE_S_SUSPEND_GAP KT_GATE_S_START_GRACE KT_GATE_S_NOWINKILL KT_GATE_S_PARALLEL KT_GATE_S_LAUNCHER KT_GATE_S_ARGS KT_GATE_S_ENV KT_GATE_S_NREP KT_GATE_S_RERUN KT_GATE_S_FAILFAST KT_GATE_S_WARM \
         KT_GATE_S_C_IDX KT_GATE_S_C_SUITE KT_GATE_S_C_MODE \
         KT_GATE_S_C_CWD KT_GATE_S_C_REP > "$_KT_GATE_OUT/seg-$n.spec"
 }
@@ -1965,6 +1978,8 @@ kt_gate_main() {
     kt_gate_compare_base
     _KT_GATE_HB_TICKS="${KT_GATE_HB_TICKS:-30}"; [[ "$_KT_GATE_HB_TICKS" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_HB_TICKS=30
     _KT_GATE_SUSPEND_GAP="${KT_GATE_SUSPEND_GAP:-30}"; [[ "$_KT_GATE_SUSPEND_GAP" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_SUSPEND_GAP=30
+    _KT_GATE_START_GRACE="${KT_GATE_START_GRACE:-120}"; [[ "$_KT_GATE_START_GRACE" =~ ^(0|[1-9][0-9]*)$ ]] || _KT_GATE_START_GRACE=120
+    _KT_GATE_NOWINKILL=0; [[ "${KT_GATE_TEST_NOWINKILL:-}" == 1 ]] && _KT_GATE_NOWINKILL=1
     _KT_GATE_HB_EVERY="${KT_GATE_HB_EVERY:-5}"; [[ "$_KT_GATE_HB_EVERY" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_HB_EVERY=5
     _KT_GATE_STOP_WAIT="${KT_GATE_STOP_WAIT:-90}"; [[ "$_KT_GATE_STOP_WAIT" =~ ^[1-9][0-9]*$ ]] || _KT_GATE_STOP_WAIT=90
     _KT_GATE_SETSID="$(type -P setsid 2>/dev/null)"; _KT_GATE_PERL=""
@@ -2279,7 +2294,7 @@ _kt_gate_seg_scan_log() {
 # stop (the cell was interrupted)
 _kt_gate_seg_attempt() {
     local c=$1 a=$2 idx="${KT_GATE_S_C_IDX[$1]}" suite="${KT_GATE_S_C_SUITE[$1]}" cd m wd jr why="" t0 t1
-    local sum log nrow brk=0 timedout=0 stray=0 v="" r="" tt=0 pp=0 ff=0 src="" l nenv=0 envf="" rel="${3:-}" sel="${4:-}" ckk
+    local sum log nrow brk=0 timedout=0 nostart=0 stray=0 v="" r="" tt=0 pp=0 ff=0 src="" l nenv=0 envf="" rel="${3:-}" sel="${4:-}" ckk
     local -a S=()
     local -A envnames=()
     [[ -n "$rel" ]] || printf -v rel 'cells/%03d' "$idx"
@@ -2293,6 +2308,9 @@ _kt_gate_seg_attempt() {
     log="$cd/log.txt" sum="$cd/summary"
     rm -f -- "$sum" 2>/dev/null
     export HOME="$cd/home" TMPDIR="$cd/tmp" TMP="$cd/tmp" TEMP="$cd/tmp"
+    # --parallel: the other runtime's segment runs at the same time (a test
+    # that parks processes in the other runtime must not — 057)
+    if (( ${KT_GATE_S_PARALLEL:-0} )); then export KT_GATE_PARALLEL=1; else unset KT_GATE_PARALLEL; fi
     export USERPROFILE="$m/home" ProgramData="$m/etc" __KK_CFG_ETC="$cd/etc" KKLASS_CKK_DIR="$ckk"
     export KT_SUMMARY_FILE="$sum"
     wd="$cd/cwd"
@@ -2305,9 +2323,10 @@ _kt_gate_seg_attempt() {
     nrow=${#KT_SUITEJOB_STRAY_ROWS[@]}
     # a timeout request of the previous cell that came after its end: done
     _kt_gate_seg_why
-    [[ "$REPLY" == timeout\ * ]] && printf '%s\n' "$REPLY" > "$_KT_GATE_F_ACK"
+    [[ "$REPLY" == timeout\ * || "$REPLY" == nostart\ * ]] && printf '%s\n' "$REPLY" > "$_KT_GATE_F_ACK"
     _kt_strays_ms "$EPOCHREALTIME"; t0=$REPLY
     rm -f -- "$_KT_GATE_F_SUSP" 2>/dev/null   # before `run`: the watchdog's record is this attempt's
+    printf '%s\n' "$log" > "$_KT_GATE_F_CLOG"  # (the start grace reads this attempt's log)
     printf 'run %s %s\n' "$idx" "$(( EPOCHSECONDS + KT_GATE_S_TIMEOUT ))" > "$_KT_GATE_F_CUR"
     KT_SUITEJOB_SINCE="$EPOCHREALTIME"     # this cell's stray window
     _KT_GATE_BRK=0
@@ -2319,7 +2338,7 @@ _kt_gate_seg_attempt() {
     fi
     while (( jr == 1 )); do
         _kt_gate_seg_why; why="$REPLY"
-        case "$why" in "timeout $idx"|stop|stale|signal) break ;; esac
+        case "$why" in "timeout $idx"|"nostart $idx"|stop|stale|signal) break ;; esac
         # not for this cell (a late USR1 for the previous one): keep waiting
         printf '%s\n' "$why" > "$_KT_GATE_F_ACK"
         _KT_GATE_BRK=0
@@ -2332,6 +2351,7 @@ _kt_gate_seg_attempt() {
         kt_suitejob_signal 143 >> "$log" 2>&1
         brk=1
         [[ "$why" == "timeout $idx" ]] && timedout=1
+        [[ "$why" == "nostart $idx" ]] && { timedout=1; nostart=1; }
     fi
     _kt_strays_ms "$EPOCHREALTIME"; t1=$REPLY
     printf 'idle\n' > "$_KT_GATE_F_CUR"
@@ -2339,7 +2359,7 @@ _kt_gate_seg_attempt() {
     # signals only while a cell runs, review R8): acknowledge it — a stop
     # then ends the segment after this cell
     _kt_gate_seg_why
-    case "$REPLY" in "timeout $idx"|stop|stale) printf '%s\n' "$REPLY" > "$_KT_GATE_F_ACK" ;; esac
+    case "$REPLY" in "timeout $idx"|"nostart $idx"|stop|stale) printf '%s\n' "$REPLY" > "$_KT_GATE_F_ACK" ;; esac
     builtin cd -- "$KT_GATE_S_OUT" 2>/dev/null
     unset KT_SUMMARY_FILE
     _KT_GATE_A_RC=$KT_SUITEJOB_RC
@@ -2377,7 +2397,15 @@ _kt_gate_seg_attempt() {
             stale) r="the launcher is gone (heartbeat stale)" ;;
             *) r="the segment got a signal" ;;
         esac
-    elif (( stray )); then v=STRAY; r="$_KT_GATE_A_STRAYS stray process(es), stopped"
+    elif (( stray )); then
+        v=STRAY; r="$_KT_GATE_A_STRAYS stray process(es), stopped"
+        (( KT_SUITEJOB_STRAY_LEFT > 0 )) && r="$_KT_GATE_A_STRAYS stray process(es), $KT_SUITEJOB_STRAY_LEFT could NOT be stopped"
+        if [[ -n "$KT_SUITEJOB_LEADER_LEFT" ]]; then
+            r+="; job leader ${KT_SUITEJOB_LEADER_LEFT%%=*} could NOT be stopped"
+            [[ -n "${KT_SUITEJOB_LEADER_LEFT#*=}" ]] && r+=" (winpid ${KT_SUITEJOB_LEADER_LEFT#*=})"
+        fi
+        (( nostart )) && r+=" (runner did not start)"
+    elif (( nostart )); then v=TIMEOUT; r="runner did not start (no result, no child within ${KT_GATE_S_START_GRACE}s)"
     elif (( timedout )); then v=TIMEOUT; r="timeout ${KT_GATE_S_TIMEOUT}s, group stopped"
     elif [[ "$src" == no-test-files ]]; then v=NOTRUN; r="no test files"
     elif [[ -n "$src" ]]; then
@@ -2476,6 +2504,7 @@ _kt_gate_seg_rerun() {
     if (( stray )); then
         _KT_GATE_A_VERDICT=STRAY _KT_GATE_A_STRAYS=$(( s0 + sn ))
         _KT_GATE_A_REASON="rerun $_KT_GATE_RR of ${names[*]}: $sn stray process(es), stopped"
+        (( KT_SUITEJOB_STRAY_LEFT > 0 )) && _KT_GATE_A_REASON="rerun $_KT_GATE_RR of ${names[*]}: $sn stray process(es), $KT_SUITEJOB_STRAY_LEFT could NOT be stopped"
     elif (( _KT_GATE_RR_PASS )); then
         _KT_GATE_A_VERDICT=FLAKY _KT_GATE_A_STRAYS=$s0
         local IFS=/
@@ -2642,8 +2671,10 @@ kt_gate_segment_main() {
     _KT_GATE_F_LINES="$KT_GATE_S_OUT/seg-$n.lines" _KT_GATE_F_CUR="$KT_GATE_S_OUT/seg-$n.cur"
     _KT_GATE_F_WHY="$KT_GATE_S_OUT/seg-$n.why" _KT_GATE_F_ACK="$KT_GATE_S_OUT/seg-$n.ack"
     _KT_GATE_F_RES="$KT_GATE_S_OUT/seg-$n.result" _KT_GATE_F_WDPID="$KT_GATE_S_OUT/seg-$n.wdpid"
-    _KT_GATE_F_SUSP="$KT_GATE_S_OUT/seg-$n.susp"
+    _KT_GATE_F_SUSP="$KT_GATE_S_OUT/seg-$n.susp" _KT_GATE_F_CLOG="$KT_GATE_S_OUT/seg-$n.clog"
     _KT_GATE_BRK=0 _KT_GATE_SEGSIG=0 _KT_GATE_WD_RESPAWN=0
+    # KT_GATE_TEST_NOWINKILL: no Windows-side last step in this segment
+    (( ${KT_GATE_S_NOWINKILL:-0} )) && kt_proc_winkill() { REPLY=""; return 1; }
     local sid="?" wp="?"
     { read -r sid < "/proc/$$/sid"; read -r wp < "/proc/$$/winpid"; } 2>/dev/null
     # off cygwin: the session from the process table (no winpid there)
@@ -2696,7 +2727,11 @@ kt_gate_segment_main() {
             printf -v f '%s/cells/%03d/result' "$KT_GATE_S_OUT" "$idx"
             _kt_gate_readkv "$f" || continue
             [[ "${_KT_GATE_KV[verdict]}" == STRAY || "${_KT_GATE_KV[verdict]}" == INTERRUPTED ]] && continue
-            _kt_gate_setkv "$f" "verdict=STRAY" "reason=stray process(es) found by the segment's final check, stopped"
+            if (( KT_SUITEJOB_STRAY_LEFT > 0 )); then
+                _kt_gate_setkv "$f" "verdict=STRAY" "reason=stray process(es) found by the segment's final check, $KT_SUITEJOB_STRAY_LEFT could NOT be stopped"
+            else
+                _kt_gate_setkv "$f" "verdict=STRAY" "reason=stray process(es) found by the segment's final check, stopped"
+            fi
             _kt_gate_cellvars "${KT_GATE_S_C_MODE[c]}" "${KT_GATE_S_C_CWD[c]}" "${KT_GATE_S_C_SUITE[c]}" "${KT_GATE_S_C_REP[c]}"
             _kt_gate_seg_failfast "$idx" STRAY "$c"
             _kt_gate_line "$idx" STRAY "${_KT_GATE_KV[passed]}/${_KT_GATE_KV[total]}" "${_KT_GATE_KV[warn]:-0}" \
@@ -2737,11 +2772,50 @@ _kt_gate_spec_native() {
 # or started by the launcher as a rescue when the segment's went silent)
 # ===========================================================================
 
+# _kt_gate_wd_started SID LOG — rc 0 when the running cell shows that its
+# runner started (launch L2.7-G): LOG has output, or a test file's shell
+# (`__KT_END_` in its command line: the per-file wrapper) or a threaded worker
+# (`run_test "`) lives in session SID (any session when SID or the session
+# column is unknown); rc 0 too without a process table (the rule is off
+# then). Fork-free on cygwin (only that session's command lines are read: a
+# wedged process answers slowly) and Linux; the ps backend: one ps.
+declare -gA _KT_GATE_WDP_PP=() _KT_GATE_WDP_PG=() _KT_GATE_WDP_SID=() _KT_GATE_WDP_STATE=() \
+    _KT_GATE_WDP_RAW=() _KT_GATE_WDP_ST=() _KT_GATE_WDP_CMD=()
+_kt_gate_wd_started() {
+    local sid="$1" f p c
+    local -a v
+    [[ -n "$2" && -s "$2" ]] && return 0
+    kt_proc_init || return 0
+    [[ "$sid" =~ ^[0-9]+$ ]] || sid=""
+    if [[ "$KT_PROC_BACKEND" == cygwin ]]; then
+        for f in /proc/[0-9]*/sid; do
+            if [[ -n "$sid" ]]; then
+                c=""; { read -r c < "$f"; } 2>/dev/null
+                [[ "$c" == "$sid" ]] || continue
+            fi
+            v=(); { mapfile -d '' -t v < "${f%/sid}/cmdline"; } 2>/dev/null
+            c="${v[*]}"
+            [[ "$c" == *__KT_END_* || "$c" == *'run_test "'* ]] && return 0
+        done
+        return 1
+    fi
+    (( KT_PROC_HAS_SID )) || sid=""
+    kt_proc_snapshot --cmd _KT_GATE_WDP_ || return 0
+    for p in "${!_KT_GATE_WDP_CMD[@]}"; do
+        [[ -n "$sid" && "${_KT_GATE_WDP_SID[$p]}" != "$sid" ]] && continue
+        c="${_KT_GATE_WDP_CMD[$p]}"
+        [[ "$c" == *__KT_END_* || "$c" == *'run_test "'* ]] && return 0
+    done
+    return 1
+}
+
 kt_gate_watchdog() {
     local main="$1" since="$2" n="$KT_GATE_S_SEG" o="$KT_GATE_S_OUT" miss=0 why="" new ack cur sid=""
     local mark="$o/seg-$n.mark.$$" fwhy="$o/seg-$n.why" fack="$o/seg-$n.ack" fcur="$o/seg-$n.cur" res="$o/seg-$n.result"
     local wdhb="$o/seg-$n.wdhb" fsusp="$o/seg-$n.susp" last now gap skew=0 skcur="" sa sb
-    local gmax="${KT_GATE_S_SUSPEND_GAP:-30}"
+    local gmax="${KT_GATE_S_SUSPEND_GAP:-30}" sg="${KT_GATE_S_START_GRACE:-120}" scur="" sst=0 sok=0 smiss=0 slog=""
+    local stick=0 slast=0 sfree=1
+    kt_proc_init && [[ "$KT_PROC_BACKEND" == ps ]] && sfree=0
     trap 'rm -f -- "$mark"; exit 0' TERM
     trap '' INT HUP USR1
     [[ -e "$res" ]] && exit 0
@@ -2777,6 +2851,31 @@ kt_gate_watchdog() {
             skew=$(( skew + gap - 1 ))
             printf '%s %s\n' "${BASH_REMATCH[1]}" "$skew" > "$fsusp"
         fi
+        # the start grace (launch L2.7-G): every 5th tick from the cell's
+        # start a look for a sign of its runner (output in its log, a test
+        # file's shell / threaded worker alive); one sign and the cell is
+        # started for good (never looked at again). On the ps backend (one
+        # fork a look) the looks begin at the grace. Past KT_GATE_START_GRACE
+        # (+ a host suspend) a look without a sign is a miss when it is at
+        # least 15 s after the last counted one; 3 misses -> `nostart IDX`
+        # (so >= 30 s of nothing past the grace)
+        if [[ "$cur" == "run "* ]]; then
+            if [[ "$cur" != "$scur" ]]; then
+                scur="$cur" sst=$now sok=0 smiss=0 slast=0 stick=0 slog=""
+                { IFS= read -r slog < "$o/seg-$n.clog"; } 2>/dev/null
+            fi
+            if (( ! sok && sg > 0 )); then
+                stick=$(( stick + 1 ))
+                if (( stick % 5 == 0 )); then
+                    if (( now >= sst + sg + skew )); then
+                        if _kt_gate_wd_started "$sid" "$slog"; then sok=1
+                        elif (( now - slast >= 15 )); then smiss=$(( smiss + 1 )) slast=$now; fi
+                    elif (( sfree )) && _kt_gate_wd_started "$sid" "$slog"; then
+                        sok=1
+                    fi
+                fi
+            fi
+        fi
         new=""
         if [[ -e "$o/STOP" ]]; then
             new=stop
@@ -2784,6 +2883,8 @@ kt_gate_watchdog() {
             new=stale
         elif [[ "$cur" =~ ^run\ ([0-9]+)\ ([0-9]+)$ ]] && (( now >= BASH_REMATCH[2] + skew )); then
             new="timeout ${BASH_REMATCH[1]}"
+        elif (( ! sok && smiss >= 3 )) && [[ "$cur" =~ ^run\ ([0-9]+)\  ]]; then
+            new="nostart ${BASH_REMATCH[1]}"
         fi
         if [[ -n "$new" && "$new" != "$why" && "$why" != stop && "$why" != stale ]]; then
             why="$new"
@@ -2792,7 +2893,7 @@ kt_gate_watchdog() {
         # USR1 only breaks a cell's `wait`: only while a cell runs, a timeout
         # only for the cell that still runs (review R8); repeated until acked
         [[ -n "$why" && "$cur" == "run "* ]] || continue
-        [[ "$why" == timeout\ * && "$cur" != "run ${why#timeout } "* ]] && continue
+        case "$why" in "timeout "*|"nostart "*) [[ "$cur" == "run ${why#* } "* ]] || continue ;; esac
         ack=""; { IFS= read -r ack < "$fack"; } 2>/dev/null
         [[ "$ack" != "$why" ]] && kill -USR1 "$main" 2>/dev/null
     done

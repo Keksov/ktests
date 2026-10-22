@@ -83,6 +83,26 @@
 #   kt_proc_napfd         REPLY = a new fd for fork-free `read -t` naps (a pty
 #                         master, else an unlinked FIFO of its own; "" none)
 #   kt_proc_ms TEXT       REPLY = TEXT (seconds, "." or "," fraction) in ms
+#   kt_proc_winpid PID    REPLY = the Windows pid behind cygwin PID
+#                         (/proc/PID/winpid); rc 1 and "" off cygwin or
+#                         when PID is gone
+#   kt_proc_winkill PID...  the LAST step of a stop (launch L2.7-G), cygwin
+#                         only, for PIDs that outlived SIGKILL — a process
+#                         whose cygwin signal handling is stuck (2026-10-22:
+#                         two runners wedged in the Git runtime, one spinning
+#                         a core; a Windows-suspended one) never acts on a
+#                         cygwin signal. Per PID: the runtime's own
+#                         `kill -f -9 PID` (by the cygwin pid: it opens and
+#                         terminates the Windows process in one step, no
+#                         winpid-reuse window); only when that fails, a
+#                         narrowed `taskkill /F /FI "PID eq W" /FI
+#                         "IMAGENAME eq NAME"` (W and NAME re-read from
+#                         /proc/PID/winpid and winexename just before). Both
+#                         bounded by the runtime's own `timeout`. The caller
+#                         checks PID's identity first (pids are reused) and
+#                         whether it is gone after. REPLY = "PID=WINPID …" of
+#                         those it was SENT for; rc 1 (REPLY "") off cygwin
+#                         or with no live winpid
 
 if [[ -n "${_KT_PROC_SOURCED:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
@@ -545,6 +565,49 @@ kt_proc_pids_gone() {
         kt_proc_pids "$1"
     done
     return 0
+}
+kt_proc_winpid() {
+    REPLY=""
+    kt_proc_init
+    [[ "$KT_PROC_BACKEND" == cygwin ]] || return 1
+    { read -r REPLY < "/proc/$1/winpid"; } 2>/dev/null
+    [[ "$REPLY" =~ ^[1-9][0-9]*$ ]] && return 0
+    REPLY=""
+    return 1
+}
+kt_proc_winkill() {
+    local __ktp_p __ktp_w __ktp_x __ktp_tk="" __ktp_out="" __ktp_rc
+    local __ktp_bin="${BASH%/*}"
+    local -a __ktp_tmo=()
+    # the runtime's own timeout (never System32's timeout.exe from PATH)
+    [[ -x "$__ktp_bin/timeout" ]] && __ktp_tmo=( "$__ktp_bin/timeout" -k 2 20 )
+    for __ktp_p in "$@"; do
+        [[ "$__ktp_p" =~ ^[1-9][0-9]*$ ]] || continue
+        kt_proc_winpid "$__ktp_p" || continue
+        __ktp_out+="$__ktp_p=$REPLY "
+        # (the forks here are fine: a stop's last resort, never a timed window)
+        __ktp_rc=1
+        if [[ -x "$__ktp_bin/kill" ]]; then
+            "${__ktp_tmo[@]}" "$__ktp_bin/kill" -f -9 "$__ktp_p" </dev/null >/dev/null 2>&1
+            __ktp_rc=$?
+        fi
+        (( __ktp_rc == 0 )) && continue
+        # the fallback: taskkill narrowed to that winpid AND that image, both
+        # read again now
+        kt_proc_winpid "$__ktp_p" || continue
+        __ktp_w="$REPLY" __ktp_x=""
+        { IFS= read -r __ktp_x < "/proc/$__ktp_p/winexename"; } 2>/dev/null
+        __ktp_x="${__ktp_x##*\\}"
+        [[ -n "$__ktp_x" ]] || continue
+        if [[ -z "$__ktp_tk" ]]; then
+            __ktp_tk="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}" 2>/dev/null)/System32/taskkill.exe"
+            [[ -x "$__ktp_tk" ]] || continue
+        fi
+        # MSYS2_ARG_CONV_EXCL: /F and /FI stay switches, never paths
+        MSYS2_ARG_CONV_EXCL='*' "${__ktp_tmo[@]}" "$__ktp_tk" /F /FI "PID eq $__ktp_w" /FI "IMAGENAME eq $__ktp_x" </dev/null >/dev/null 2>&1
+    done
+    REPLY="${__ktp_out% }"
+    [[ -n "$REPLY" ]]
 }
 # kt_proc_bbtimeout — rc 0 when `timeout` is busybox's (one probe, cached;
 # _KTP_BBTMO=0/1 preset overrides)

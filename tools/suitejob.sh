@@ -45,7 +45,13 @@
 #                       ktests.sh, whose TERM trap stops its own run group), a
 #                       fork-free grace of KT_SUITEJOB_GRACE tenths of a second
 #                       (default 150 = 15 s; ktests.sh needs <= ~6 s) while
-#                       the job's leader lives, then KILL to the group, reap.
+#                       the job's leader lives, then KILL to the group (to a
+#                       leader that lives on: again, up to KT_STRAYS_KILL_MS,
+#                       then on cygwin the Windows-side kill (`kill -f -9`) —
+#                       launch L2.7-G), reap — never `wait` for a leader still
+#                       alive (named in a [WARN] line with its winpid, RC 137,
+#                       KT_SUITEJOB_LEADER_LEFT="PID=WINPID"; every later
+#                       kt_suitejob_strays reports it — see there).
 #                       KT_SUITEJOB_RC = the reaped status, KT_SUITEJOB_PID="";
 #                       RC (the caller's exit code) is kept in
 #                       KT_SUITEJOB_SIGNAL_RC. Traps are the caller's: it
@@ -56,7 +62,16 @@
 #                       run's group watchdog may be just ending), then report
 #                       ("[WARN] N stray process(es) found after LABEL:" and a
 #                       row per process with the label running when it
-#                       started), stop them, record, rc 1.
+#                       started), stop them (kt_strays_stop), record, rc 1;
+#                       survivors: "[WARN] N could NOT be stopped (winpid
+#                       PID=WINPID ...):" (the winpids on cygwin) + a table.
+#                       A job leader kt_suitejob_signal could NOT stop (the
+#                       scan never lists it: this shell's own child) is
+#                       reported here too, while it lives — by the first
+#                       check after the stop and by every final check
+#                       (KT_SUITEJOB_CUR empty): "[WARN] job leader P of
+#                       LABEL could NOT be stopped (winpid W)", a row
+#                       "pid P (job leader) started during LABEL: …", rc 1.
 #
 # STATE (globals, read by the caller):
 #   KT_SUITEJOB_SUITES   discover's result
@@ -70,6 +85,11 @@
 #   KT_SUITEJOB_STRAY_LABELS  assoc: LABEL -> 1 for each label a stray was
 #                        started during (KT_SUITEJOB_BEFORE for one started
 #                        before the first job)
+#   KT_SUITEJOB_STRAY_LEFT    how many strays the last kt_suitejob_strays
+#                        could NOT stop (0: none, or all stopped; a job
+#                        leader left alive counts)
+#   KT_SUITEJOB_LEADER_LEFT   "PID=WINPID" of the job leader the last
+#                        kt_suitejob_signal could NOT stop ("" none)
 # SETTINGS: KT_SUITEJOB_GRACE (tenths of a second, default 150),
 #   KT_SUITEJOB_BEFORE (the label of the time before the first job, default
 #   "(before the first suite)"), KT_SUITEJOB_SINCE / KT_SUITEJOB_MATCH (set by
@@ -95,6 +115,9 @@ fi
 declare -ga KT_SUITEJOB_SUITES=() KT_SUITEJOB_NAMES=() KT_SUITEJOB_T0=() KT_SUITEJOB_STRAY_ROWS=()
 declare -gA KT_SUITEJOB_STRAY_LABELS=()
 declare -g  KT_SUITEJOB_PID="" KT_SUITEJOB_RC=0 KT_SUITEJOB_CUR="" KT_SUITEJOB_SIGNAL_RC=""
+declare -g  KT_SUITEJOB_STRAY_LEFT=0 KT_SUITEJOB_LEADER_LEFT=""
+# job leaders kt_suitejob_signal could not stop: PID -> "WINPID|LABEL|REPORTED"
+declare -gA _KT_SUITEJOB_LEFT=()
 declare -g  KT_SUITEJOB_SINCE="${KT_SUITEJOB_SINCE:-$EPOCHREALTIME}" KT_SUITEJOB_MATCH="${KT_SUITEJOB_MATCH:-}"
 declare -g  KT_SUITEJOB_GRACE="${KT_SUITEJOB_GRACE:-150}"
 declare -g  KT_SUITEJOB_BEFORE="${KT_SUITEJOB_BEFORE:-(before the first suite)}"
@@ -136,7 +159,7 @@ kt_suitejob_run() {
     shift
     _kt_strays_ms "$EPOCHREALTIME"
     KT_SUITEJOB_NAMES+=( "$label" ); KT_SUITEJOB_T0+=( "$REPLY" )
-    KT_SUITEJOB_CUR="$label"
+    KT_SUITEJOB_CUR="$label" KT_SUITEJOB_LEADER_LEFT=""
     [[ $- == *m* ]] && m=1
     _KT_SUITEJOB_BRK=0
     set -m
@@ -188,9 +211,16 @@ kt_suitejob_tstp() {
     return 0
 }
 
+# _kt_suitejob_alive PID — rc 0 while PID lives and is no zombie (a dead job
+# not reaped yet is gone: `wait` reaps it at once)
+_kt_suitejob_alive() {
+    kill -0 "$1" 2>/dev/null || return 1
+    kt_proc_state "$1"
+    [[ "$REPLY" != Z ]]
+}
 kt_suitejob_signal() {
-    local i p="$KT_SUITEJOB_PID"
-    KT_SUITEJOB_SIGNAL_RC="${1:-}"
+    local i kms p="$KT_SUITEJOB_PID"
+    KT_SUITEJOB_SIGNAL_RC="${1:-}" KT_SUITEJOB_LEADER_LEFT=""
     [[ -n "$p" ]] || return 0
     kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null
     kill -CONT -- "-$p" 2>/dev/null || kill -CONT "$p" 2>/dev/null
@@ -199,14 +229,69 @@ kt_suitejob_signal() {
         kill -0 "$p" 2>/dev/null || break
         _kt_strays_nap 0.1
     done
-    _kt_strays_nap_close
     kill -KILL -- "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null
-    wait "$p" 2>/dev/null; KT_SUITEJOB_RC=$?
+    # a leader that ignores even KILL would hang the `wait` for ever (launch
+    # L2.7-G: a process that acts on no cygwin signal): KILL again while it
+    # lives, up to KT_STRAYS_KILL_MS (SIGKILL delivery lags under load), then
+    # end it from the Windows side (kt_proc_winkill, cygwin only); `wait` only
+    # for a leader that is gone
+    kms="${KT_STRAYS_KILL_MS:-10000}"
+    [[ "$kms" =~ ^[0-9]+$ ]] || kms=10000
+    for (( i = 0; i < kms / 100; i++ )); do
+        _kt_suitejob_alive "$p" || break
+        _kt_strays_nap 0.1
+        kill -KILL "$p" 2>/dev/null
+    done
+    if _kt_suitejob_alive "$p" && kt_proc_winkill "$p"; then
+        echo "[WARN] job $p ignored SIGKILL: kill sent from the Windows side (kill -f, winpid ${REPLY#*=})"
+        for (( i = 0; i < 50; i++ )); do
+            _kt_suitejob_alive "$p" || break
+            _kt_strays_nap 0.1
+        done
+    fi
+    _kt_strays_nap_close
+    if _kt_suitejob_alive "$p"; then
+        kt_proc_winpid "$p"
+        echo "[WARN] job $p could NOT be stopped${REPLY:+ (winpid $REPLY)}; not waited for"
+        KT_SUITEJOB_RC=137 KT_SUITEJOB_LEADER_LEFT="$p=$REPLY"
+        _KT_SUITEJOB_LEFT[$p]="$REPLY|$KT_SUITEJOB_CUR|0"
+    else
+        wait "$p" 2>/dev/null; KT_SUITEJOB_RC=$?
+    fi
     KT_SUITEJOB_PID=""
     return 0
 }
 
 kt_suitejob_strays() {
+    local rc=0
+    KT_SUITEJOB_STRAY_LEFT=0
+    _kt_suitejob_strays_scan "$1" || rc=1
+    _kt_suitejob_leaders_left || rc=1
+    return $rc
+}
+# _kt_suitejob_leaders_left — report the job leaders kt_suitejob_signal could
+# not stop that still live (the same winpid; a zombie or a gone one is
+# forgotten): each once after its stop, and again in every final check
+# (KT_SUITEJOB_CUR empty). rc 1 when one was reported.
+_kt_suitejob_leaders_left() {
+    local p w lab rep rc=0
+    for p in "${!_KT_SUITEJOB_LEFT[@]}"; do
+        IFS='|' read -r w lab rep <<< "${_KT_SUITEJOB_LEFT[$p]}"
+        if ! _kt_suitejob_alive "$p" || { kt_proc_winpid "$p"; [[ "$REPLY" != "$w" ]]; }; then
+            unset "_KT_SUITEJOB_LEFT[$p]"
+            continue
+        fi
+        [[ "$rep" == 1 && -n "$KT_SUITEJOB_CUR" ]] && continue
+        _KT_SUITEJOB_LEFT[$p]="$w|$lab|1"
+        echo "[WARN] job leader $p of $lab could NOT be stopped${w:+ (winpid $w)}"
+        KT_SUITEJOB_STRAY_ROWS+=( "pid $p (job leader) started during $lab: could NOT be stopped${w:+ (winpid $w)}" )
+        KT_SUITEJOB_STRAY_LABELS["$lab"]=1
+        KT_SUITEJOB_STRAY_LEFT=$(( KT_SUITEJOB_STRAY_LEFT + 1 ))
+        rc=1
+    done
+    return $rc
+}
+_kt_suitejob_strays_scan() {
     local label="$1" p i s c
     kt_strays_scan "${_KT_SUITEJOB_OPTS[@]}" "$KT_SUITEJOB_SINCE"
     # no process table at all (launch L2.1): say so, never a silent "none"
@@ -247,7 +332,11 @@ kt_suitejob_strays() {
     if kt_strays_stop "${_KT_SUITEJOB_OPTS[@]}" "$KT_SUITEJOB_SINCE"; then
         echo "[WARN] stopped them, none left"
     else
-        echo "[WARN] $RESULT could NOT be stopped:"
+        # each survivor's Windows pid (cygwin; launch L2.7-G), for a stop by hand
+        s=""
+        for p in "${KT_STRAYS[@]}"; do kt_proc_winpid "$p" && s+="${s:+ }$p=$REPLY"; done
+        KT_SUITEJOB_STRAY_LEFT=$RESULT
+        echo "[WARN] $RESULT could NOT be stopped${s:+ (winpid $s)}:"
         kt_strays_print '    '
     fi
     return 1

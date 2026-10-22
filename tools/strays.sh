@@ -15,7 +15,11 @@
 #                       own group stop needs 5 s), then KILL survivors by pid,
 #                       re-sent until they are gone or KT_STRAYS_KILL_MS (ms,
 #                       default 10000: SIGKILL delivery lags under load) have
-#                       passed; rc 0 when none is left, rc 1 + the list
+#                       passed, then (cygwin) the Windows side for each
+#                       survivor — `kill -f -9`, a narrowed taskkill only if
+#                       that fails (launch L2.7-G: a process that acts on no
+#                       cygwin signal); rc 0 when none is left, rc 1 + the
+#                       list
 #   OPTS: --session SID|self (only processes of that session — `self` = this
 #   shell's — and the STRICT rule, see below; the master sweep uses it),
 #   --since EPOCH (only processes started at/after EPOCH, seconds, a fraction
@@ -143,6 +147,7 @@ declare -ga _KT_STRAYS_PATHS=()
 # the process table of the last _kt_strays_table
 declare -gA _KTS_PP=() _KTS_PG=() _KTS_SID=() _KTS_ST=() _KTS_RAW=() _KTS_STATE=() _KTS_CMD=()
 declare -g  _KTS_BOOT_MS=0 _KTS_NOW_MS=0 _KTS_NAP_FD="" KT_STRAYS_UNKNOWN=""
+declare -ga _KTS_ALIVE=()
 # the unfiltered age limit in minutes (--older-than): longer than a full master
 # sweep (~35 min measured), so an agent's live background sweep is never hit
 declare -g  KT_STRAYS_OLDER_DEFAULT=120
@@ -548,17 +553,19 @@ kt_strays_print() {
 # _kt_strays_signal SIG [PID...] — send SIG to the given pids (default: every
 # target in __kts_tgt, an assoc pid -> raw /proc starttime of the caller) that
 # are alive with an unchanged starttime (a reused pid is never signalled);
-# RESULT = how many were alive. Needs a fresh _kt_strays_table.
+# RESULT = how many were alive, _KTS_ALIVE = those pids. Needs a fresh
+# _kt_strays_table.
 _kt_strays_signal() {
     local sig="$1" p n=0
     shift
+    _KTS_ALIVE=()
     (( $# > 0 )) || set -- "${!__kts_tgt[@]}"
     for p in "$@"; do
         [[ -n "${__kts_tgt[$p]+x}" ]] || continue
         _kt_strays_stat "$p" || continue
         [[ "${_KTS_RAW[$p]}" == "${__kts_tgt[$p]}" ]] || continue
         [[ "${_KTS_STATE[$p]}" == Z ]] && continue
-        n=$(( n + 1 ))
+        n=$(( n + 1 )); _KTS_ALIVE+=( "$p" )
         [[ -n "$sig" ]] && kill "-$sig" "$p" 2>/dev/null
     done
     RESULT=$n
@@ -592,8 +599,9 @@ _kt_strays_adopt() {
 # are gone (3 s; 5.5 s when a root is a ktests.sh), then KILL by pid what
 # survives (and what was forked meanwhile), re-sent until all are gone or
 # KT_STRAYS_KILL_MS (default 10000) have passed — SIGKILL delivery can lag
-# seconds under load; reap. rc 0 when none is left; else rc 1, KT_STRAYS =
-# what is left.
+# seconds under load; on cygwin the survivors' Windows processes then get
+# the Windows-side kill (kt_proc_winkill, launch L2.7-G); reap. rc 0 when none is left; else
+# rc 1, KT_STRAYS = what is left.
 kt_strays_stop() {
     local -a args=( "$@" ) roots=()
     local -A __kts_tgt=()
@@ -638,6 +646,20 @@ kt_strays_stop() {
         (( _KTS_NOW_MS - t0 >= kms )) && break
         if (( _KTS_NOW_MS - t0 < 2000 )); then _kt_strays_nap 0.1; else _kt_strays_nap 0.25; fi
     done
+    # the last step (launch L2.7-G), cygwin only: a target alive after
+    # KT_STRAYS_KILL_MS of SIGKILLs does not act on cygwin signals at all (two
+    # runners on 2026-10-22, wedged in the Git runtime for over an hour) — its
+    # Windows process gets the kill (kt_proc_winkill: `kill -f -9`, else a
+    # narrowed taskkill; the targets were identity-checked just above), then
+    # up to 5 s for it to go
+    if (( RESULT > 0 )) && kt_proc_winkill "${_KTS_ALIVE[@]}"; then
+        for (( t0 = 0; t0 < 20; t0++ )); do
+            _kt_strays_nap 0.25
+            _kt_strays_table
+            _kt_strays_signal ""
+            (( RESULT == 0 )) && break
+        done
+    fi
     _kt_strays_nap_close
     # reap our own children (a no-op for an orphan: its parent is gone)
     for p in "${!__kts_tgt[@]}"; do wait "$p" 2>/dev/null || :; done

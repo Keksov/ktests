@@ -70,7 +70,14 @@ __GATE__:VERDICT:cells:pass:fail:flaky:env:timeout:stray:passed_tests:total_test
 | 128+N | INTERRUPTED | the gate was stopped (TERM 143, INT 130, HUP 129); partial `cells.tsv`/`summary.json` |
 
 * **STRAY = a bug**: a cell left a process (named in `cells/NNN/strays.txt`,
-  already stopped by the gate). Fix the test or the unit; never just re-run.
+  stopped by the gate when possible — the reason says `K could NOT be
+  stopped`, or `job leader P could NOT be stopped (winpid W)`, when it was
+  not: report those pids). Fix the test or the unit; never just re-run.
+* **TIMEOUT `runner did not start (no result, no child within Ns)`** is a
+  runtime wedge (Git-bash: a cygwin FIFO open that never returns, launch
+  L2.7-G), not the test: re-run, do not "fix the test". Early output (e.g.
+  `-v info`) or a running test file counts as started; the wait is
+  `KT_GATE_START_GRACE` (default 120 s) plus ~30 s.
 * The `gate compare` line says `totals unchanged (…)` or lists what changed
   (all of it in `OUT/compare.txt`). A changed total is a finding to explain.
 * Counts are per runtime: `gate 5.2.37: …` and `gate 5.3.9: …`.
