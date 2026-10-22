@@ -70,7 +70,7 @@
   },
   "round3": {
     "status": "P1 DONE+COMMITTED 2026-10-02",
-    "plan": "PLAN.md # Round 3",
+    "plan": "docs/dev/PLAN.md # Round 3",
     "findings": {
       "T2": "file-scope return 1 between tests reported green",
       "T3": "threaded runner leaks exports/attributes/functions into the caller (C3)",
@@ -158,7 +158,7 @@
   },
   "round4": {
     "status": "P2 DONE (uncommitted, awaiting review)",
-    "plan": "PLAN.md # Round 4",
+    "plan": "docs/dev/PLAN.md # Round 4",
     "findings": {
       "T6": "029 leaks 2 tmp.* per run AND its inner teardown deletes the outer fixture dir (C13)",
       "T7": "kt_runner_parse_args export: 5.2 prefix leak; nobody needs the export (C14)"
@@ -220,7 +220,7 @@
   },
   "round5": {
     "status": "P3 + P3b DONE, committed 2026-10-17 (not pushed)",
-    "plan": "PLAN.md # Round 5",
+    "plan": "docs/dev/PLAN.md # Round 5",
     "findings": {
       "T8": "017 symlink test double pass standalone only (relative fixture base); can never fail (C1)",
       "T9": "runner results_dir = bare mktemp -d in TMPDIR, no trap; 5.2 skips EXIT on SIGTERM (C2,C8)",
@@ -416,7 +416,7 @@
   },
   "round6": {
     "status": "P4 DONE, committed 2026-10-19 (not pushed)",
-    "plan": "PLAN.md # Round 6",
+    "plan": "docs/dev/PLAN.md # Round 6",
     "findings": {
       "S1": "strays list --all shows the piped fork of the caller shell (sibling, not ancestor)",
       "O2": "done 2026-10-17: 311 empty tmp.* + msys64 Argv/prog.awk deleted (owner)",

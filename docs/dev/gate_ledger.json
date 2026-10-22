@@ -4,7 +4,7 @@
   "created": "2026-10-19",
   "updated": "2026-10-20",
   "status": "COMPLETE 2026-10-20: G0-G4 done, reviewed (critic on G2 + final critic), closing gate 60/60 PASS; open items listed in open",
-  "plan": "GATE_PLAN.md",
+  "plan": "docs/dev/GATE_PLAN.md",
   "workflow": "per phase: one Opus worker -> supervisor review against the live tree (critic on G2 and at the end) -> ktests suite + full kbool sweep on bash 5.2.37 AND 5.3.9 -> commit (ktests first, then kbool bump; this ledger records the SHAs); process hygiene block in every brief; worker never commits",
   "motivation": {
     "source": "all Bash/PowerShell calls in this project's agent transcripts, analysed 2026-10-19",
