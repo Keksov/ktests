@@ -227,21 +227,39 @@ else
 fi
 
 # a detached process like busybox's timeout WATCHER: argv `timeout …`, its
-# parent gone, it ends by itself after LIFE seconds (fork-free wait)
+# parent gone, it lives LIFE seconds (fork-free wait) unless it is ended
 printf '%s\n' '{ [[ -c /dev/ptmx ]] && exec 3<>/dev/ptmx; } 2>/dev/null || { [[ -p "$KT056_FIFO" ]] && exec 3<>"$KT056_FIFO"; } 2>/dev/null || exec 3</dev/null' \
     'read -t "$1" -u 3 _ || (( $? > 128 )) || sleep "$1"' > "$TMP/wloop.sh"
 printf '%s\n' '(exec -a timeout bash "$1" "$2" "$3") </dev/null >/dev/null 2>&1 & exit' > "$TMP/watcher.sh"
 kt_test_start "the strict stray check where timeout is busybox's: a lingering timeout WATCHER (gone within 3 s) is no STRAY, one that stays is; elsewhere it is a stray at once [L2.1 review]"
+# no clock races the check (L2.8-b): every watcher lives 120 s; the one that
+# is "gone in time" is ended at the first busybox look-again nap (0.5 s) by
+# the wrapper below — a fixed LIFE (1.6 s, 6 s) lost to the check's own scans
+# under the threaded suite (~0.25 s each, 8 of them). And the --match scan
+# needs the command line after the exec: cygwin shows a process mid-exec as
+# the bare program path (no nonce), missed in 2-7 % of scans — wait for it.
 o="$(bash -c '
     source "$1/tools/suitejob.sh"
-    ws="$2" wl="$3" nn="$4"
-    for c in "1 1.6" "1 6" "0 1.6"; do
+    ws="$2" wl="$3" nn="$4" kw=""
+    f="$(declare -f _kt_strays_nap)"; eval "_kt056_nap ${f#_kt_strays_nap }"
+    _kt_strays_nap() {
+        if [[ "$1" == 0.5 && -n "$kw" ]]; then
+            kill -KILL "$kw" 2>/dev/null
+            for (( k = 0; k < 100; k++ )); do _kt_suitejob_alive "$kw" || break; _kt056_nap 0.1; done
+            kw=""
+        fi
+        _kt056_nap "$1"
+    }
+    for c in "1 ends" "1 stays" "0 ends"; do
         set -- $c; _KTP_BBTMO=$1
         kt_suitejob_init "$EPOCHREALTIME" "$nn"
-        bash "$ws" "$wl" "$2" "kt056-$nn-watcher"
-        kt_suitejob_strays "w$1/$2" >/dev/null 2>&1; printf "bb=%s life=%s rc=%s; " "$1" "$2" "$?"
+        bash "$ws" "$wl" 120 "kt056-$nn-watcher"
+        for (( i = 0; i < 50; i++ )); do kt_proc_pids "timeout $wl 120 kt056-$nn-watcher"; [[ -n "$REPLY" ]] && break; sleep 0.1; done
+        kw=""; [[ "$2" == ends ]] && kw="${REPLY%% *}"
+        kt_suitejob_strays "w$1/$2" >/dev/null 2>&1; printf "bb=%s %s rc=%s; " "$1" "$2" "$?"
+        [[ -n "$kw" ]] && kill -KILL "$kw" 2>/dev/null; kw=""
     done' _ "$LIB" "$TMP/watcher.sh" "$TMP/wloop.sh" "$N" 2>&1)"
-if [[ "$o" == "bb=1 life=1.6 rc=0; bb=1 life=6 rc=1; bb=0 life=1.6 rc=1; " ]]; then
+if [[ "$o" == "bb=1 ends rc=0; bb=1 stays rc=1; bb=0 ends rc=1; " ]]; then
     kt_test_pass "$o"
 else
     kt_test_fail "[$o] (want: busybox + gone in time -> 0; busybox + stays -> 1; not busybox -> 1)"
