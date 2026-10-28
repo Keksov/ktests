@@ -195,7 +195,12 @@ fi
 kt_test_start "a TERM to the parent is passed on to the child of the other runtime (same runtime without one): rc 143, the run in flight stopped, the private dir gone, nothing left"
 TB="$BASH"; [[ -n "$OTHER" ]] && TB="$OTHER"
 if kt055_held term "$(kt055_m "$TB")"; then
-    kill -TERM "$PID" 2>/dev/null
+    # the TERM goes to timing_check itself (its private dir's owner file), not
+    # to the `timeout` around it: uutils timeout -k answers a TERM it receives
+    # with 124 (0.12.0) or 125 (0.2.2) whatever the child does (launch OG8-o1);
+    # timeout then passes the parent's own exit status on, on every flavour
+    op=""; for d in "$TMP/tdir"/timing_check.*; do [[ -f "$d/owner" ]] && read -r op _ < "$d/owner"; done
+    if [[ "$op" =~ ^[0-9]+$ ]]; then kill -TERM "$op" 2>/dev/null; else kill -TERM "$PID" 2>/dev/null; fi
     wait "$PID"; rc=$?
     released=no; [[ -e "$TMP/hold.term.released" ]] && released=yes
     kt055_rxleft; left="$REPLY"

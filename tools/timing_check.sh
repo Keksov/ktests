@@ -368,6 +368,8 @@ tc_run() {
     else
         cmd+=( "$target" --mode single --verbosity info )
     fi
+    # no -k: with -k uutils timeout 0.2.2 (Ubuntu 25.10) answers a real expiry
+    # with 125, which the verdict below reads as ENV, not TIMEOUT (launch OG8-o1)
     ( cd "$TC_SUITE" && exec timeout "$TC_TIMEOUT" "${cmd[@]}" ) < /dev/null > "$TC_TMP/run.out" 2>&1 &
     TC_CHILD=$!
     wait "$TC_CHILD"; rc=$?
