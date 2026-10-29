@@ -1036,12 +1036,14 @@ _kt_gate_parent_ok() {
 # ppid — a failed ps — counts as alive)
 _kt_gate_alive() {
     local w=""
-    kill -0 "$1" 2>/dev/null || return 1
     if [[ "$2" == ppid ]]; then
+        # no `kill -0` here: a parent of another uid (`su kb -c`, `sudo -u`)
+        # answers EPERM, which is not "gone"; reparenting is (launch L5.1)
         kt_proc_ppid "$3"
         [[ -z "$REPLY" || "$REPLY" == "$1" ]]
         return $?
     fi
+    kill -0 "$1" 2>/dev/null || return 1
     { read -r w < "/proc/$1/winpid"; } 2>/dev/null
     [[ -n "$w" && "$w" == "$2" ]]
 }
