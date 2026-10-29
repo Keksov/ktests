@@ -487,7 +487,8 @@ kt_runner_find_tests() {
     declare -A seen
     for f in "${test_files[@]}"; do
         f=$(kt_runner_clean_filename "$f")
-        if [[ ! -v seen["$f"] ]]; then
+        # bash 5.1 expands a["$k"] twice in -v/unset (launch L4.3)
+        if [[ -z ${seen["$f"]+x} ]]; then
             seen["$f"]=1
             cleaned+=("$f")
         fi
@@ -964,7 +965,8 @@ kt_runner_group_suspend() {
 kt_runner_group_close() {
     local __kt_fd="${1:-}"
     [[ -n "$__kt_fd" && "$__kt_fd" != *[!0-9]* ]] || return 0
-    printf 'done\n' >&"$__kt_fd" 2>/dev/null
+    # unquoted on purpose: bash 5.1 declare -f prints >&"W" as &> W (launch L4.3)
+    printf 'done\n' >&$__kt_fd 2>/dev/null
     exec {__kt_fd}>&-
     return 0
 }
