@@ -32,6 +32,25 @@ from it (inside the tree: a `[WARN]`).
 `kbool.sh` means `all`; with nothing to run it says `[WARN] nothing changed`,
 exit 0, no OUT.
 
+### The bash-floor gate (5.1)
+
+The floor is bash 5.1 (owner decision OG2), and no Windows runtime has it. A
+phase that changes code in `kbool.sh`, `kkore`, `kklass` or `ktests` also runs
+the suites on 5.1.16 in the lab VM, after the Windows gate (never beside it):
+
+```bash
+bash tools/vmlab/vmlab.sh gate kb-debian --snapshot clean-bashes --out "$SCRATCH/vm51" \
+  --env 'KT_GATE_BASHES=/opt/bash-5.1.16/bin/bash;/usr/bin/bash' -- --rerun-failed 1 --timeout 900 all
+```
+
+It takes about 12 min (5.1.16 and 5.2.37), so start it with `run_in_background: true`. vmlab
+restores the snapshot, syncs the working tree, prints the gate's `__GATE__`
+line, fetches its OUT into `$SCRATCH/vm51` and powers the VM off (only
+kb-debian, one VM at a time). For a unit-only phase, the CI row
+`bash 5.1 alpine` after the push is enough. Constructs that break on 5.1
+are listed in [`../../docs/dev/launch/L4_cost.md`](../../docs/dev/launch/L4_cost.md) §1, and each repo's
+`*_Bash51Hazards.sh` test rejects them.
+
 ## Run it
 
 * **`run_in_background: true`**, one call, nothing around it. Each cell is
