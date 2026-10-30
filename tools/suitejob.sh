@@ -307,7 +307,7 @@ _kt_suitejob_strays_scan() {
         for (( i = 0; i < 6; i++ )); do
             c=0
             for p in "${KT_STRAYS[@]}"; do
-                [[ "${KT_STRAYS_FLAG[$p]}" == yes && "${KT_STRAYS_CMD[$p]}" == "timeout "* ]] && c=1
+                [[ "${KT_STRAYS_FLAG[$p]}" == yes && ( "${KT_STRAYS_CMD[$p]}" == "timeout "* || "${KT_STRAYS_CMD[$p]}" == "gtimeout "* ) ]] && c=1
             done
             (( c )) || break
             _kt_strays_nap_open; _kt_strays_nap 0.5; _kt_strays_nap_close

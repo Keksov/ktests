@@ -510,6 +510,7 @@ the gate's watchdog). Test fixtures wait on a FIFO of their test file there.
   descendant (`timeout 60 forkstorm.sh start` would hold 60 s, then kill the
   worker): `"${KT_TMO_BOUND[@]}"` (= `--foreground` there) for a command that
   leaves a process on purpose.
+* macOS has no `timeout`(1) (brew coreutils names it `gtimeout`): tests call `"$KT_TIMEOUT"` (`timeout`, else `gtimeout`) and SKIP without either (`kt_need_timeout`, ktest.sh; L5.4-9); the harness's `timeout` argv rules accept `gtimeout` too.
 * FreeBSD ssh sessions start with SIGTSTP/TTIN/TTOU **ignored**: the Ctrl-Z
   tests (044 N6, 050) skip with that reason.
 * busybox `timeout` execs the command and leaves a WATCHER beside it (`timeout

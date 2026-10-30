@@ -170,7 +170,9 @@ esac
 EOF
 
 kt_test_start "run: the job's status, its own process group, TTOU ignored, INT default, the caller's stdin; set -m restored"
-o="$(printf 'kt049-in\n' | timeout 60 bash "$TMP/drv.sh" "$SJ" run "$TMP/run" "$N" "$M" 2>&1)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+o="$(printf 'kt049-in\n' | "$KT_TIMEOUT" 60 bash "$TMP/drv.sh" "$SJ" run "$TMP/run" "$N" "$M" 2>&1)"
 read -r jp jg < "$TMP/run.grp" 2>/dev/null
 tt="$(cat "$TMP/run.ttou" 2>/dev/null)"; ti="$(cat "$TMP/run.int" 2>/dev/null)"; si="$(cat "$TMP/run.stdin" 2>/dev/null)"
 if [[ "$o" == "rc=0 jobrc=3 pid=[] cur=L1 names=L1 t0=1 mon=[]" && -n "${jp:-}" && "$jp" == "${jg:-}" \
@@ -179,9 +181,12 @@ if [[ "$o" == "rc=0 jobrc=3 pid=[] cur=L1 names=L1 t0=1 mon=[]" && -n "${jp:-}" 
 else
     kt_test_fail "out [$o] job/grp [${jp:-}/${jg:-}] ttou [$tt] int [$ti] stdin [$si]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "break: a USR1 trap calling kt_suitejob_break ends the wait at once; kt_suitejob_signal empties the group (KILL for a TERM-ignoring member)"
-o="$(timeout 60 bash "$TMP/drv.sh" "$SJ" break "$TMP/brk" "$N" "$M" 2>&1)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+o="$("$KT_TIMEOUT" 60 bash "$TMP/drv.sh" "$SJ" break "$TMP/brk" "$N" "$M" 2>&1)"
 sleep 0.3
 kt049_pids "kt049-$N-child"; left="$REPLY"
 jp="$(cat "$TMP/brk.pid" 2>/dev/null)"
@@ -190,12 +195,15 @@ if [[ "$o" == "rc=1 waited="[0-4]" pid=[$jp] alive=y"$'\n'"after=[] sigrc=143 gr
 else
     kt_test_fail "out [${o//$'\n'/ | }] job [$jp] left [$left]"
 fi
+fi   # kt_need_timeout
 kt049_cleanup
 
 kt_test_start "strays: only the window's matching orphans, each with the label running when it started; stopped; the others untouched"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 # c0 and b are left alive on purpose: FreeBSD's timeout would wait for them
 # (KT_TMO_BOUND, ktest_proc.sh — launch L2.1)
-o="$(timeout "${KT_TMO_BOUND[@]}" 90 bash "$TMP/drv.sh" "$SJ" strays "$TMP/str" "$N" "$M" 2>&1)"
+o="$("$KT_TIMEOUT" "${KT_TMO_BOUND[@]}" 90 bash "$TMP/drv.sh" "$SJ" strays "$TMP/str" "$N" "$M" 2>&1)"
 kt049_pids "kt049-$N-a"; la="$REPLY"
 kt049_pids "kt049-$N-c0"; lc="$REPLY"
 kt049_pids "kt049-$M-b"; lb="$REPLY"
@@ -210,10 +218,13 @@ if [[ "$o" == *"[WARN] 2 stray process(es) found after after sX:"* \
 else
     kt_test_fail "a-left [$la] c0 [$lc] b [$lb] | ${o//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt049_cleanup
 
 kt_test_start "strays: a start up to KT_PROC_START_EARLY_MS (linux 20, cygwin/ps 0) before a job's T0 is labelled with that job, one earlier is not (launch L2.7-K)"
-o="$(timeout 60 bash "$TMP/drv.sh" "$SJ" early "$TMP/early" "$N" "$M" 2>&1)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+o="$("$KT_TIMEOUT" 60 bash "$TMP/drv.sh" "$SJ" early "$TMP/early" "$N" "$M" 2>&1)"
 want=0; [[ "$o" == "be=linux "* ]] && want=20
 e9="pid 999991 (yes) started during" e30="pid 999992 (yes) started during (before the first suite): kt049-$N-e30"
 if [[ "$o" == "be="*" early=$want"$'\n'* \
@@ -223,5 +234,6 @@ if [[ "$o" == "be="*" early=$want"$'\n'* \
 else
     kt_test_fail "want early=$want | ${o//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_log "049_SuiteJob.sh completed"

@@ -74,10 +74,12 @@ kt046_isolated() {
 }
 
 kt_test_start "two concurrent standalone runs of one file: both pass, each has its own dir, nothing is left [S2]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 rm -rf "$FX/tests/.tmp" "$TMP/sync/"*
-timeout -k 30 60 env -u KK_OUTPUT_COUNTS -u KT_TESTS_DIR -u KTEST_SOURCE_PATH -u VERBOSITY -u _KTEST_QUIET_MODE -u _KT_ASSERT_QUIET_MODE bash "$FX/tests/001_hold.sh" > "$TMP/s1.out" 2>&1 &
+"$KT_TIMEOUT" -k 30 60 env -u KK_OUTPUT_COUNTS -u KT_TESTS_DIR -u KTEST_SOURCE_PATH -u VERBOSITY -u _KTEST_QUIET_MODE -u _KT_ASSERT_QUIET_MODE bash "$FX/tests/001_hold.sh" > "$TMP/s1.out" 2>&1 &
 p1=$!
-timeout -k 30 60 env -u KK_OUTPUT_COUNTS -u KT_TESTS_DIR -u KTEST_SOURCE_PATH -u VERBOSITY -u _KTEST_QUIET_MODE -u _KT_ASSERT_QUIET_MODE bash "$FX/tests/001_hold.sh" > "$TMP/s2.out" 2>&1 &
+"$KT_TIMEOUT" -k 30 60 env -u KK_OUTPUT_COUNTS -u KT_TESTS_DIR -u KTEST_SOURCE_PATH -u VERBOSITY -u _KTEST_QUIET_MODE -u _KT_ASSERT_QUIET_MODE bash "$FX/tests/001_hold.sh" > "$TMP/s2.out" 2>&1 &
 p2=$!
 wait "$p1"; r1=$?; wait "$p2"; r2=$?
 o1="$(cat "$TMP/s1.out")"; o2="$(cat "$TMP/s2.out")"
@@ -88,13 +90,15 @@ if [[ "$o1" == *"HOLD:ok:"* && "$o2" == *"HOLD:ok:"* && "$o1$o2" != *"[FAIL]"* &
 else
     kt_test_fail "rc $r1/$r2 left=[$left] isolated=$iso [$why] | ${o1//$'\n'/ | } || ${o2//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 for mode in single threaded; do
     kt_test_start "two concurrent runs of one suite ($mode): both pass, nothing is left [S2]"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
     rm -rf "$FX/tests/.tmp" "$TMP/sync/"*
-    TMPDIR="$TMP/iso" timeout -k 30 60 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$FX/tests" H '/[0-9][0-9][0-9]_' -m "$mode" -v info > "$TMP/r1.out" 2>&1 &
+    TMPDIR="$TMP/iso" "$KT_TIMEOUT" -k 30 60 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$FX/tests" H '/[0-9][0-9][0-9]_' -m "$mode" -v info > "$TMP/r1.out" 2>&1 &
     p1=$!
-    TMPDIR="$TMP/iso" timeout -k 30 60 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$FX/tests" H '/[0-9][0-9][0-9]_' -m "$mode" -v info > "$TMP/r2.out" 2>&1 &
+    TMPDIR="$TMP/iso" "$KT_TIMEOUT" -k 30 60 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$FX/tests" H '/[0-9][0-9][0-9]_' -m "$mode" -v info > "$TMP/r2.out" 2>&1 &
     p2=$!
     wait "$p1"; r1=$?; wait "$p2"; r2=$?
     o1="$(cat "$TMP/r1.out")"; o2="$(cat "$TMP/r2.out")"

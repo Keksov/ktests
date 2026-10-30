@@ -187,8 +187,10 @@ fi
 kt056_cleanup
 
 kt_test_start "a stray made under a \`timeout\` is seen by a check under it too (FreeBSD's timeout is the REAPER of all below it, in the caller's own session) and stopped [H1/H3]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 T2="$EPOCHREALTIME"
-o="$(timeout -k 5 60 bash -c '
+o="$("$KT_TIMEOUT" -k 5 60 bash -c '
     bash -c "(exec -a \"\$0\" bash -c \"\$KT056_LOOP\") </dev/null >/dev/null 2>&1 & exit" "kt_iso-$1-reaped"
     sleep 0.5
     p="$(bash -c "source \"\$1\"; kt_proc_pid0 \"\$2\"; printf %s \"\${REPLY%% *}\"" _ "$4" "kt_iso-$1-reaped")"
@@ -203,6 +205,7 @@ if [[ "$rc" == 0 && -n "$rp" && "$f1" == yes && "$o" == *"stopped, none left"* ]
 else
     kt_test_fail "rc=$rc (124 = timeout waited for it) pid=[$rp] flag=[$f1] | ${o//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt056_cleanup
 
 kt_test_start "no process table (KT_PROC_BACKEND=none): strays.sh says UNKNOWN with the reason and exits 3 — never a blind 'none'; the library and the suite-job stray check report n/a [H1]"
@@ -232,7 +235,10 @@ fi
 printf '%s\n' '{ [[ -c /dev/ptmx ]] && exec 3<>/dev/ptmx; } 2>/dev/null || { [[ -p "$KT056_FIFO" ]] && exec 3<>"$KT056_FIFO"; } 2>/dev/null || exec 3</dev/null' \
     'read -t "$1" -u 3 _ || (( $? > 128 )) || sleep "$1"' > "$TMP/wloop.sh"
 printf '%s\n' '(exec -a timeout bash "$1" "$2" "$3") </dev/null >/dev/null 2>&1 & exit' > "$TMP/watcher.sh"
-kt_test_start "the strict stray check where timeout is busybox's: a lingering timeout WATCHER (gone within 3 s) is no STRAY, one that stays is; elsewhere it is a stray at once [L2.1 review]"
+# the same watcher named `gtimeout` (macOS brew coreutils' name; launch L5.4-9):
+# the watcher rule matches it as it matches `timeout`
+printf '%s\n' '(exec -a gtimeout bash "$1" "$2" "$3") </dev/null >/dev/null 2>&1 & exit' > "$TMP/watcher_g.sh"
+kt_test_start "the strict stray check where timeout is busybox's: a lingering timeout WATCHER (gone within 3 s) is no STRAY, one that stays is; elsewhere it is a stray at once; a watcher named gtimeout is matched the same way [L2.1 review, L5.4-9]"
 # no clock races the check (L2.8-b): every watcher lives 120 s; the one that
 # is "gone in time" is ended at the first busybox look-again nap (0.5 s) by
 # the wrapper below — a fixed LIFE (1.6 s, 6 s) lost to the check's own scans
@@ -241,7 +247,7 @@ kt_test_start "the strict stray check where timeout is busybox's: a lingering ti
 # the bare program path (no nonce), missed in 2-7 % of scans — wait for it.
 o="$(bash -c '
     source "$1/tools/suitejob.sh"
-    ws="$2" wl="$3" nn="$4" kw=""
+    ws="$2" wl="$3" nn="$4" wg="$5" kw=""
     f="$(declare -f _kt_strays_nap)"; eval "_kt056_nap ${f#_kt_strays_nap }"
     _kt_strays_nap() {
         if [[ "$1" == 0.5 && -n "$kw" ]]; then
@@ -251,31 +257,33 @@ o="$(bash -c '
         fi
         _kt056_nap "$1"
     }
-    for c in "1 ends" "1 stays" "0 ends"; do
+    for c in "1 ends" "1 stays" "0 ends" "1 ends g"; do
         set -- $c; _KTP_BBTMO=$1
+        w="$ws"; [[ "${3:-}" == g ]] && w="$wg"
         kt_suitejob_init "$EPOCHREALTIME" "$nn"
-        bash "$ws" "$wl" 120 "kt056-$nn-watcher"
+        bash "$w" "$wl" 120 "kt056-$nn-watcher"
         for (( i = 0; i < 50; i++ )); do kt_proc_pids "timeout $wl 120 kt056-$nn-watcher"; [[ -n "$REPLY" ]] && break; sleep 0.1; done
         kw=""; [[ "$2" == ends ]] && kw="${REPLY%% *}"
-        kt_suitejob_strays "w$1/$2" >/dev/null 2>&1; printf "bb=%s %s rc=%s; " "$1" "$2" "$?"
+        kt_suitejob_strays "w$1/$2" >/dev/null 2>&1; printf "bb=%s %s%s rc=%s; " "$1" "$2" "${3:+ $3}" "$?"
         [[ -n "$kw" ]] && kill -KILL "$kw" 2>/dev/null; kw=""
-    done' _ "$LIB" "$TMP/watcher.sh" "$TMP/wloop.sh" "$N" 2>&1)"
-if [[ "$o" == "bb=1 ends rc=0; bb=1 stays rc=1; bb=0 ends rc=1; " ]]; then
+    done' _ "$LIB" "$TMP/watcher.sh" "$TMP/wloop.sh" "$N" "$TMP/watcher_g.sh" 2>&1)"
+if [[ "$o" == "bb=1 ends rc=0; bb=1 stays rc=1; bb=0 ends rc=1; bb=1 ends g rc=0; " ]]; then
     kt_test_pass "$o"
 else
-    kt_test_fail "[$o] (want: busybox + gone in time -> 0; busybox + stays -> 1; not busybox -> 1)"
+    kt_test_fail "[$o] (want: busybox + gone in time -> 0; busybox + stays -> 1; not busybox -> 1; busybox + a gtimeout watcher gone in time -> 0)"
 fi
 kt056_cleanup
 
 # ---- H7: the group stop's deadline under a decimal-comma locale ---------------------
 kt_test_start "kt_runner_group_stop under a decimal-comma locale (LC_ALL=ru_RU.UTF-8): a TERM-ignoring member is KILLed by the deadline, the stop returns [H7, L0.7]"
 ep="$(LC_ALL=ru_RU.UTF-8 bash -c 'printf %s "$EPOCHREALTIME"' 2>/dev/null)"
-if [[ "$ep" != *,* ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ "$ep" != *,* ]]; then
     kt_test_pass "skipped: no decimal-comma locale here (EPOCHREALTIME under ru_RU.UTF-8: '$ep'; musl has none)"
 else
     # ktest.sh pins LC_ALL=C.UTF-8 (the locale contract): the comma locale is
     # set after it — the runner as a library under another locale
-    o="$(timeout -k 5 40 bash -c '
+    o="$("$KT_TIMEOUT" -k 5 40 bash -c '
         source "$1/ktest.sh"
         export LC_ALL=ru_RU.UTF-8
         set -m
@@ -325,6 +333,7 @@ fi
 RS="$TMP/rootS"; bash "$MK" "$RS" sigs
 for m in env perl jobctl; do
     kt_test_start "gate.sh segment start mode '$m' (KT_GATE_SPAWN): INT and QUIT trappable in the cell; a session of its own where the platform can [H4]"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
     case "$m" in
         env) have=""; for e in env genv; do command -v "$e" >/dev/null 2>&1 && "$e" --default-signal=INT -i "PATH=$PATH" true </dev/null >/dev/null 2>&1 && have=1; done ;;
         perl) have=""; command -v perl >/dev/null 2>&1 && perl -MPOSIX -e 1 </dev/null >/dev/null 2>&1 && have=1 ;;
@@ -354,7 +363,7 @@ for m in env perl jobctl; do
             continue
         fi
     fi
-    o="$(KT_GATE_SPAWN="$m" timeout -k 10 150 "${iso[@]}" bash "$G" --root "$RS" --out "$TMP/outS.$m" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
+    o="$(KT_GATE_SPAWN="$m" "$KT_TIMEOUT" -k 10 150 "${iso[@]}" bash "$G" --root "$RS" --out "$TMP/outS.$m" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
     sp="" ssid=""; { read -r sp _ ssid _ < "$TMP/outS.$m/seg-1.pid"; } 2>/dev/null
     bad=""
     # the cell's own counts: both INT and QUIT traps set
@@ -379,16 +388,18 @@ for m in env perl jobctl; do
 done
 
 kt_test_start "gate.sh unforced: the header names the platform's start mode (env where a GNU env works, else perl, else jobctl); on cygwin a GNU env that fails its probe is an ERROR (rc 2), never a silent switch [H4]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 want=jobctl
 for e in env genv; do command -v "$e" >/dev/null 2>&1 && "$e" --default-signal=INT -i "PATH=$PATH" true </dev/null >/dev/null 2>&1 && { want=env; break; }; done
 [[ "$want" == jobctl ]] && command -v perl >/dev/null 2>&1 && perl -MPOSIX -e 1 </dev/null >/dev/null 2>&1 && want=perl
-o="$(timeout -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.default" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
+o="$("$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.default" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
 # a fake `env` first on PATH that rejects --default-signal (and passes every
 # other call on to the real one)
 renv="$(type -P env)"; mkdir -p "$TMP/fakeenv"
 printf '%s\n' '#!/bin/sh' 'case "$1" in --default-signal*) exit 125 ;; esac' "exec '$renv' \"\$@\"" > "$TMP/fakeenv/env"
 chmod +x "$TMP/fakeenv/env"
-o2="$(PATH="$TMP/fakeenv:$PATH" timeout -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.fake" --bash "$BASH" all 2>&1 < /dev/null)"; rc2=$?
+o2="$(PATH="$TMP/fakeenv:$PATH" "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.fake" --bash "$BASH" all 2>&1 < /dev/null)"; rc2=$?
 bad=""
 [[ "$rc" == 0 && "$o" == *$'\n'"gate: segment start = $want"$'\n'* ]] || bad+="[unforced: rc=$rc, want 'segment start = $want'] "
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
@@ -402,6 +413,7 @@ if [[ -z "$bad" ]]; then
 else
     kt_test_fail "$bad | ${o//$'\n'/ | } || ${o2//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- L5.4-10 (OG12 a): the gate's caller ignores SIGPIPE (a CI runner) ------------
 # a signal ignored when a non-interactive bash starts can never be trapped by it
@@ -410,7 +422,8 @@ kt_test_start "gate.sh started from a parent with SIGPIPE ignored: a cell's trap
 want=jobctl
 for e in env genv; do command -v "$e" >/dev/null 2>&1 && "$e" --default-signal=INT,QUIT,PIPE -i "PATH=$PATH" true </dev/null >/dev/null 2>&1 && { want=env; break; }; done
 [[ "$want" == jobctl ]] && command -v perl >/dev/null 2>&1 && perl -MPOSIX -e 1 </dev/null >/dev/null 2>&1 && want=perl
-if [[ "$want" == jobctl ]] && ! command -v setsid >/dev/null 2>&1; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ "$want" == jobctl ]] && ! command -v setsid >/dev/null 2>&1; then
     kt_test_pass "skipped: start mode jobctl without setsid (no session of its own, see H4)"
 else
     RP="$TMP/rootP"; bash "$MK" "$RP" sigs
@@ -418,7 +431,7 @@ else
         'kt_test_start "PIPE is trappable in a cell"' "trap ': x' PIPE" 't="$(trap -p PIPE)"' \
         'if [[ "$t" == *": x"* ]]; then kt_test_pass "$t"; else kt_test_fail "trap -p PIPE = [$t] (ignored on entry?)"; fi' \
         'trap - PIPE' > "$RP/sigs/tests/002_pipe.sh"
-    o="$(timeout -k 10 150 bash -c 'trap "" PIPE; exec bash "$@"' _ "$G" --root "$RP" --out "$TMP/outP" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
+    o="$("$KT_TIMEOUT" -k 10 150 bash -c 'trap "" PIPE; exec bash "$@"' _ "$G" --root "$RP" --out "$TMP/outP" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
     bad=""
     if [[ "$want" == jobctl ]]; then
         [[ "$o" == *"[WARN] "*SIGPIPE*" ignored when the gate started"* ]] || bad+="[jobctl: no [WARN] naming SIGPIPE] "

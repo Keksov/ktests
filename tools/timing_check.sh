@@ -321,6 +321,15 @@ else
     printf 'timing_check: no tests.sh in %s or %s/tests\n' "$TC_SUITE" "$TC_SUITE" >&2
     exit 2
 fi
+# timeout(1) by name: `timeout`, else `gtimeout` (macOS brew coreutils without
+# gnubin on PATH; launch L5.4-9 — the rule of ktest.sh, which this tool does
+# not source); neither -> a clear error
+TC_TMO=""
+for tc_n in timeout gtimeout; do
+    if type -P -- "$tc_n" >/dev/null 2>&1; then TC_TMO="$tc_n"; break; fi
+done
+unset tc_n
+[[ -n "$TC_TMO" ]] || { printf 'timing_check: needs timeout(1) or gtimeout on PATH (macOS: brew install coreutils)\n' >&2; exit 2; }
 TC_FILTERS=( "${TC_POS[@]:1}" )
 TC_TARGETS=( "${TC_FILTERS[@]}" )
 (( ${#TC_TARGETS[@]} == 0 )) && TC_TARGETS=( "SUITE" )
@@ -370,7 +379,7 @@ tc_run() {
     fi
     # no -k: with -k uutils timeout 0.2.2 (Ubuntu 25.10) answers a real expiry
     # with 125, which the verdict below reads as ENV, not TIMEOUT (launch OG8-o1)
-    ( cd "$TC_SUITE" && exec timeout "$TC_TIMEOUT" "${cmd[@]}" ) < /dev/null > "$TC_TMP/run.out" 2>&1 &
+    ( cd "$TC_SUITE" && exec "$TC_TMO" "$TC_TIMEOUT" "${cmd[@]}" ) < /dev/null > "$TC_TMP/run.out" 2>&1 &
     TC_CHILD=$!
     wait "$TC_CHILD"; rc=$?
     TC_CHILD=""

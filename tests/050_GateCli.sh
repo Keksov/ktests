@@ -30,7 +30,7 @@ kt050_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybo
 # kt050_gate OUTFILE ARGS... — run gate.sh (bounded), rc in RC, output in OUTFILE
 kt050_gate() {
     local of="$1"; shift
-    timeout -k 10 120 bash "$G" "$@" > "$of" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 120 bash "$G" "$@" > "$of" 2>&1 < /dev/null
     RC=$?
 }
 
@@ -40,6 +40,8 @@ bash "$MK" "$F" pass=a/x pass=b/x pass=c/uniq pass=kcl pass=kcl/sub warn=w
 
 # ---- options -----------------------------------------------------------------
 kt_test_start "--help prints the usage, rc 0"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt050_gate "$TMP/h.out" --help
 o="$(cat "$TMP/h.out")"
 if [[ "$RC" == 0 && "$o" == *"gate.sh [options] SUITE... [-- ARGS...]"* && "$o" == *"__GATE__:VERDICT"* ]]; then
@@ -47,8 +49,11 @@ if [[ "$RC" == 0 && "$o" == *"gate.sh [options] SUITE... [-- ARGS...]"* && "$o" 
 else
     kt_test_fail "rc=$RC: ${o:0:300}"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "usage errors: rc 2 and a message (no suite, unknown option, bad values, a value for a flag, internal roles)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 bad=""
 while IFS='|' read -r want args; do
     read -r -a av <<< "$args"
@@ -69,8 +74,11 @@ unknown option --bogus|--bogus all
 --bash /nonexistent/bash is not an executable file|--bash /nonexistent/bash all
 EOF
 if [[ -z "$bad" ]]; then kt_test_pass "11 cases"; else kt_test_fail "$bad"; fi
+fi   # kt_need_timeout
 
 kt_test_start "the G3 options' values: rc 2 and a message for a bad one (no 'not yet implemented' left)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 bad=""
 while IFS='|' read -r want args; do
     read -r -a av <<< "$args"
@@ -92,6 +100,7 @@ done <<'EOT'
 no suite given (name suites, or all, or --changed)|--repeat 2
 EOT
 if [[ -z "$bad" ]]; then kt_test_pass "12 cases"; else kt_test_fail "$bad"; fi
+fi   # kt_need_timeout
 
 # ---- suite resolution ----------------------------------------------------------
 # the resolver alone (gate.sh sourced: nothing runs on source)
@@ -113,6 +122,8 @@ else
 fi
 
 kt_test_start "resolution: unknown and ambiguous suites are usage errors (rc 2) before anything runs — no OUT dir"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt050_gate "$TMP/r.out" --root "$F" --out "$TMP/never1" a/x zzz
 o1="$(cat "$TMP/r.out")"; rc1=$RC
 kt050_gate "$TMP/r.out" --root "$F" --out "$TMP/never2" x
@@ -123,8 +134,11 @@ if [[ "$rc1" == 2 && "$o1" == *'unknown suite "zzz"'* && "$o1" == *"a/x b/x c/un
 else
     kt_test_fail "rc1=$rc1 [$o1] rc2=$rc2 [$o2] never1=$([[ -e "$TMP/never1" ]] && echo made) never2=$([[ -e "$TMP/never2" ]] && echo made)"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "--out must be new or empty (rc 2), --root must exist (rc 2)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/full"; : > "$TMP/full/x"
 kt050_gate "$TMP/r.out" --root "$F" --out "$TMP/full" w; o1="$(cat "$TMP/r.out")"; rc1=$RC
 kt050_gate "$TMP/r.out" --root "$TMP/nope" w; o2="$(cat "$TMP/r.out")"; rc2=$RC
@@ -133,10 +147,13 @@ if [[ "$rc1" == 2 && "$o1" == *"is not empty"* && "$rc2" == 2 && "$o2" == *"no s
 else
     kt_test_fail "rc1=$rc1 [$o1] rc2=$rc2 [$o2]"
 fi
+fi   # kt_need_timeout
 
 # ---- a real (tiny) run: header, spec, marker files ------------------------------
 O="$TMP/out1"
 kt_test_start "a run: rc 0, the header lines, one line per cell, the per-runtime summary, __GATE__ last; [WARN] one runtime only"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 LC_ALL=C TZ=UTC kt050_gate "$TMP/run1.out" --root "$F" --out "$O" --timeout 60 --workers 2 --mode single c/uniq w -- -n 1
 o="$(cat "$TMP/run1.out")"
 last="$(tail -1 "$TMP/run1.out")"
@@ -151,8 +168,11 @@ if [[ "$RC" == 0 && "$o" == "gate "*" root="*" out="* && "$o" == *$'\n'"gate rep
 else
     kt_test_fail "rc=$RC | ${o//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "progress.txt holds the same lines; FINISHED holds the machine line; the marker and argv.txt exist"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 p="$(cat "$O/progress.txt" 2>/dev/null)"; fin="$(cat "$O/FINISHED" 2>/dev/null)"
 mk=""; { read -r mk < "$O/.kt_gate"; } 2>/dev/null
 if [[ "$p" == "$o" && "$fin" == "$last" && "$mk" == "kt-gate 2 "* && -s "$O/argv.txt" && ! -e "$O/INTERRUPTED" && ! -e "$O/STOP" ]]; then
@@ -160,8 +180,11 @@ if [[ "$p" == "$o" && "$fin" == "$last" && "$mk" == "kt-gate 2 "* && -s "$O/argv
 else
     kt_test_fail "progress differs: $([[ "$p" == "$o" ]] && echo no || echo yes) FINISHED [$fin] marker [$mk]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "the spec: mixed C:/... paths only (any mount prefix; review R11) — absolute POSIX paths without cygpath —, the cells in order, args, the caller's locale and TZ"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 spec="$(source "$O/seg-1.spec" 2>&1
         printf 'out=%s\nroot=%s\nself=%s\n' "$KT_GATE_S_OUT" "$KT_GATE_S_ROOT" "$KT_GATE_S_SELF"
         printf 'cells=%s\n' "${KT_GATE_S_C_IDX[*]}:${KT_GATE_S_C_SUITE[*]}:${KT_GATE_S_C_MODE[*]}:${KT_GATE_S_C_CWD[*]}:${KT_GATE_S_C_REP[*]}"
@@ -179,8 +202,11 @@ done
 [[ "$spec" == *$'\nenv=LC_ALL=C'* && "$spec" == *$'\nenv=TZ=UTC'* ]] || bad+="[env: no LC_ALL=C / TZ=UTC] "
 [[ "$spec" != *"env=HOME="* && "$spec" != *"env=TMPDIR="* && "$spec" != *"env=KT"* ]] || bad+="[env leaks HOME/TMPDIR/KT_] "
 if [[ -z "$bad" ]]; then kt_test_pass "${spec//$'\n'/; }"; else kt_test_fail "$bad | ${spec//$'\n'/; }"; fi
+fi   # kt_need_timeout
 
 kt_test_start "a passed cell keeps log/result/summary, its sandbox is removed; --keep keeps it"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 O2="$TMP/out2"
 kt050_gate "$TMP/run2.out" --root "$F" --out "$O2" --keep w
 if [[ -f "$O/cells/001/result" && -f "$O/cells/001/log.txt" && -f "$O/cells/001/summary" && ! -e "$O/cells/001/home" \
@@ -189,6 +215,7 @@ if [[ -f "$O/cells/001/result" && -f "$O/cells/001/log.txt" && -f "$O/cells/001/
 else
     kt_test_fail "rc=$RC out1 cell: $(ls "$O/cells/001" | tr '\n' ' ') out2 cell: $(ls "$O2/cells/001" 2>/dev/null | tr '\n' ' ')"
 fi
+fi   # kt_need_timeout
 
 # ---- runtimes: KT_GATE_BASHES, the other runtime ------------------------------
 # the other cygwin runtime (MSYS2 vs Git for Windows), if there is one
@@ -199,7 +226,8 @@ for b in /c/bin/msys64/usr/bin/bash.exe /c/msys64/usr/bin/bash.exe /c/bin/Git/us
     [[ -n "$v" && "$v" != "$BASH_VERSION" ]] && { OTHER="$b"; OTHER_V="${v%%(*}"; break; }
 done
 kt_test_start "KT_GATE_BASHES='A;B' is the default for --bash (no [WARN]); --bash wins over it"
-if [[ -n "$OTHER" ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$OTHER" ]]; then
     KT_GATE_BASHES="$BASH;$OTHER" kt050_gate "$TMP/b.out" --root "$F" --out "$TMP/out3" w
     o1="$(cat "$TMP/b.out")"; rc1=$RC
     KT_GATE_BASHES="$BASH;$OTHER" kt050_gate "$TMP/b.out" --root "$F" --out "$TMP/out4" --bash "$OTHER" w
@@ -215,8 +243,10 @@ else
 fi
 
 kt_test_start "the parent watch is off with --nohup and under nohup (SIGHUP ignored on entry), on by default"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt050_gate "$TMP/n1.out" --root "$F" --out "$TMP/out5" --nohup w; o1="$(cat "$TMP/n1.out")"; rc1=$RC
-timeout -k 10 120 nohup bash "$G" --root "$F" --out "$TMP/out6" w > "$TMP/n2.out" 2>&1 < /dev/null; rc2=$?
+"$KT_TIMEOUT" -k 10 120 nohup bash "$G" --root "$F" --out "$TMP/out6" w > "$TMP/n2.out" 2>&1 < /dev/null; rc2=$?
 o2="$(cat "$TMP/n2.out")"
 if [[ "$rc1" == 0 && "$o1" == *"parent watch off (--nohup"* && "$rc2" == 0 && "$o2" == *"parent watch off (--nohup / SIGHUP ignored)"* \
       && "$o" != *"parent watch off"* ]]; then
@@ -224,6 +254,7 @@ if [[ "$rc1" == 0 && "$o1" == *"parent watch off (--nohup"* && "$rc2" == 0 && "$
 else
     kt_test_fail "rc1=$rc1 rc2=$rc2 | ${o1//$'\n'/ | } || ${o2//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- rotation --------------------------------------------------------------------
 # ---- rotation (review R3, F15) ------------------------------------------------
@@ -240,6 +271,8 @@ kt050_mark() {
 }
 now=$EPOCHSECONDS
 kt_test_start "rotation never runs beside an explicit --out (it may hold the user's runs: head/new copies)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 P="$TMP/rot"
 for i in 01 02 03 04 05 06 07 08 09 10 11 12; do kt050_mark "$P/old$i" "$dead" "$(( 1000 + 10#$i ))" 1 "$rt"; done
 kt050_gate "$TMP/rot.out" --root "$F" --out "$P/new" w
@@ -249,7 +282,10 @@ if [[ "$RC" == 0 && "$have" == "new old01 old02 old03 old04 old05 old06 old07 ol
 else
     kt_test_fail "rc=$RC left: [$have]"
 fi
+fi   # kt_need_timeout
 kt_test_start "rotation under the default root: the newest 10 stay; an older dir goes only when gate made it, its owner is dead and it is complete (or > 2 h old)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 D="$TMP/rt/kt-gate"
 kt050_mark "$D/old00" "$$" 1000 1 "$rt"                         # owner alive
 kt050_mark "$D/nc" "$dead" 1001 0 "$rt"                         # not made by gate
@@ -277,7 +313,10 @@ if [[ "$RC" == 0 && -n "$new" && "$have" == *"$new"* && "$got" == "$want " && "$
 else
     kt_test_fail "rc=$RC new=[$new] left: [$have] (want $want + new)"
 fi
+fi   # kt_need_timeout
 kt_test_start "the marker records that gate made the dir: CREATED=1 for a new --out and the default, 0 for an existing empty --out"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/given"
 kt050_gate "$TMP/m.out" --root "$F" --out "$TMP/given" w; rc1=$RC
 m1=""; read -r m1 < "$TMP/given/.kt_gate"
@@ -287,13 +326,16 @@ if [[ "$rc1" == 0 && "$m1" =~ ^kt-gate\ 2\ [0-9]+\ [0-9]+\ [0-9]+\ 0\  && "$m2" 
 else
     kt_test_fail "rc=$rc1 [$m1] [$m2]"
 fi
+fi   # kt_need_timeout
 
 # ---- the caller's shell state cannot redirect or break the launcher (R2) ------
 kt_test_start "an exported CDPATH never redirects a relative --out / --root to another dir (data loss, review R2)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/decoy/outc" "$TMP/decoy/rootc" "$TMP/work"
 : > "$TMP/decoy/outc/precious"
-( cd "$TMP/work" && export CDPATH="$TMP/decoy" && timeout -k 10 120 bash "$G" --root "$F" --out outc w > "$TMP/cd1.out" 2>&1 < /dev/null; echo $? > "$TMP/cd1.rc" )
-( cd "$TMP/work" && export CDPATH="$TMP/decoy" && timeout -k 10 120 bash "$G" --root rootc --out out2c w > "$TMP/cd2.out" 2>&1 < /dev/null; echo $? > "$TMP/cd2.rc" )
+( cd "$TMP/work" && export CDPATH="$TMP/decoy" && "$KT_TIMEOUT" -k 10 120 bash "$G" --root "$F" --out outc w > "$TMP/cd1.out" 2>&1 < /dev/null; echo $? > "$TMP/cd1.rc" )
+( cd "$TMP/work" && export CDPATH="$TMP/decoy" && "$KT_TIMEOUT" -k 10 120 bash "$G" --root rootc --out out2c w > "$TMP/cd2.out" 2>&1 < /dev/null; echo $? > "$TMP/cd2.rc" )
 r1="$(cat "$TMP/cd1.rc")"; r2="$(cat "$TMP/cd2.rc")"; o2="$(cat "$TMP/cd2.out")"
 dl="$(cd "$TMP/decoy/outc" && ls -A | tr '\n' ' ')"
 if [[ "$r1" == 0 && -f "$TMP/work/outc/.kt_gate" && "$dl" == "precious " && "$r2" == 2 && "$o2" == *"--root rootc: no such directory"* \
@@ -302,15 +344,21 @@ if [[ "$r1" == 0 && -f "$TMP/work/outc/.kt_gate" && "$dl" == "precious " && "$r2
 else
     kt_test_fail "rc1=$r1 rc2=$r2 decoy=[$dl] | $(cat "$TMP/cd1.out" | head -3 | tr '\n' ' ') | $o2"
 fi
+fi   # kt_need_timeout
 kt_test_start "exported SHELLOPTS/BASHOPTS (noclobber errexit nounset allexport failglob nullglob dotglob nocasematch) change nothing"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 env SHELLOPTS=noclobber:errexit:nounset:allexport BASHOPTS=failglob:nullglob:dotglob:nocasematch:extglob \
-    timeout -k 10 120 bash "$G" --root "$F" --out "$TMP/opts" w > "$TMP/opts.out" 2>&1 < /dev/null; rc1=$?
+    "$KT_TIMEOUT" -k 10 120 bash "$G" --root "$F" --out "$TMP/opts" w > "$TMP/opts.out" 2>&1 < /dev/null; rc1=$?
 if [[ "$rc1" == 0 && "$(tail -1 "$TMP/opts.out")" == "__GATE__:PASS:1:1:0:0:0:0:0:1:1" ]]; then
     kt_test_pass "$(tail -1 "$TMP/opts.out")"
 else
     kt_test_fail "rc=$rc1 | $(tr '\n' ' ' < "$TMP/opts.out" | cut -c1-600)"
 fi
+fi   # kt_need_timeout
 kt_test_start "--out with only a '..x' / '.x' entry is not empty (rc 2); a dir claimed by another gate's marker is refused"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/dd1" "$TMP/dd2"; : > "$TMP/dd1/..x"; : > "$TMP/dd2/.x"
 kt050_gate "$TMP/dd.out" --root "$F" --out "$TMP/dd1" w; r1=$RC; o1="$(cat "$TMP/dd.out")"
 kt050_gate "$TMP/dd.out" --root "$F" --out "$TMP/dd2" w; r2=$RC
@@ -319,7 +367,10 @@ if [[ "$r1" == 2 && "$o1" == *"is not empty"* && "$r2" == 2 && "$(ls -A "$TMP/dd
 else
     kt_test_fail "rc1=$r1 rc2=$r2 | $o1"
 fi
+fi   # kt_need_timeout
 kt_test_start "the default OUT is claimed by an atomic mkdir: STAMP-PID under \${TMPDIR}/kt-gate, CREATED=1"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 TMPDIR="$TMP/rt3" kt050_gate "$TMP/d3.out" --root "$F" w
 d3="$(ls -d "$TMP/rt3/kt-gate"/*/ 2>/dev/null | head -1)"; d3="${d3%/}"
 m3=""; [[ -n "$d3" ]] && read -r m3 < "$d3/.kt_gate"
@@ -328,17 +379,19 @@ if [[ "$RC" == 0 && "${d3##*/}" =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ && "$m3" =~ ^kt-ga
 else
     kt_test_fail "rc=$RC dir=[$d3] marker=[$m3]"
 fi
+fi   # kt_need_timeout
 
 # ---- Ctrl-Z (review R13) ---------------------------------------------------------
 kt_test_start "TSTP to the launcher: '[WARN] suspending a gate is not supported', ignored, the run goes on"
-if [[ "$OSTYPE" != msys* && "$OSTYPE" != cygwin* && "$(trap -p TSTP)" == *"''"* ]]; then   # never skipped on cygwin
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ "$OSTYPE" != msys*&& "$OSTYPE" != cygwin* && "$(trap -p TSTP)" == *"''"* ]]; then   # never skipped on cygwin
     # TSTP ignored when this file started (inherited: a FreeBSD ssh session —
     # launch L2.1): the launcher cannot trap it, there is nothing to see
     kt_test_pass "skipped: SIGTSTP is ignored in this environment (inherited) - no trap can be set"
 else
 R13="$TMP/r13"; bash "$MK" "$R13" hang
 set -m
-timeout -k 10 120 bash "$G" --root "$R13" --out "$TMP/o13" --timeout 3 all > "$TMP/o13.out" 2>&1 < /dev/null &
+"$KT_TIMEOUT" -k 10 120 bash "$G" --root "$R13" --out "$TMP/o13" --timeout 3 all > "$TMP/o13.out" 2>&1 < /dev/null &
 P13=$!
 set +m
 for (( i = 0; i < 100; i++ )); do [[ -e "$TMP/o13/seg-1.cur" ]] && break; sleep 0.1; done
@@ -355,6 +408,8 @@ fi
 fi
 
 kt_test_start "--out inside the tree under test: a [WARN] (the segments source OUT/seg-N.spec: a private dir is needed), the run goes on; outside it: no warning (G4 review R11)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt050_gate "$TMP/oin.out" --root "$F" --out "$F/gate-out" c/uniq; rin=$RC
 kt050_gate "$TMP/oout.out" --root "$F" --out "$TMP/gate-out-ok" c/uniq; rout=$RC
 oin="$(cat "$TMP/oin.out")" oout="$(cat "$TMP/oout.out")"
@@ -364,6 +419,7 @@ if [[ "$rin" == 0 && "$oin" == *"[WARN] --out is inside the tree under test"* &&
 else
     kt_test_fail "rc=$rin/$rout | ${oin//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "the default root is PRIVATE and the same for both launchers: TMPDIR unset -> %LOCALAPPDATA%/Temp, else the per-user folder (cygpath -F 28) — never MSYS2's /tmp, also with no environment at all (G4 review R13)"
 if [[ -z "$CYGP" ]]; then
@@ -392,13 +448,14 @@ else
 fi
 fi
 kt_test_start "a 5.2 and a 5.3 launcher (TMPDIR unset, the same LOCALAPPDATA) land in ONE default root, and --compare LAST from either finds the other's run (G4 review R13)"
-if [[ -n "$OTHER" ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$OTHER" ]]; then
     LAD="$TMP/lad2"; mkdir -p "$LAD/Temp"; LADM="$(cygpath -m "$LAD")"
-    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec timeout -k 10 120 bash "$G" --root "$F" --bash "$BASH" c/uniq ) > "$TMP/sh1.out" 2>&1 < /dev/null; s1=$?
-    env -i PATH="${OTHER%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" timeout -k 10 120 "$OTHER" -c \
+    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec "$KT_TIMEOUT" -k 10 120 bash "$G" --root "$F" --bash "$BASH" c/uniq ) > "$TMP/sh1.out" 2>&1 < /dev/null; s1=$?
+    env -i PATH="${OTHER%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" "$KT_TIMEOUT" -k 10 120 "$OTHER" -c \
         'unset TMPDIR; export LOCALAPPDATA="$1"; exec "$2" "$3" --root "$4" --bash "$2" --compare LAST c/uniq' _ "$LADM" "$OTHER" "$G" "$F" \
         > "$TMP/sh2.out" 2>&1 < /dev/null; s2=$?
-    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec timeout -k 10 120 bash "$G" --root "$F" --bash "$BASH" --compare LAST c/uniq ) > "$TMP/sh3.out" 2>&1 < /dev/null; s3=$?
+    ( unset TMPDIR; export LOCALAPPDATA="$LADM"; exec "$KT_TIMEOUT" -k 10 120 bash "$G" --root "$F" --bash "$BASH" --compare LAST c/uniq ) > "$TMP/sh3.out" 2>&1 < /dev/null; s3=$?
     o1="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh1.out" | head -1)"
     o2="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh2.out" | head -1)"
     o3="$(sed -n 's|^gate 20.* out=\(.*\)$|\1|p' "$TMP/sh3.out" | head -1)"

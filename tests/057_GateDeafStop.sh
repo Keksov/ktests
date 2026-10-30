@@ -154,11 +154,16 @@ if [[ "$KT_PROC_BACKEND" == cygwin && "${KT_GATE_PARALLEL:-}" == 1 ]]; then
         kt_test_start "$t"
         kt_test_pass "N/A: gate --parallel (the other runtime's segment runs now; a suspended process would slow its stray scans)"
     done
+elif [[ "$KT_PROC_BACKEND" == cygwin ]] && ! kt_need_timeout; then
+    for t in "${DEAF_T[@]}"; do
+        kt_test_start "$t"
+        kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+    done
 elif [[ "$KT_PROC_BACKEND" == cygwin ]]; then
     # ---- a driver in XB's runtime: a suspended orphan, then a stop -------------------
     cat > "$TMP/drv.sh" <<'EOF'
 source "$1"; shift
-scen="$1" out="$2" N="$3"
+scen="$1" out="$2" N="$3" TMOCMD="$4"   # TMOCMD: the timeout name (KT_TIMEOUT)
 # drv_deaf NAME FILE — an orphan `sleep 60` (this session) whose Windows
 # process is suspended; "PID WINPID" in FILE. The sleep runs from a copy named
 # NAME.exe beside FILE: a suspended process cannot answer for its argv, /proc
@@ -180,7 +185,7 @@ drv_deaf() {
     # Add-Type compiles into %TEMP%: a Windows TEMP/TMP of its own (a bash
     # started from the other runtime may have none: then C:\Windows, denied)
     c="$(cygpath -w "${2%/*}")"
-    MSYS2_ARG_CONV_EXCL='*' TEMP="$c" TMP="$c" timeout -k 5 60 "$ps" -NoProfile -NonInteractive -Command "Add-Type -Name N -Namespace W -MemberDefinition '[DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(IntPtr h);'; \$p=Get-Process -Id $w; \$t=\$p.StartTime.Ticks; [void][W.N]::NtSuspendProcess(\$p.Handle); Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command',('\$q=Get-Process -Id $w -EA 0; if(\$q -and \$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')" </dev/null >/dev/null 2>&1
+    MSYS2_ARG_CONV_EXCL='*' TEMP="$c" TMP="$c" "$TMOCMD" -k 5 60 "$ps" -NoProfile -NonInteractive -Command "Add-Type -Name N -Namespace W -MemberDefinition '[DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(IntPtr h);'; \$p=Get-Process -Id $w; \$t=\$p.StartTime.Ticks; [void][W.N]::NtSuspendProcess(\$p.Handle); Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command',('\$q=Get-Process -Id $w -EA 0; if(\$q -and \$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')" </dev/null >/dev/null 2>&1
     kill -KILL "$p" 2>/dev/null; sleep 1
     kill -0 "$p" 2>/dev/null && echo "deaf=yes" || echo "deaf=no"
     DRV_P="$p"
@@ -205,7 +210,7 @@ case "$scen" in
         ;;
 esac
 EOF
-    kt057_drv() { o="$(timeout -k 5 90 env PATH="${XB%/*}:$PATH" "$XB" "$TMP/drv.sh" "$SJ" "$1" "$TMP/$1" "$N" 2>&1)"; }
+    kt057_drv() { o="$("$KT_TIMEOUT" -k 5 90 env PATH="${XB%/*}:$PATH" "$XB" "$TMP/drv.sh" "$SJ" "$1" "$TMP/$1" "$N" "$KT_TIMEOUT" 2>&1)"; }
 
     kt_test_start "${DEAF_T[0]} [runtime $XV]"
     kt057_drv killf
@@ -242,7 +247,7 @@ EOF
     R="$TMP/root"; O="$TMP/out"
     bash "$MK" "$R" deaf deafjob
     t0=$SECONDS
-    ( export KT_GATE_BASHES="$(cygpath -m "$XB")"; exec timeout -k 10 170 bash "$G" --root "$R" --out "$O" --timeout 5 all ) > "$TMP/g.out" 2>&1 < /dev/null
+    ( export KT_GATE_BASHES="$(cygpath -m "$XB")"; exec "$KT_TIMEOUT" -k 10 170 bash "$G" --root "$R" --out "$O" --timeout 5 all ) > "$TMP/g.out" 2>&1 < /dev/null
     RC=$? dt=$(( SECONDS - t0 ))
     og="$(cat "$TMP/g.out")"
 
@@ -275,7 +280,7 @@ EOF
     R3="$TMP/root3"; O3="$TMP/out3"
     bash "$MK" "$R3" deafjob
     ( export KT_GATE_BASHES="$(cygpath -m "$XB")" KT_GATE_TEST_NOWINKILL=1
-      exec timeout -k 10 170 bash "$G" --root "$R3" --out "$O3" --timeout 5 all ) > "$TMP/g3.out" 2>&1 < /dev/null
+      exec "$KT_TIMEOUT" -k 10 170 bash "$G" --root "$R3" --out "$O3" --timeout 5 all ) > "$TMP/g3.out" 2>&1 < /dev/null
     RC=$?
     og="$(cat "$TMP/g3.out")"
     kt_test_start "${DEAF_T[5]} [runtime $XV]"
@@ -302,13 +307,17 @@ fi
 # grace saw nothing (~grace + 30 s), long before --timeout 120; the fixture
 # silentalive (one test file that waits 18 s = 3x the grace in silence) is no
 # such cell: its test file's shell lives, it runs to its PASS.
+if kt_need_timeout; then   # setup: needs timeout (its cases are N/A without it)
 R2="$TMP/root2"; O2="$TMP/out2"
 bash "$MK" "$R2" deadstart silentalive
 t0=$SECONDS
-( export KT_GATE_START_GRACE=6; exec timeout -k 10 200 bash "$G" --root "$R2" --out "$O2" --mode single --timeout 120 all ) > "$TMP/g2.out" 2>&1 < /dev/null
+( export KT_GATE_START_GRACE=6; exec "$KT_TIMEOUT" -k 10 200 bash "$G" --root "$R2" --out "$O2" --mode single --timeout 120 all ) > "$TMP/g2.out" 2>&1 < /dev/null
 RC=$? dt=$(( SECONDS - t0 ))
 og="$(cat "$TMP/g2.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "start grace: a cell whose runner never starts (deadstart) is TIMEOUT 'runner did not start' at ~grace + 30 s, not after --timeout"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 kt057_line "$og" 1; l1="$REPLY"
 kt057_kv "$O2/cells/001/result" reason; r1="$REPLY"
 kt057_kv "$O2/cells/001/result" duration_ms; d1="${REPLY:-999999}"
@@ -317,12 +326,16 @@ if [[ "$l1" =~ \ deadstart\ +TIMEOUT\  && "$r1" == "runner did not start (no res
 else
     kt_test_fail "rc=$RC dt=${dt}s [$l1] reason [$r1] ${d1}ms | ${og//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "start grace: a runner that started but stays silent for 3x the grace (silentalive, single mode) is not stopped by it: PASS"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 kt057_line "$og" 2; l2="$REPLY"
 if [[ "$l2" =~ \ silentalive\ +PASS\ +1/1\  && "$RC" == 1 ]]; then
     kt_test_pass "[$l2]"
 else
     kt_test_fail "rc=$RC [$l2] | ${og//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_log "057_GateDeafStop.sh completed"

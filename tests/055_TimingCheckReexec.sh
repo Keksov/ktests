@@ -86,7 +86,7 @@ kt055_run() {
     rm -f -- "$SUITE"/.tc_env.* "$SUITE"/.tc_file_bash.*
     (
         kt055_caller
-        exec timeout -k 10 120 bash "$TC" --bash "$b" --pass-env TC055_VAR --storm 0 --reps 1 --timeout 60 \
+        exec "$KT_TIMEOUT" -k 10 120 bash "$TC" --bash "$b" --pass-env TC055_VAR --storm 0 --reps 1 --timeout 60 \
             --log "$TMP/log.$tag" "$s"
     ) > "$TMP/out.$tag" 2>&1 < /dev/null
     RC=$?
@@ -120,6 +120,8 @@ kt055_check() {
 }
 
 kt_test_start "same runtime: the child (env -i) gets the allowlist + --pass-env, not a secret-named / other var / function; paths, log, header; the spec dir in TMPDIR, gone after"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt055_run same "$(kt055_m "$BASH")" root/tcenv
 kt055_check same "$V"
 if [[ -z "$REPLY" ]]; then
@@ -127,9 +129,11 @@ if [[ -z "$REPLY" ]]; then
 else
     kt_test_fail "$REPLY| ${OUT//$'\n'/ | } | dump: ${DUMP//$'\n'/ }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "across runtimes: the same for the other bash (the allowlist + --pass-env arrive, nothing else; the same folders)"
-if [[ -n "$OTHER" ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$OTHER" ]]; then
     kt055_run other "$(kt055_m "$OTHER")" "$SUITE"
     kt055_check other "$OV"
     if [[ -z "$REPLY" ]]; then
@@ -142,13 +146,16 @@ else
 fi
 
 kt_test_start "--bash that is no bash (/usr/bin/true): rc 2 'its spec was never read', the private dir removed"
-out="$( ( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) 2>&1 < /dev/null )"; rc=$?
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$( ( kt055_caller; exec "$KT_TIMEOUT" -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) 2>&1 < /dev/null )"; rc=$?
 kt055_rxleft
 if [[ "$rc" == 2 && "$out" == *"did not run timing_check (its spec was never read"* && -z "$REPLY" ]]; then
     kt_test_pass "$out"
 else
     kt_test_fail "rc=$rc left='$REPLY' | $out"
 fi
+fi   # kt_need_timeout
 
 # kt055_held TAG BASH — timing_check in the background on a suite that waits
 # for $TMP/hold.TAG; returns once the suite wrapper started (PID = the parent)
@@ -158,7 +165,7 @@ kt055_held() {
     (
         kt055_caller
         export TC055_HOLD="$TMP/hold.$tag"
-        exec timeout -k 10 150 bash "$TC" --bash "$b" --pass-env TC055_HOLD --storm 0 --reps 1 --timeout 120 root/tcenv
+        exec "$KT_TIMEOUT" -k 10 150 bash "$TC" --bash "$b" --pass-env TC055_HOLD --storm 0 --reps 1 --timeout 120 root/tcenv
     ) > "$TMP/out.$tag" 2>&1 < /dev/null &
     PID=$!
     for (( i = 0; i < 600; i++ )); do [[ -e "$TMP/hold.$tag.started" ]] && return 0; sleep 0.1; done
@@ -176,6 +183,8 @@ kt055_release() {
 }
 
 kt_test_start "a SIGKILLed child: the parent ends, its EXIT trap removes the private dir"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if kt055_held kill "$(kt055_m "$BASH")"; then
     cp=""; for d in "$TMP/tdir"/timing_check.*; do [[ -f "$d/pid" ]] && read -r cp < "$d/pid"; done
     [[ "$cp" =~ ^[0-9]+$ ]] && kill -KILL "$cp" 2>/dev/null
@@ -191,8 +200,11 @@ else
     kill -TERM "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; kt055_release kill
     kt_test_fail "the held suite never started | $(cat "$TMP/out.kill")"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a TERM to the parent is passed on to the child of the other runtime (same runtime without one): rc 143, the run in flight stopped, the private dir gone, nothing left"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 TB="$BASH"; [[ -n "$OTHER" ]] && TB="$OTHER"
 if kt055_held term "$(kt055_m "$TB")"; then
     # the TERM goes to timing_check itself (its private dir's owner file), not
@@ -219,8 +231,11 @@ else
     kill -TERM "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; kt055_release term "$OTHER"
     kt_test_fail "the held suite never started | $(cat "$TMP/out.term")"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a killed parent's private dir is swept by the next --bash run: dead owner of this runtime and an other-runtime one > 24 h go; a live owner, a young other-runtime one and an unmarked dir stay (G4 review R13)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RTN="$(bash -c 'r=none; [[ -r /proc/mounts ]] && while read -r a b c; do [[ $b == / ]] && { r=$a; break; }; done < /proc/mounts; printf %s "$r"')"
 dead="$(bash -c 'echo $$')"
 mkdir -p "$TMP/tdir/timing_check.sw_dead" "$TMP/tdir/timing_check.sw_live" "$TMP/tdir/timing_check.sw_oyoung" \
@@ -229,7 +244,7 @@ printf '%s %s %s\n' "$dead" "$RTN" "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timi
 printf '%s %s %s\n' "$$" "$RTN" "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timing_check.sw_live/owner"
 printf '%s %s %s\n' 4242 other-runtime "$(( EPOCHSECONDS - 100 ))" > "$TMP/tdir/timing_check.sw_oyoung/owner"
 printf '%s %s %s\n' 4242 other-runtime "$(( EPOCHSECONDS - 90000 ))" > "$TMP/tdir/timing_check.sw_oold/owner"
-( kt055_caller; exec timeout -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) > /dev/null 2>&1 < /dev/null
+( kt055_caller; exec "$KT_TIMEOUT" -k 10 60 bash "$TC" --bash "$TRUE" --storm 0 --reps 1 root/tcenv ) > /dev/null 2>&1 < /dev/null
 kt055_rxleft; left="$REPLY"
 rm -rf "$TMP/tdir"/timing_check.sw_*
 if [[ "$left" == "timing_check.sw_live timing_check.sw_oyoung timing_check.sw_plain" ]]; then
@@ -237,11 +252,15 @@ if [[ "$left" == "timing_check.sw_live timing_check.sw_oyoung timing_check.sw_pl
 else
     kt_test_fail "left: [$left]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "--reexec without a readable spec: rc 2, a message, nothing run"
-out="$(timeout -k 10 60 bash "$TC" --reexec "$TMP/no-such.spec" 2>&1 < /dev/null)"; rc=$?
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" -k 10 60 bash "$TC" --reexec "$TMP/no-such.spec" 2>&1 < /dev/null)"; rc=$?
 if [[ "$rc" == 2 && "$out" == *"--reexec needs a readable spec file"* && "$out" != *"# timing_check:"* ]]; then
     kt_test_pass "$out"
 else
     kt_test_fail "rc=$rc | $out"
 fi
+fi   # kt_need_timeout

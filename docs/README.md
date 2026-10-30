@@ -463,6 +463,7 @@ VERBOSITY           # "info" or "error"
 MODE                # "single" or "threaded"
 WORKERS             # Thread count (default 8)
 TEST_TMP_DIR        # Test temp directory
+KT_TIMEOUT          # timeout(1) by NAME: timeout, else gtimeout (macOS brew), else "" -> guard with kt_need_timeout, SKIP: $KT_TIMEOUT_WHY (ktest.sh header)
 ```
 
 ## Backward Compatibility

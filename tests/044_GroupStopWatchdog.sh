@@ -27,13 +27,15 @@ LIB="$(cd "$KTESTS_LIB_DIR" && pwd)"
 # `timeout --foreground` where timeout has it (GNU, FreeBSD); busybox's has not
 # (Alpine; launch L2.1) — there the child is not put in a group of its own
 # either: the bound is all that is needed here
-KT044_TFG=(); timeout --foreground 5 true </dev/null >/dev/null 2>&1 && KT044_TFG=( --foreground )
+KT044_TFG=(); kt_need_timeout && "$KT_TIMEOUT" --foreground 5 true </dev/null >/dev/null 2>&1 && KT044_TFG=( --foreground )
 
 # ---- N1: a STOPPED group is still stopped and reaped by kt_runner_group_stop -
 kt_test_start "kt_runner_group_stop ends a stopped group at once (TERM + CONT), the group is gone [N1]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 rm -f "$TMP/n1.pgid"
 rc=0
-timeout "${KT044_TFG[@]}" 20 bash -c '
+"$KT_TIMEOUT" "${KT044_TFG[@]}" 20 bash -c '
 source "$1/ktest.sh"
 set -m
 ( while :; do sleep 1; done ) < /dev/null &
@@ -60,6 +62,7 @@ if [[ "$rc" == 0 && "$alive" == no ]]; then
 else
     kt_test_fail "rc=$rc (124 = group_stop hung) group alive=$alive"
 fi
+fi   # kt_need_timeout
 
 # The P3 master-sweep flake (042 R1 case, bash 5.2 under load): on the Git
 # (cygwin) runtime a group signal sent while a member is still in its exec
@@ -68,7 +71,9 @@ fi
 # what is left after its grace (here 0.5 s, 20 groups; its /proc snapshot before
 # the TERM usually outlasts the exec handover already).
 kt_test_start "kt_runner_group_stop also ends a member forked just before the stop (a lost TERM: KILLed after the grace) [R1, sweep flake]"
-out="$(timeout "${KT044_TFG[@]}" 120 bash -c '
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 120 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 surv=0 list=""
@@ -92,12 +97,15 @@ if [[ "$out" == "survivors=0 "* ]]; then
 else
     kt_test_fail "$out"
 fi
+fi   # kt_need_timeout
 
 # The same flake, second half: under load the exec'ing member is also invisible
 # to `kill -0 -- -PGID` for tens of ms, so kt_runner_group_stop reads the
 # members from /proc too (kt_runner_group_members: no fork, zombies dropped).
 kt_test_start "kt_runner_group_members lists exactly a live group's members from /proc, nothing for a gone group [R1, sweep flake]"
-out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 set -m
@@ -126,13 +134,16 @@ elif [[ "$out" == OK ]]; then
 else
     kt_test_fail "$out"
 fi
+fi   # kt_need_timeout
 
 # TERM ONCE, then KILL after the grace (supervisor decision 2026-10-16, P3b
 # review): a TERM re-sent every 0.1 s cut a test's cleanup short (a trapped
 # TERM inside its EXIT trap exits bash at once) and never ended a member that
 # ignores TERM.
 kt_test_start "kt_runner_group_stop: a TERM-ignoring member is KILLed after the grace, a member's 0.8 s cleanup trap runs to its end [R1, P3b review]"
-out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP   # a killed run takes its set -m groups along ($!: forked, g not yet set)
 d="$2/gs"; mkdir -p "$d"; rm -f "$d"/*
@@ -169,9 +180,12 @@ if [[ "$out" == *"] ignorer=gone cleanup=[done] stop="* && "$dt" -ge 29 && "$dt"
 else
     kt_test_fail "$out (want ignorer gone, cleanup done, stop 2.9-8 s)"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a group's shell ignores SIGTTOU and SIGTTIN (a write to a tostop terminal does not stop it) [N1]"
-out="$(timeout "${KT044_TFG[@]}" 20 bash -c '
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 20 bash -c '
 source "$1/ktest.sh"
 set -m
 ( kt_runner_group_watchdog "" ""; trap -p TTOU TTIN ) < /dev/null &
@@ -185,6 +199,7 @@ if [[ "$out" == *"'' SIGTTOU"* && "$out" == *"'' SIGTTIN"* ]]; then
 else
     kt_test_fail "trap -p TTOU TTIN in the group: [$out]"
 fi
+fi   # kt_need_timeout
 
 # ---- N4: a watchdog that starts late cannot block on the FIFO --------------
 # A copy of the runner whose watchdog child sleeps 2 s before it reads — it
@@ -195,11 +210,12 @@ cp "$LIB"/*.sh "$TMP/lib/"
 # no `sed -i` (BSD sed takes the script as the backup suffix; launch L2.1)
 sed '/__kt_l/s/{ IFS= read/{ sleep 2; IFS= read/' "$TMP/lib/ktest_runner.sh" > "$TMP/lib/r.new" && mv -f "$TMP/lib/r.new" "$TMP/lib/ktest_runner.sh"
 kt_test_start "a watchdog that starts after the runner closed its writer exits; no orphan [N4]"
-if ! grep -q '{ sleep 2; IFS= read' "$TMP/lib/ktest_runner.sh"; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif ! grep -q '{ sleep 2; IFS= read' "$TMP/lib/ktest_runner.sh"; then
     kt_test_fail "could not inject the delay into the watchdog"
 else
     rm -f "$TMP/n4.fifo" "$TMP/n4.wd"
-    timeout "${KT044_TFG[@]}" 20 env -u KTESTS_LIB_DIR bash -c '
+    "$KT_TIMEOUT" "${KT044_TFG[@]}" 20 env -u KTESTS_LIB_DIR bash -c '
 source "$1/ktest.sh"
 fifo="$2/n4.fifo"
 kt_runner_group_open "$fifo" || exit 4
@@ -321,12 +337,13 @@ kt044_gone() {
 # group's descendants outside it (the /proc ppid chain, start time checked).
 for mode in threaded single; do
     kt_test_start "$mode: a TERMed run also ends a test file's \`timeout 60 sleep 50\` (timeout's own process group) [critic P3b F8]"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
     n="50.${$}${#mode}"
     d="$TMP/f8$mode"; mkdir -p "$d" "$TMP/f8tmp$mode"; rm -f "$d/pids"
     printf '%s\n' "source \"$LIB/ktest.sh\"" \
         "kt_test_init \"F8\" \"\$(dirname \"\$0\")\"" \
         'kt_test_start "f8"' \
-        "timeout 60 sleep $n & echo \"\$!\" >> '$d/pids'; wait" \
+        "$KT_TIMEOUT 60 sleep $n & echo \"\$!\" >> '$d/pids'; wait" \
         'kt_test_pass "f8"' > "$d/001_f.sh"
     TMPDIR="$TMP/f8tmp$mode" bash "$LIB/ktests.sh" "$d" F8 '/[0-9][0-9][0-9]_' -m "$mode" -w 2 > /dev/null 2>&1 &
     rp=$!
@@ -338,7 +355,7 @@ for mode in threaded single; do
     if [[ "$rc" == hung ]]; then kill -KILL "$rp" 2>/dev/null; else wait "$rp" 2>/dev/null; rc=$?; fi
     if kt044_gone "$n" 10; then left=""; else left="$REPLY"; fi
     kt044_procs "$n"; for p in $REPLY; do kill -KILL "${p%%:*}" 2>/dev/null; done
-    if [[ "$before" == *:timeout*:sleep* || "$before" == *:sleep*:timeout* ]] && [[ "$rc" == 143 && -z "$left" ]]; then
+    if [[ "$before" == *:"$KT_TIMEOUT"*:sleep* || "$before" == *:sleep*:"$KT_TIMEOUT"* ]] && [[ "$rc" == 143 && -z "$left" ]]; then
         kt_test_pass "$mode: before [$before], rc $rc, nothing left"
     else
         kt_test_fail "$mode: before [$before] rc=$rc left=[$left]"
@@ -384,7 +401,9 @@ done
 # then (kt_runner_proc_same: start time, or the recorded process group). A
 # reuse is simulated by a wrong record for a live process with a child.
 kt_test_start "kt_runner_group_scan adopts a tracked pid's children only while it is the recorded process (a reused pid: dropped, children not adopted) [critic P3b r2 N3]"
-out="$(timeout "${KT044_TFG[@]}" 60 bash -c '
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 60 bash -c '
 source "$1/ktest.sh"
 g=""; trap "kill -KILL -- -\$g -\$! 2>/dev/null; exit 143" TERM INT HUP
 set -m
@@ -411,6 +430,7 @@ if [[ "$out" == *"same=[adopted/kept] reused=[/]"* ]]; then
 else
     kt_test_fail "$out (want same=[adopted/kept] reused=[/])"
 fi
+fi   # kt_need_timeout
 
 # ---- a TERMed run lets every test file's cleanup finish (P3b rs probe) -----
 # Each file: an EXIT trap that takes 0.8 s (fork-free) and writes a marker,

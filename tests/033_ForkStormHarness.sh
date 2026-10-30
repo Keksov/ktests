@@ -90,14 +90,16 @@ else
 fi
 
 kt_test_start "the CLI start returns at once (workers hold no stdout), status sees it, stop cleans up"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 ST="$TMP/storm.pids"
 me=$BASHPID   # this shell, captured outside the $( ) below
 # the worker outlives the CLI on purpose: KT_TMO_BOUND (FreeBSD's timeout is a
 # reaper that would wait for it; launch L2.1)
-cli_out="$(timeout "${KT_TMO_BOUND[@]}" 60 "$BASH" "$FS" start 1 --state "$ST" --owner "$me" 2>&1)"; crc=$?
+cli_out="$("$KT_TIMEOUT" "${KT_TMO_BOUND[@]}" 60 "$BASH" "$FS" start 1 --state "$ST" --owner "$me" 2>&1)"; crc=$?
 cli_tag=""; [[ -f "$ST" ]] && read -r cli_tag < "$ST"
-status_out="$(timeout 60 "$BASH" "$FS" status --state "$ST" 2>&1)"
-stop_out="$(timeout 60 "$BASH" "$FS" stop --state "$ST" 2>&1)"; src=$?
+status_out="$("$KT_TIMEOUT" 60 "$BASH" "$FS" status --state "$ST" 2>&1)"
+stop_out="$("$KT_TIMEOUT" 60 "$BASH" "$FS" stop --state "$ST" 2>&1)"; src=$?
 left=-1; [[ -n "$cli_tag" ]] && { kt_storm_scan "$cli_tag"; left=$RESULT; }
 if (( crc == 0 && src == 0 && left == 0 )) && [[ -n "$cli_tag" && ! -e "$ST" \
       && "$status_out" == *"1 of 1 worker(s) alive"* ]]; then
@@ -105,6 +107,7 @@ if (( crc == 0 && src == 0 && left == 0 )) && [[ -n "$cli_tag" && ! -e "$ST" \
 else
     kt_test_fail "start rc=$crc '$cli_out'; status '$status_out'; stop rc=$src '$stop_out'; left=$left state-file=$([[ -e "$ST" ]] && echo kept || echo gone)"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "workers stop by themselves when their owner is SIGKILLed (no cleanup ran)"
 OST="$TMP/owner.tag"

@@ -2038,11 +2038,11 @@ kt_gate_main() {
         kt_proc_ppid "$$"; [[ "$REPLY" == "$PPID" ]] && _KT_GATE_PPW=ppid
     fi
     [[ "$PPID" =~ ^[0-9]+$ ]] && (( PPID > 1 )) && [[ -n "$_KT_GATE_PPW" ]] || _KT_GATE_WATCH=0
-    # the parent is `timeout`: its parent is watched as well (_kt_gate_parent_ok)
+    # the parent is `timeout` (or `gtimeout`, L5.4-9): its parent is watched as well (_kt_gate_parent_ok)
     _KT_GATE_GP="" _KT_GATE_GPW=""
     if (( _KT_GATE_WATCH )); then
         kt_proc_cmd "$PPID"; REPLY="${REPLY%% *}"
-        if [[ "${REPLY##*/}" == timeout || "${REPLY##*/}" == timeout.exe ]]; then
+        if [[ "${REPLY##*/}" == timeout || "${REPLY##*/}" == timeout.exe || "${REPLY##*/}" == gtimeout || "${REPLY##*/}" == gtimeout.exe ]]; then
             kt_proc_ppid "$PPID"
             if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( REPLY > 1 )); then
                 _KT_GATE_GP=$REPLY

@@ -92,20 +92,23 @@ kt042_alive() {
 kt042_npids() { local n=0 l; [[ -f "$1" ]] && while IFS= read -r l; do n=$(( n + 1 )); done < "$1"; (( n >= $2 )); }
 
 kt_test_start "a threaded run killed with TERM leaves nothing in TMPDIR [T9]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/t1"
 # ktests.sh itself under timeout: a suite's tests.sh wrapper dies on TERM at
 # once and timeout returns while ktests.sh is still cleaning up
 rc=0
 # busybox's timeout has no --preserve-status — and needs none: it execs the
 # command, whose own status is the exit status (launch L2.1)
-kt042_ps=( --preserve-status ); [[ "$(timeout --help 2>&1)" == *BusyBox* ]] && kt042_ps=()
-TMPDIR="$TMP/t1" timeout -s TERM "${kt042_ps[@]}" 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 >/dev/null 2>&1 || rc=$?
+kt042_ps=( --preserve-status ); [[ "$("$KT_TIMEOUT" --help 2>&1)" == *BusyBox* ]] && kt042_ps=()
+TMPDIR="$TMP/t1" "$KT_TIMEOUT" -s TERM "${kt042_ps[@]}" 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 >/dev/null 2>&1 || rc=$?
 left="$(kt042_left "$TMP/t1")"
 if [[ -z "$left" && "$rc" == 143 ]]; then
     kt_test_pass "rc=$rc, TMPDIR empty"
 else
     kt_test_fail "rc=$rc left=[$left]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a threaded run killed with KILL: the next run sweeps everything it left [T9, R7]"
 mkdir -p "$TMP/t2"

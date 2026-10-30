@@ -33,7 +33,7 @@ kt053_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybo
 # kt053_gate OUTFILE ARGS... — gate.sh bounded; RC; the output in OUTFILE
 kt053_gate() {
     local of="$1"; shift
-    timeout -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
     RC=$?
 }
 kt053_kv() {
@@ -83,6 +83,7 @@ kt053_js() {
 COLS="idx bash_version bash_path mode cwd suite repeat verdict rc total passed failed warn fail_lines strays attempts duration_ms log reruns rerun_pass flaky reason"
 
 # ---- A: a mixed run: cells.tsv rows, summary.json ------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RA="$TMP/rootA"; OA="$TMP/outA"
 bash "$MK" "$RA" pass warn fail flaky empty
 git "${GC[@]}" -C "$RA" init -q && git "${GC[@]}" -C "$RA" add -A && git "${GC[@]}" -C "$RA" commit -qm fixture
@@ -90,7 +91,10 @@ git "${GC[@]}" -C "$RA" init -q && git "${GC[@]}" -C "$RA" add -A && git "${GC[@
 kt053_gate "$TMP/a.out" --root "$RA" --out "$OA" --rerun-failed 1 all
 oa="$(cat "$TMP/a.out")"
 kt053_tsv "$OA/cells.tsv"
+fi   # kt_need_timeout (setup)
 kt_test_start "cells.tsv: the header (G2's result columns + reruns rerun_pass flaky reason), one row per cell in run order, no empty value"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if [[ "${TSV_H[*]}" == "$COLS" && "$TSV_N" == 5 && -z "$TSV_BAD" \
       && "${TSV[1:suite]} ${TSV[2:suite]} ${TSV[3:suite]} ${TSV[4:suite]} ${TSV[5:suite]}" == "empty fail flaky pass warn" \
       && "${TSV[1:idx]}${TSV[2:idx]}${TSV[3:idx]}${TSV[4:idx]}${TSV[5:idx]}" == 12345 && "${TSV[1:bash_version]}" == "$V" ]]; then
@@ -98,7 +102,10 @@ if [[ "${TSV_H[*]}" == "$COLS" && "$TSV_N" == 5 && -z "$TSV_BAD" \
 else
     kt_test_fail "header [${TSV_H[*]}] rows=$TSV_N bad=[$TSV_BAD] suites ${TSV[1:suite]} ${TSV[2:suite]} ${TSV[3:suite]}"
 fi
+fi   # kt_need_timeout
 kt_test_start "cells.tsv: the verdicts and counts of a mixed run (NOTRUN, FAIL after a rerun, FLAKY, PASS, PASS warn=1); rc 1"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if [[ "$RC" == 1 && "${TSV[1:verdict]}" == NOTRUN && "${TSV[2:verdict]}" == FAIL && "${TSV[2:reruns]}" == 1 \
       && "${TSV[2:rerun_pass]}" == 0 && "${TSV[2:total]}/${TSV[2:passed]}/${TSV[2:failed]}" == 5/2/3 && "${TSV[2:fail_lines]}" == 3 \
       && "${TSV[3:verdict]}" == FLAKY && "${TSV[3:reruns]}" == 1 && "${TSV[3:rerun_pass]}" == 1 && "${TSV[3:flaky]}" == 002_flaky.sh \
@@ -109,7 +116,11 @@ if [[ "$RC" == 1 && "${TSV[1:verdict]}" == NOTRUN && "${TSV[2:verdict]}" == FAIL
 else
     kt_test_fail "rc=$RC | $(tr '\t' '|' < "$OA/cells.tsv" | tr '\n' ' ') | ${oa//$'\n'/ | }"
 fi
-if [[ -n "$NODE" ]]; then
+fi   # kt_need_timeout
+if ! kt_need_timeout; then
+    kt_test_start "summary.json is valid JSON (node)"
+    kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$NODE" ]]; then
     # the OUT in the mixed C:/ form with cygpath, an absolute POSIX path without (launch L2.1)
     outform='j.gate.out.indexOf(":") == 1'; command -v cygpath >/dev/null 2>&1 || outform='j.gate.out.startsWith("/")'
     kt053_js "$OA/summary.json" 'Object.keys(j).join(",")' 'Object.keys(j.gate).join(",")' "j.gate.out.endsWith(\"outA\") && j.gate.root.endsWith(\"rootA\") && $outform" \
@@ -135,6 +146,8 @@ else
     kt_test_pass "skipped: no node on this machine"
 fi
 kt_test_start "the reports are written before the verdict line; FINISHED written; the cell results unchanged by them"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt053_kv "$OA/cells/003/result" flaky; fl="$REPLY"
 if [[ -s "$OA/cells.tsv" && -s "$OA/summary.json" && -f "$OA/FINISHED" && "$fl" == 002_flaky.sh \
       && "$oa" == *$'\n'"gate FAIL  out="*$'\n'"__GATE__:FAIL:5:2:1:1:0:0:0:9:13" ]]; then
@@ -142,14 +155,19 @@ if [[ -s "$OA/cells.tsv" && -s "$OA/summary.json" && -f "$OA/FINISHED" && "$fl" 
 else
     kt_test_fail "flaky=[$fl] | ${oa//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- B: --compare -----------------------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RB="$TMP/rootB"; OB1="$TMP/outB1"
 bash "$MK" "$RB" pass warn
 kt053_gate "$TMP/b1.out" --root "$RB" --out "$OB1" all; rb1=$RC
 kt053_gate "$TMP/b2.out" --root "$RB" --out "$TMP/outB2" --compare "$OB1" all; rb2=$RC
 ob2="$(cat "$TMP/b2.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "--compare DIR, the same tree: 'totals unchanged', rc 0; compare.txt; summary.json compare.unchanged"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 cj=""
 if [[ -n "$NODE" ]]; then kt053_js "$TMP/outB2/summary.json" 'j.compare.unchanged' 'j.compare.changes.length' 'j.compare.base'; cj="${REPLY//$'\n'/ }"; fi
 if [[ "$rb1" == 0 && "$rb2" == 0 && "$ob2" == *"gate compare: base "*"/outB1/cells.tsv"* \
@@ -159,13 +177,18 @@ if [[ "$rb1" == 0 && "$rb2" == 0 && "$ob2" == *"gate compare: base "*"/outB1/cel
 else
     kt_test_fail "rc=$rb1/$rb2 json=[$cj] | ${ob2//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 # a changed total (a test more in pass), a suite added (flaky... no: fail, new id),
 # a suite removed (warn): compare is informational — the exit stays the run's
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 cp "$RB/pass/tests/002_b.sh" "$RB/pass/tests/003_c.sh"
 mkdir -p "$RB/newsuite/tests"; cp "$LIB/tests/gate_fixtures/pass/suite/"* "$RB/newsuite/tests/"
 kt053_gate "$TMP/b3.out" --root "$RB" --out "$TMP/outB3" --compare "$OB1/cells.tsv" newsuite pass; rb3=$RC
 ob3="$(cat "$TMP/b3.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "--compare FILE.tsv: changed total/passed, a suite added; a base suite this run does not plan is reported apart, not a change, not in the sums (G4 review R6); informational (rc 0)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 cj=""
 if [[ -n "$NODE" ]]; then kt053_js "$TMP/outB3/summary.json" 'j.compare.unchanged' 'j.compare.changes.map(c=>c.kind+":"+c.suite+":"+JSON.stringify(c.base)+":"+JSON.stringify(c.new)).join(" ")' 'j.compare.base_only.map(c=>c.suite+":"+JSON.stringify(c.base)).join(" ")'; cj="${REPLY//$'\n'/ }"; fi
 if [[ "$rb3" == 0 && "$ob3" == *"gate compare "*"/outB1/cells.tsv: 2 change(s) ($V 3/3 -> 7/7); 1 base key(s) not in this run, not compared"* \
@@ -177,7 +200,10 @@ if [[ "$rb3" == 0 && "$ob3" == *"gate compare "*"/outB1/cells.tsv: 2 change(s) (
 else
     kt_test_fail "rc=$rb3 json=[$cj] | ${ob3//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "--compare: only a base-only key differs -> 'totals unchanged' over the planned keys; a base row that never ran there (UNSTARTED, '-') is 'not run in the base', not 'added' (G4 review R6, F10b)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt053_gate "$TMP/b4.out" --root "$RB" --out "$TMP/outB4" --compare "$OB1" warn; rb4=$RC
 ob4="$(cat "$TMP/b4.out")"
 awk -F'\t' 'BEGIN{OFS="\t"} NR==1{for(i=1;i<=NF;i++)c[$i]=i; print; next} $c["suite"]=="pass"{$c["verdict"]="UNSTARTED"; $c["total"]="-"; $c["passed"]="-"} {print}' "$OB1/cells.tsv" > "$TMP/unstarted.tsv"
@@ -190,8 +216,10 @@ if [[ "$rb4" == 0 && "$ob4" == *"/outB1: totals unchanged ($V 1/1); 1 base key(s
 else
     kt_test_fail "rc=$rb4/$rb5 | ${ob4//$'\n'/ | } || ${ob5//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 # LAST: the newest FINISHED run under the default OUT root (TMPDIR/kt-gate); a
 # newer dir without FINISHED is no candidate
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RT="$TMP/rt"; mkdir -p "$RT"
 TMPDIR="$RT" kt053_gate "$TMP/l1.out" --root "$RB" pass; rl1=$RC
 l1dir="$(ls -d "$RT/kt-gate"/*/ 2>/dev/null | head -1)"; l1dir="${l1dir%/}"
@@ -200,18 +228,24 @@ printf 'kt-gate 2 1 0 %s 1 none\n' "$(( EPOCHSECONDS + 100 ))" > "$RT/kt-gate/zz
 cp "$l1dir/cells.tsv" "$RT/kt-gate/zz-unfinished/cells.tsv"
 TMPDIR="$RT" kt053_gate "$TMP/l2.out" --root "$RB" --compare LAST pass; rl2=$RC
 ol2="$(cat "$TMP/l2.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "--compare LAST = the newest FINISHED run under \${TMPDIR}/kt-gate (an unfinished newer one is skipped)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if [[ "$rl1" == 0 && "$rl2" == 0 && -n "$l1dir" && "$ol2" == *"gate compare LAST ("*"${l1dir##*/}): totals unchanged ($V 4/4)"* \
       && "$ol2" != *zz-unfinished* ]]; then
     kt_test_pass "$(grep 'gate compare LAST' "$TMP/l2.out")"
 else
     kt_test_fail "rc=$rl1/$rl2 l1=[$l1dir] | ${ol2//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 # kt053_fake DIR STAMP TSV — a finished gate run dir (CREATED=0: rotation never removes it)
 kt053_fake() {
     mkdir -p "$1"; printf 'kt-gate 2 1 0 %s 0 none\n' "$2" > "$1/.kt_gate"; : > "$1/FINISHED"; cp "$3" "$1/cells.tsv"
 }
 kt_test_start "--compare LAST: an unreadable newest candidate is skipped (a note), a same-stamp tie goes to the later name; no base at all -> [WARN], the run goes on without a compare, rc 0 (G4 review R3)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RT2="$TMP/rt2"; S0=$(( EPOCHSECONDS + 1000 ))
 { head -1 "$OB1/cells.tsv"; printf '1\t2\t3\n'; } > "$TMP/garbled_last.tsv"
 awk -F'\t' 'BEGIN{OFS="\t"} NR==1{for(i=1;i<=NF;i++)c[$i]=i; print; next} $c["suite"]=="pass"{$c["total"]=9; $c["passed"]=9} {print}' "$l1dir/cells.tsv" > "$TMP/nine.tsv"
@@ -233,7 +267,10 @@ if [[ "$rl3" == 0 && "$ol3" == *"gate compare: a LAST candidate skipped (unreada
 else
     kt_test_fail "rc=$rl3/$rl4 json=[$cj] | ${ol3//$'\n'/ | } || ${ol4//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "an unreadable / garbled explicit base is a usage error (rc 2) before any run — no OUT dir"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/emptydir"
 printf 'a\tb\n1\t2\n' > "$TMP/notgate.tsv"
 { head -1 "$OB1/cells.tsv"; printf '1\t2\t3\n'; } > "$TMP/garbled.tsv"
@@ -248,11 +285,13 @@ for base in "$TMP/nonexistent" "$TMP/emptydir" "$TMP/notgate.tsv" "$TMP/garbled.
     [[ "$RC" == 2 && "$o" == "gate: --compare "* && ! -e "$TMP/never$n" ]] || bad+="[$base -> rc $RC: ${o:0:160}] "
 done
 if [[ -z "$bad" ]]; then kt_test_pass "$n bases refused"; else kt_test_fail "$bad"; fi
+fi   # kt_need_timeout
 
 # ---- C: an INTERRUPTED run writes its partial reports ------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RC_="$TMP/rootC"; OC="$TMP/outC"
 bash "$MK" "$RC_" pass=a1 hang=b2
-timeout -k 10 120 bash "$G" --root "$RC_" --out "$OC" --timeout 60 all > "$TMP/c.out" 2>&1 < /dev/null &
+"$KT_TIMEOUT" -k 10 120 bash "$G" --root "$RC_" --out "$OC" --timeout 60 all > "$TMP/c.out" 2>&1 < /dev/null &
 PC=$!
 for (( i = 0; i < 300; i++ )); do
     cur=""; { read -r cur < "$OC/seg-1.cur"; } 2>/dev/null
@@ -264,7 +303,10 @@ lp=""; { read -r _ _ lp _ < "$OC/.kt_gate"; } 2>/dev/null
 [[ -n "$lp" ]] && kill -TERM "$lp" 2>/dev/null
 wait "$PC"; rcc=$?
 kt053_tsv "$OC/cells.tsv"
+fi   # kt_need_timeout (setup)
 kt_test_start "INTERRUPTED (TERM): exit 143, cells.tsv with what finished (1 PASS, 2 INTERRUPTED), summary.json, no FINISHED"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 cj=""
 if [[ -n "$NODE" ]]; then kt053_js "$OC/summary.json" 'j.verdict+" "+j.exit' 'j.cells.map(c=>c.verdict).join(",")' "j.totals['$V'].INTERRUPTED"; cj="${REPLY//$'\n'/ }"; fi
 if [[ "$rcc" == 143 && "$TSV_N" == 2 && "${TSV[1:verdict]}" == PASS && "${TSV[2:verdict]}" == INTERRUPTED && -z "$TSV_BAD" \
@@ -273,11 +315,13 @@ if [[ "$rcc" == 143 && "$TSV_N" == 2 && "${TSV[1:verdict]}" == PASS && "${TSV[2:
 else
     kt_test_fail "rc=$rcc rows=$TSV_N bad=[$TSV_BAD] json=[$cj] | $(tr '\n' ' ' < "$TMP/c.out" | cut -c1-900)"
 fi
+fi   # kt_need_timeout
 
 # ---- D: sanitising -------------------------------------------------------------------
 # a suite id with a quote (single mode: the threaded runner cannot take a quote
 # in its path — a known runner limit), a failed file whose name holds a tab and
 # a quote, a [FAIL] message with a quote, a backslash, a tab and non-ASCII
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RD="$TMP/rootD"; OD="$TMP/outD"
 bash "$MK" "$RD" 'pass=q"z'
 FD="$RD/q\"z/tests/002_t"$'\t''a"b.sh'
@@ -286,7 +330,10 @@ printf '%s\n' 'source "$KTEST_SOURCE_PATH"' 'kt_test_init "GfxQuote" "$KT_TESTS_
     'kt_test_start "q"; kt_test_fail $'"'"'a "quoted" back\\slash\ttab and \xc3\xbcn'"'"'' > "$FD"
 kt053_gate "$TMP/d.out" --root "$RD" --out "$OD" --mode single --rerun-failed 1 all
 kt053_tsv "$OD/cells.tsv"
+fi   # kt_need_timeout (setup)
 kt_test_start "sanitising: cells.tsv keeps one line per cell and its field count (tab -> space) with a quoted suite id, a tab in a file name"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 nl=$(( $(wc -l < "$OD/cells.tsv") ))   # BSD wc pads the count (launch L2.1)
 if [[ "$RC" == 1 && "$nl" == 2 && "$TSV_N" == 1 && -z "$TSV_BAD" && "${TSV[1:suite]}" == 'q"z' \
       && "${TSV[1:reason]}" == '1 rerun(s) of 002_t a"b.sh failed (last: FAIL 0/1)' ]]; then
@@ -294,8 +341,10 @@ if [[ "$RC" == 1 && "$nl" == 2 && "$TSV_N" == 1 && -z "$TSV_BAD" && "${TSV[1:sui
 else
     kt_test_fail "rc=$RC lines=$nl bad=[$TSV_BAD] suite=[${TSV[1:suite]}] reason=[${TSV[1:reason]}] | $(tr '\n' ' ' < "$TMP/d.out" | cut -c1-600)"
 fi
+fi   # kt_need_timeout
 kt_test_start "sanitising: summary.json escapes quote / backslash / tab, passes UTF-8 through (node reads back the exact strings)"
-if [[ -n "$NODE" ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$NODE" ]]; then
     kt053_js "$OD/summary.json" 'j.cells[0].suite' 'j.cells[0].fails[0]' 'j.cells[0].reason'
     want1='"q\"z"'
     want2='"[FAIL] a \"quoted\" back\\slash\ttab and '$'\xc3\xbc''n (002_t\ta\"b.sh)"'
@@ -310,6 +359,8 @@ else
     kt_test_pass "skipped: no node on this machine"
 fi
 kt_test_start "summary.json is valid UTF-8 for a strict decoder: a [FAIL] message with the bytes \xff\xfe gets U+FFFD, valid UTF-8 stays (G4 review R7)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RU="$TMP/rootU"; OU="$TMP/outU"
 bash "$MK" "$RU" pass=u8
 rm -f "$RU/u8/tests/002_b.sh"
@@ -324,6 +375,7 @@ if [[ -n "$NODE" ]]; then
 else
     kt_test_pass "skipped: no node on this machine"
 fi
+fi   # kt_need_timeout
 kt_test_start "the escape function: every control character, newline, quote, backslash; the tsv value function: no tab/newline/CR, '' -> -"
 S=$'l1\nl2\r\t"q"\\b\x01\x02\x07\x08\x0b\x0c\x1b\x1f end \xc3\xa4\xe2\x82\xac'
 printf '%s' "$S" > "$TMP/raw.txt"

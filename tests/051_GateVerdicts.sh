@@ -32,7 +32,7 @@ kt051_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybo
 # kt051_gate OUTFILE ARGS... — gate.sh bounded; RC; the output in OUTFILE
 kt051_gate() {
     local of="$1"; shift
-    timeout -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
     RC=$?
 }
 # kt051_kv FILE KEY — REPLY = KEY's value in a result file
@@ -51,17 +51,24 @@ kt051_line() {
 }
 
 # ---- A: pass, warn, env (first attempt only) -> 0 --------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RA="$TMP/rootA"; OA="$TMP/outA"
 bash "$MK" "$RA" pass warn env
 kt051_gate "$TMP/a.out" --root "$RA" --out "$OA" --timeout 60 all
 oa="$(cat "$TMP/a.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "pass + warn + env-once: rc 0, __GATE__:PASS"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if [[ "$RC" == 0 && "$oa" == *$'\n'"__GATE__:PASS:3:3:0:0:0:0:0:6:6" ]]; then
     kt_test_pass "${oa##*$'\n'}"
 else
     kt_test_fail "rc=$RC | ${oa//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "pass: PASS 3/3, no log= on a passed cell; warn: PASS 1/1 warn=1 (a column, not a verdict)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$oa" 2; l2="$REPLY"; kt051_line "$oa" 3; l3="$REPLY"
 kt051_kv "$OA/cells/003/result" warn; w3="$REPLY"
 if [[ "$l2" =~ \ pass\ +PASS\ +3/3\  && "$l2" != *log=* && "$l3" =~ \ warn\ +PASS\ +1/1\ +warn=1\  && "$w3" == 1 ]]; then
@@ -69,7 +76,10 @@ if [[ "$l2" =~ \ pass\ +PASS\ +3/3\  && "$l2" != *log=* && "$l3" =~ \ warn\ +PAS
 else
     kt_test_fail "[$l2] [$l3] warn=$w3"
 fi
+fi   # kt_need_timeout
 kt_test_start "env-once: attempt 1 ENV (a raw cygwin fork-failure line) is re-run once in a fresh sandbox; the second run decides (PASS); both attempts kept"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$oa" 1; l1="$REPLY"
 kt051_kv "$OA/cells/001/result" verdict; v1="$REPLY"; kt051_kv "$OA/cells/001/result" attempts; a1="$REPLY"
 kt051_kv "$OA/cells/001/result" attempt1; t1="$REPLY"
@@ -81,13 +91,18 @@ if [[ "$l1" =~ \ env\ +PASS\ +2/2\  && "$l1" == *"(attempt 1: ENV, re-run once)"
 else
     kt_test_fail "line [$l1] verdict=$v1 attempts=$a1 attempt1=[$t1] files: $(ls "$OA/cells/001" | tr '\n' ' ')"
 fi
+fi   # kt_need_timeout
 
 # ---- B: env on every attempt -> ENV, 3 ---------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RB="$TMP/rootB"; OB="$TMP/outB"
 bash "$MK" "$RB" envx
 kt051_gate "$TMP/b.out" --root "$RB" --out "$OB" all
 ob="$(cat "$TMP/b.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "env-always: ENV after the retry -> exit 3, __GATE__:ENV"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$ob" 1; l1="$REPLY"
 kt051_kv "$OB/cells/001/result" attempts; a1="$REPLY"
 if [[ "$RC" == 3 && "$l1" =~ \ envx\ +ENV\ +0/1\  && "$l1" == *"(attempt 1: ENV, re-run once)"* && "$a1" == 2 \
@@ -97,13 +112,18 @@ if [[ "$RC" == 3 && "$l1" =~ \ envx\ +ENV\ +0/1\  && "$l1" == *"(attempt 1: ENV,
 else
     kt_test_fail "rc=$RC attempts=$a1 | ${ob//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- C: fail -> 1 ------------------------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RC_="$TMP/rootC"; OC="$TMP/outC"
 bash "$MK" "$RC_" fail
 kt051_gate "$TMP/c.out" --root "$RC_" --out "$OC" all
 oc="$(cat "$TMP/c.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "fail: FAIL 2/5 -> exit 1; its [FAIL] lines shown under the line; result counts; log= named"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$oc" 1; l1="$REPLY"
 kt051_kv "$OC/cells/001/result" failed; f1="$REPLY"; kt051_kv "$OC/cells/001/result" fail_lines; fl="$REPLY"
 if [[ "$RC" == 1 && "$l1" =~ \ fail\ +FAIL\ +2/5\  && "$l1" == *"log=cells/001/log.txt"* \
@@ -114,8 +134,10 @@ if [[ "$RC" == 1 && "$l1" =~ \ fail\ +FAIL\ +2/5\  && "$l1" == *"log=cells/001/l
 else
     kt_test_fail "rc=$RC failed=$f1 fail_lines=$fl | ${oc//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- D: hang, leak, crash -> 1 -----------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RD="$TMP/rootD"; OD="$TMP/outD"
 bash "$MK" "$RD" crash hang leak
 t0=$SECONDS
@@ -123,7 +145,10 @@ kt051_gate "$TMP/d.out" --root "$RD" --out "$OD" --timeout 10 all   # 10, not 4:
 dt=$(( SECONDS - t0 ))
 od="$(cat "$TMP/d.out")"
 kt051_pids "$RD"; leftD="$REPLY"
+fi   # kt_need_timeout (setup)
 kt_test_start "hang: TIMEOUT at --timeout 10 (reason in the line), its group stopped — nothing of it left"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$od" 2; l2="$REPLY"
 kt051_kv "$OD/cells/002/result" verdict; v2="$REPLY"
 # the stop itself (deadline -> the cell's end) is quick in every runtime:
@@ -135,7 +160,10 @@ if [[ "$l2" =~ \ hang\ +TIMEOUT\  && "$l2" == *"(timeout 10s, group stopped)"* &
 else
     kt_test_fail "[$l2] verdict=$v2 left=[$leftD] stop=${stopms}ms"
 fi
+fi   # kt_need_timeout
 kt_test_start "leak: STRAY (the suite passed, it left a detached sleep) — listed with the cell, stopped"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$od" 3; l3="$REPLY"
 kt051_kv "$OD/cells/003/result" strays; s3="$REPLY"; kt051_kv "$OD/cells/003/result" passed; p3="$REPLY"
 if [[ "$l3" =~ \ leak\ +STRAY\ +1/1\  && "$od" == *"        stray: pid "*"started during cell 3: gfx-leak:"* \
@@ -144,7 +172,10 @@ if [[ "$l3" =~ \ leak\ +STRAY\ +1/1\  && "$od" == *"        stray: pid "*"starte
 else
     kt_test_fail "[$l3] strays=$s3 left=[$leftD] | ${od//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "crash: CRASH (the runner died, no summary file) with the log's tail; the whole run -> exit 1"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$od" 1; l1="$REPLY"
 if [[ "$l1" =~ \ crash\ +CRASH\  && "$l1" == *"(no summary from the runner (rc 137))"* \
       && "$od" == *"        log: gate fixture crash: the runner is about to die"* \
@@ -153,6 +184,7 @@ if [[ "$l1" =~ \ crash\ +CRASH\  && "$l1" == *"(no summary from the runner (rc 1
 else
     kt_test_fail "rc=$RC dt=$dt | ${od//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- S: a host suspend is not the cell's time (launch L2.1) --------------------------
 # A host that slept during a cell (a laptop on battery: Kernel-Power 42) made
@@ -161,9 +193,10 @@ fi
 # (gate fixture nap: TMPDIR/gfx-nap.ready, then it waits for gfx-nap.go):
 # once CONTinued, the watchdog's tick gap moves the deadline — the cell ends
 # PASS when told, its row and result say `host suspended Ns`.
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RSU="$TMP/rootSU"; OSU="$TMP/outSU"
 bash "$MK" "$RSU" nap
-( export KT_GATE_SUSPEND_GAP=2; exec timeout -k 10 150 bash "$G" --root "$RSU" --out "$OSU" --timeout 6 all ) > "$TMP/su.out" 2>&1 < /dev/null &
+( export KT_GATE_SUSPEND_GAP=2; exec "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RSU" --out "$OSU" --timeout 6 all ) > "$TMP/su.out" 2>&1 < /dev/null &
 gpS=$!
 wdS="" okS="" dlS="" curS=""
 for (( i = 0; i < 600; i++ )); do   # the cell at its nap, the watchdog known: <= 60 s
@@ -186,7 +219,10 @@ kt051_line "$os" 1; lS="$REPLY"
 kt051_kv "$OSU/cells/001/result" verdict; vS="$REPLY"
 kt051_kv "$OSU/cells/001/result" reason; rS="$REPLY"
 suspS=""; { read -r suspS < "$OSU/seg-1.susp"; } 2>/dev/null
+fi   # kt_need_timeout (setup)
 kt_test_start "host suspend: the watchdog stopped past --timeout 6 -> the deadline moves, PASS, 'host suspended Ns' in the row"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 if [[ -n "$okS" && -n "$dlS" && "$RC" == 0 && "$vS" == PASS && "$lS" =~ \ nap\ +PASS\ +1/1\  \
       && "$lS" == *"(host suspended "*"s, not counted against --timeout)"* && "$rS" == "host suspended "* \
       && "$suspS" =~ ^1\ ([0-9]+)$ ]] && (( BASH_REMATCH[1] >= 6 )); then
@@ -194,6 +230,7 @@ if [[ -n "$okS" && -n "$dlS" && "$RC" == 0 && "$vS" == PASS && "$lS" =~ \ nap\ +
 else
     kt_test_fail "ready=$okS wd=$wdS cur=[$curS] rc=$RC verdict=$vS reason=[$rS] susp=[$suspS] | ${os//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- E: the hermetic cell ------------------------------------------------------------
 # kt051_probe_env ROOT — REPLY = the probe cell's environment (its wrapper's dump)
@@ -208,6 +245,7 @@ kt051_has() {
     while IFS= read -r l; do [[ "$l" =~ ^$2$ ]] && return 0; done <<< "$1"
     return 1
 }
+if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 FH="$TMP/fakehome"; FP="$TMP/fakeprofile"
 mkdir -p "$FH/.kbool" "$FP/.kbool" "$TMP/kbh"
 printf 'debug = quiet\n' > "$FH/.kbool/config"
@@ -219,7 +257,7 @@ bash "$MK" "$RE1" probe
 bash "$MK" "$RE2" probe
 # the clean caller: a minimal environment
 env -i PATH="$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" HOME="$TMP/cleanhome" LC_ALL=C \
-    timeout -k 10 150 bash "$G" --root "$RE1" --out "$TMP/outE1" all > "$TMP/e1.out" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RE1" --out "$TMP/outE1" all > "$TMP/e1.out" 2>&1 < /dev/null
 rc1=$?
 # the polluted caller
 gfx_caller_fn() { :; }
@@ -229,12 +267,15 @@ kk.uses() { :; }
         VERBOSITY=info CDPATH=/ GLOBIGNORE='*' BASH_ENV="$TMP/bashenv.sh" VERBOSE_KKLASS=1 \
         KKLASS_CKK_DIR="$TMP/caller-ckk" __KK_CFG_ETC="$FH" ProgramData="$FPM" LC_ALL=C
     export -f gfx_caller_fn kk.uses
-    timeout -k 10 150 bash "$G" --root "$RE2" --out "$TMP/outE2" all > "$TMP/e2.out" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RE2" --out "$TMP/outE2" all > "$TMP/e2.out" 2>&1 < /dev/null
     echo $? > "$TMP/e2.rc"
 )
 rc2="$(cat "$TMP/e2.rc" 2>/dev/null)"
 e1="$(cat "$TMP/e1.out")"; e2="$(cat "$TMP/e2.out")"
+fi   # kt_need_timeout (setup)
 kt_test_start "hermetic: the probe passes from a clean caller and from a polluted one, with the same counts"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_line "$e1" 1; p1="$REPLY"; kt051_line "$e2" 1; p2="$REPLY"
 if [[ "$rc1" == 0 && "$rc2" == 0 && "$p1" =~ \ probe\ +PASS\ +9/9\  && "$p2" =~ \ probe\ +PASS\ +9/9\  \
       && "${e1##*$'\n'}" == "${e2##*$'\n'}" ]]; then
@@ -242,7 +283,10 @@ if [[ "$rc1" == 0 && "$rc2" == 0 && "$p1" =~ \ probe\ +PASS\ +9/9\  && "$p2" =~ 
 else
     kt_test_fail "rc1=$rc1 rc2=$rc2 | ${e1//$'\n'/ | } || ${e2//$'\n'/ | } || fails: $(cat "$TMP/outE2/cells/001/fails.txt" 2>/dev/null)"
 fi
+fi   # kt_need_timeout
 kt_test_start "hermetic: the cell's own HOME/USERPROFILE/ProgramData/config etc/TMPDIR/ckk/cwd; nothing of the polluted caller (vars, functions, its paths, BASH_ENV, OLDPWD); its locale kept"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt051_probe_env "$RE2"; d2="$REPLY"
 bad=""
 for t in GFX_CALLER_VAR KBOOL_HOME KBOOL_CONFIG VERBOSITY= CDPATH= GLOBIGNORE= BASH_ENV VERBOSE_KKLASS BASH_FUNC gfx_caller_fn kk.uses \
@@ -265,6 +309,7 @@ if [[ -z "$bad" ]]; then
 else
     kt_test_fail "$bad"
 fi
+fi   # kt_need_timeout
 kt_test_start "hermetic: across runtimes too (the polluted caller, the other bash)"
 OTHER=""
 for b in /c/bin/msys64/usr/bin/bash.exe /c/msys64/usr/bin/bash.exe /c/bin/Git/usr/bin/bash.exe "/c/Program Files/Git/usr/bin/bash.exe"; do
@@ -272,13 +317,14 @@ for b in /c/bin/msys64/usr/bin/bash.exe /c/msys64/usr/bin/bash.exe /c/bin/Git/us
     v="$("$b" -c 'printf %s "$BASH_VERSION"' 2>/dev/null </dev/null)"
     [[ -n "$v" && "$v" != "$BASH_VERSION" ]] && { OTHER="$b"; break; }
 done
-if [[ -n "$OTHER" ]]; then
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif [[ -n "$OTHER" ]]; then
     RE3="$TMP/rootE3"
     bash "$MK" "$RE3" probe
     (
         export HOME="$FH" USERPROFILE="$FPM" KBOOL_HOME="$TMP/kbh" GFX_CALLER_VAR=1 VERBOSITY=info LC_ALL=C
         export -f gfx_caller_fn kk.uses
-        timeout -k 10 150 bash "$G" --root "$RE3" --out "$TMP/outE3" --bash "$OTHER" all > "$TMP/e3.out" 2>&1 < /dev/null
+        "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RE3" --out "$TMP/outE3" --bash "$OTHER" all > "$TMP/e3.out" 2>&1 < /dev/null
         echo $? > "$TMP/e3.rc"
     )
     rc3="$(cat "$TMP/e3.rc" 2>/dev/null)"; e3="$(cat "$TMP/e3.out")"
@@ -294,9 +340,11 @@ else
     kt_test_pass "skipped: no second bash runtime on this machine"
 fi
 kt_test_start "hermetic: an fd the caller left open (7) never reaches a cell — the launcher closes every fd > 2 it inherited (CI runners leave pipes open) [L5.4-3]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RE4="$TMP/rootE4"
 bash "$MK" "$RE4" probe
-( exec 7</dev/null; timeout -k 10 150 bash "$G" --root "$RE4" --out "$TMP/outE4" all > "$TMP/e4.out" 2>&1 < /dev/null; echo $? > "$TMP/e4.rc" )
+( exec 7</dev/null; "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RE4" --out "$TMP/outE4" all > "$TMP/e4.out" 2>&1 < /dev/null; echo $? > "$TMP/e4.rc" )
 rc4="$(cat "$TMP/e4.rc" 2>/dev/null)"; e4="$(cat "$TMP/e4.out")"
 kt051_line "$e4" 1; p4="$REPLY"
 kt051_probe_env "$RE4"; d4="$REPLY"
@@ -306,9 +354,12 @@ if [[ "$rc4" == 0 && "$p4" =~ \ probe\ +PASS\ +9/9\  ]] && kt051_has "$d4" "FDS=
 else
     kt_test_fail "rc4=$rc4 cell: [$fd4] | ${e4//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- F: review round 1 (R1, R4, R5, R9, R10) ----------------------------------------
 kt_test_start "a FAIL whose message talks about a fork failure stays FAIL (rc 1, not ENV); multi-line messages shown; a failed file with a space in its name is no message"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RF="$TMP/rootF"; bash "$MK" "$RF" failsig
 kt051_gate "$TMP/f.out" --root "$RF" --out "$TMP/outF" all
 of="$(cat "$TMP/f.out")"
@@ -322,7 +373,10 @@ if [[ "$RC" == 1 && "$l1" =~ \ failsig\ +FAIL\ +0/3\  && "$fl" == 3 && "$at" == 
 else
     kt_test_fail "rc=$RC fail_lines=$fl attempts=$at | ${of//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "a runner crash with a raw fork-failure line is ENV, re-run once (it then passes); a suite without test files is NOTRUN (not a failure) -> PASS, rc 0"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RG="$TMP/rootG"; bash "$MK" "$RG" pass empty envcrash
 kt051_gate "$TMP/g.out" --root "$RG" --out "$TMP/outG" all
 og="$(cat "$TMP/g.out")"
@@ -335,7 +389,10 @@ if [[ "$RC" == 0 && "$l1" =~ \ empty\ +NOTRUN\  && "$v1" == NOTRUN && "$l2" =~ \
 else
     kt_test_fail "rc=$RC attempt1=[$t2] | ${og//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "every cell NOTRUN: '[WARN] nothing ran', exit 1"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RH="$TMP/rootH"; bash "$MK" "$RH" empty
 kt051_gate "$TMP/h.out" --root "$RH" --out "$TMP/outH" all
 oh="$(cat "$TMP/h.out")"
@@ -344,7 +401,10 @@ if [[ "$RC" == 1 && "$oh" == *"[WARN] nothing ran"* && "$oh" == *$'\n'"__GATE__:
 else
     kt_test_fail "rc=$RC | ${oh//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "INT and QUIT are trappable inside a cell — its own runtime (perl/setsid start) and across (review R1)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RS="$TMP/rootS"; bash "$MK" "$RS" sigs
 bl=( --bash "$BASH" ); [[ -n "$OTHER" ]] && bl+=( --bash "$OTHER" )
 kt051_gate "$TMP/s.out" --root "$RS" --out "$TMP/outS" "${bl[@]}" all
@@ -355,8 +415,11 @@ if [[ "$RC" == 0 && "$os" == *$'\n'"__GATE__:PASS:$want:$want:0:0:0:0:0:$(( 2 * 
 else
     kt_test_fail "rc=$RC | ${os//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a fork failure in one file and a REAL failure in another: FAIL (rc 1, one attempt), the fork failure only as a note; envx (every failed file has it) stays ENV (G4 review R2)"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 RM="$TMP/rootM"; bash "$MK" "$RM" mix envx
 for m in threaded single; do
     kt051_gate "$TMP/m.$m.out" --root "$RM" --out "$TMP/outM.$m" --mode "$m" all
@@ -371,6 +434,7 @@ if [[ "$rcm_threaded" == 1 && "$rcm_single" == 1 && "$lm" =~ \ mix\ +FAIL\ +0/2\
 else
     kt_test_fail "rc=$rcm_threaded/$rcm_single attempts=$am | [$lx] [$lm] [$lms]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "nothing of this file's gates is left (by its tmp path)"
 kt051_pids "$TMP"

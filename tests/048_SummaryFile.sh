@@ -79,7 +79,7 @@ kt048_run() {
     local tag="$1" suite="$2"
     shift 2
     mkdir -p "$TMP/tmp.$tag"
-    OUT="$(KT_SUMMARY_FILE="$TMP/sum.$tag" TMPDIR="$TMP/tmp.$tag" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/$suite" "S-$tag" "$@" 2>&1)"; RC=$?
+    OUT="$(KT_SUMMARY_FILE="$TMP/sum.$tag" TMPDIR="$TMP/tmp.$tag" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/$suite" "S-$tag" "$@" 2>&1)"; RC=$?
     kt048_sum "$TMP/sum.$tag"
 }
 kt048_sum() {
@@ -99,46 +99,63 @@ kt048_no_tmp() {
 
 for mode in single threaded; do
     kt_test_start "passing suite ($mode): '3 3 0 0' and nothing else"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+    else
     kt048_run "ok.$mode" ok -m "$mode"
     if [[ "$RC" == 0 && "$SUM" == "3 3 0 0" ]] && kt048_no_tmp; then
         kt_test_pass "$SUM"
     else
         kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
     fi
+    fi   # kt_need_timeout
     kt_test_start "failing suite ($mode): counts, rc 1 and both failed files by name"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+    else
     kt048_run "bad.$mode" bad -m "$mode"
     if [[ "$RC" == 1 && "$SUM" == "4 2 2 1|file 001_a.sh|file 003_c.sh" && "$OUT" == *"[FAIL]"*"001_a.sh"* ]]; then
         kt_test_pass "$SUM"
     else
         kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
     fi
+    fi   # kt_need_timeout
     kt_test_start "fork-failure death ($mode): 'env NAME' for the file the retry rule gave up on, none for a [FAIL] message about forks"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+    else
     kt048_run "envy.$mode" envy -m "$mode"
     if [[ "$RC" == 1 && "$SUM" == "3 1 2 1|file 002_die.sh|file 003_msg.sh|env 002_die.sh" ]]; then
         kt_test_pass "$SUM"
     else
         kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
     fi
+    fi   # kt_need_timeout
 done
 
 kt_test_start "no test files: '0 0 0 1' + 'error no-test-files'"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt048_run empty empty
 if [[ "$RC" == 1 && "$SUM" == "0 0 0 1|error no-test-files" ]]; then
     kt_test_pass "$SUM"
 else
     kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "the option parser exits (bad option): '0 0 0 1' + 'error usage'"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt048_run usage ok -m bogus
 if [[ "$RC" == 1 && "$SUM" == "0 0 0 1|error usage" ]]; then
     kt_test_pass "$SUM"
 else
     kt_test_fail "rc=$RC sum=[$SUM] | ${OUT//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 for mode in single threaded; do
     kt_test_start "nested run inside a test file ($mode): the test file and its nested ktests.sh never see the variable, the file is the outer run's"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+    else
     rm -f "$TMP/seen".*
     export KT048_SEEN="$TMP/seen"
     kt048_run "nest.$mode" nest -m "$mode"
@@ -150,6 +167,7 @@ for mode in single threaded; do
     else
         kt_test_fail "rc=$RC sum=[$SUM] seen=[$seen] | ${OUT//$'\n'/ | }"
     fi
+    fi   # kt_need_timeout
 done
 
 for mode in single threaded; do
@@ -177,10 +195,12 @@ for mode in single threaded; do
 done
 
 kt_test_start "unset or empty: no file is written and the output and rc are those of a run with it"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/tmp.plain" "$TMP/plain"
-o1="$(cd "$TMP/plain" && TMPDIR="$TMP/tmp.plain" timeout 120 env -u KTESTS_LIB_DIR -u KT_SUMMARY_FILE bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r1=$?
-o2="$(cd "$TMP/plain" && KT_SUMMARY_FILE= TMPDIR="$TMP/tmp.plain" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r2=$?
-o3="$(cd "$TMP/plain" && KT_SUMMARY_FILE="$TMP/plain/x.sum" TMPDIR="$TMP/tmp.plain" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r3=$?
+o1="$(cd "$TMP/plain" && TMPDIR="$TMP/tmp.plain" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR -u KT_SUMMARY_FILE bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r1=$?
+o2="$(cd "$TMP/plain" && KT_SUMMARY_FILE= TMPDIR="$TMP/tmp.plain" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r2=$?
+o3="$(cd "$TMP/plain" && KT_SUMMARY_FILE="$TMP/plain/x.sum" TMPDIR="$TMP/tmp.plain" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/bad" S-plain -m single 2>&1)"; r3=$?
 rm -f "$TMP/plain/x.sum"
 shopt -s nullglob dotglob; left=( "$TMP/plain"/* ); shopt -u nullglob dotglob
 if [[ "$r1" == 1 && "$r2" == 1 && "$r3" == 1 && "$o1" == "$o2" && "$o1" == "$o3" && ${#left[@]} == 0 ]]; then
@@ -188,16 +208,20 @@ if [[ "$r1" == 1 && "$r2" == 1 && "$r3" == 1 && "$o1" == "$o2" && "$o1" == "$o3"
 else
     kt_test_fail "rc $r1/$r2/$r3 same12=$([[ "$o1" == "$o2" ]] && echo y) same13=$([[ "$o1" == "$o3" ]] && echo y) files=[${left[*]}]"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "a relative KT_SUMMARY_FILE names a file in the caller's cwd"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 rm -f "$TMP/plain/rel.sum"
-( cd "$TMP/plain" && KT_SUMMARY_FILE=rel.sum TMPDIR="$TMP/tmp.plain" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/ok" S-rel -m single >/dev/null 2>&1 )
+( cd "$TMP/plain" && KT_SUMMARY_FILE=rel.sum TMPDIR="$TMP/tmp.plain" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/ok" S-rel -m single >/dev/null 2>&1 )
 kt048_sum "$TMP/plain/rel.sum"
 if [[ "$SUM" == "3 3 0 0" ]]; then
     kt_test_pass "$SUM"
 else
     kt_test_fail "sum=[$SUM]"
 fi
+fi   # kt_need_timeout
 
 kt048_cleanup
 kt_test_log "048_SummaryFile.sh completed"

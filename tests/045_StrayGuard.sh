@@ -289,9 +289,11 @@ kt045_lagger() {   # NAME -> REPLY = the pid of a TERM-ignoring orphan NAME
     REPLY="${REPLY%% *}"
 }
 kt_test_start "stop: KILL is re-sent by the clock — a target whose KILL takes 3 s to land is stopped inside a 6 s window, nothing reported"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt045_lagger "kt_iso-$N-lagA"; P_LA="$REPLY"
 sleep 0.3
-o="$(timeout 60 bash "$TMP/lag.sh" "$ST" "$N-lagA" 3000 6000 2>&1)"
+o="$("$KT_TIMEOUT" 60 bash "$TMP/lag.sh" "$ST" "$N-lagA" 3000 6000 2>&1)"
 for (( i = 0; i < 20; i++ )); do kt045_alive "$P_LA" || break; sleep 0.1; done
 if [[ -n "$P_LA" && "$o" =~ ^rc=0\ ms=([0-9]+)\ drops=([0-9]+)\ left=\[\]$ ]] && (( BASH_REMATCH[1] >= 5900 && BASH_REMATCH[2] >= 5 )) \
       && ! kt045_alive "$P_LA"; then
@@ -300,10 +302,13 @@ else
     kt_test_fail "target $P_LA alive=$(kt045_alive "$P_LA" && echo yes || echo no) | $o"
 fi
 kt045_cleanup
+fi   # kt_need_timeout
 kt_test_start "stop: a target whose KILL never lands is reported LEFT only after the wall-clock window (KT_STRAYS_KILL_MS), with its pid, rc 1"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 kt045_lagger "kt_iso-$N-lagB"; P_LB="$REPLY"
 sleep 0.3
-o="$(timeout 60 bash "$TMP/lag.sh" "$ST" "$N-lagB" 600000 4000 2>&1)"
+o="$("$KT_TIMEOUT" 60 bash "$TMP/lag.sh" "$ST" "$N-lagB" 600000 4000 2>&1)"
 aB=no; kt045_alive "$P_LB" && aB=yes
 if [[ -n "$P_LB" && "$o" =~ ^rc=1\ ms=([0-9]+)\ drops=([0-9]+)\ left=\[$P_LB\]$ ]] && (( BASH_REMATCH[1] >= 6900 && BASH_REMATCH[1] <= 20000 )) \
       && [[ "$aB" == yes ]]; then
@@ -312,6 +317,7 @@ else
     kt_test_fail "target $P_LB alive=$aB | $o"
 fi
 kt045_cleanup
+fi   # kt_need_timeout
 
 # A parent killed at the WINDOWS level (taskkill /F, Task Manager, an agent's
 # stopped background task): cygwin keeps the dead pid as the child's ppid —
@@ -418,8 +424,9 @@ for n in 001 002; do
 done
 for mode in single threaded; do
     kt_test_start "$mode: a test file's leaked background process is named in a [WARN] and stopped at the end of the run"
+    if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
     mkdir -p "$TMP/grp.tmp.$mode"
-    out="$(TMPDIR="$TMP/grp.tmp.$mode" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/grp" G '/[0-9][0-9][0-9]_' -m "$mode" -w 2 2>&1)"; rc=$?
+    out="$(TMPDIR="$TMP/grp.tmp.$mode" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/grp" G '/[0-9][0-9][0-9]_' -m "$mode" -w 2 2>&1)"; rc=$?
     sleep 0.2
     kt045_pids "kt_iso-$N-grp"; left="$REPLY"
     warn="$(grep -a '^\[WARN\].*left after the run' <<< "$out")"
@@ -432,15 +439,18 @@ for mode in single threaded; do
 done
 
 kt_test_start "a clean run prints no group [WARN]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 mkdir -p "$TMP/clean"
 printf '%s\n' "source \"\$KTEST_SOURCE_PATH\"" "kt_test_init \"C\" \"\$KT_TESTS_DIR\"" \
     "kt_test_start \"c\"" "kt_test_pass \"c\"" > "$TMP/clean/001_c.sh"
-out="$(TMPDIR="$TMP/grp.tmp.single" timeout 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/clean" C '/[0-9][0-9][0-9]_' -m single 2>&1)"; rc=$?
+out="$(TMPDIR="$TMP/grp.tmp.single" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$LIB/ktests.sh" "$TMP/clean" C '/[0-9][0-9][0-9]_' -m single 2>&1)"; rc=$?
 if [[ "$rc" == 0 && "$out" != *"[WARN]"* ]]; then
     kt_test_pass "rc 0, no WARN"
 else
     kt_test_fail "rc=$rc out: $out"
 fi
+fi   # kt_need_timeout
 
 # ---- the master sweep: suites that leave an orphan ---------------------------
 # A fake kbool root: a copy of the master sweep and of ktests' library, one
@@ -461,7 +471,9 @@ printf '%s\n' '#!/bin/bash' \
     'echo "non-marker leaky suite done"' 'exit 0' > "$F/c_nonmark/tests/tests.sh"
 
 kt_test_start "master sweep: each suite's orphan (marker or not) is reported with the suite, stopped, and the sweep FAILS"
-out="$(KT_STRAYS_MATCH="$N" timeout 120 env -u KTESTS_LIB_DIR bash "$F/tests/tests.sh" 2>&1)"; rc=$?
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$(KT_STRAYS_MATCH="$N" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$F/tests/tests.sh" 2>&1)"; rc=$?
 sleep 0.2
 kt045_pids "$N-leak"; left="$REPLY"
 if [[ "$rc" == 1 && -z "$left" \
@@ -478,6 +490,7 @@ else
     kt_test_fail "rc=$rc left=[$left] out: ${out//$'\n'/ | }"
 fi
 kt045_cleanup
+fi   # kt_need_timeout
 
 kt_test_start "master sweep: without a leak the stray guard is silent and the sweep passes"
 rm -rf "$F/a_leaky" "$F/c_nonmark"
@@ -488,19 +501,26 @@ mkdir -p "$F/e_trap/tests"
 printf '%s\n' '#!/bin/bash' "trap ': kt045 int' INT; trap -p INT > '$TMP/n1.int'" \
     "IFS= read -r -t 5 l; printf '%s' \"\$l\" > '$TMP/n1.stdin'" 'exit 0' > "$F/e_trap/tests/tests.sh"
 rm -f "$TMP/n1.int" "$TMP/n1.stdin"
-out="$(printf 'kt045-stdin-line\n' | KT_STRAYS_MATCH="$N" timeout 120 env -u KTESTS_LIB_DIR bash "$F/tests/tests.sh" 2>&1)"; rc=$?
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
+out="$(printf 'kt045-stdin-line\n' | KT_STRAYS_MATCH="$N" "$KT_TIMEOUT" 120 env -u KTESTS_LIB_DIR bash "$F/tests/tests.sh" 2>&1)"; rc=$?
 if [[ "$rc" == 0 && "$out" != *"[WARN]"* && "$out" == *"All test suites passed."* ]]; then
     kt_test_pass "rc 0, no stray line"
 else
     kt_test_fail "rc=$rc out: ${out//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
+# (reads what the sweep above wrote: skipped with it)
 kt_test_start "master sweep: a suite keeps its own INT trap (not SIG_IGN) and the sweep's stdin"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+else
 i1="$(cat "$TMP/n1.int" 2>/dev/null)"; s1="$(cat "$TMP/n1.stdin" 2>/dev/null)"
 if [[ "$i1" == *"': kt045 int'"* && "$s1" == kt045-stdin-line ]]; then
     kt_test_pass "$i1; stdin [$s1]"
 else
     kt_test_fail "INT trap [$i1] (want ': kt045 int'), stdin [$s1]"
 fi
+fi   # kt_need_timeout
 rm -rf "$F/e_trap"
 
 # the caller and its ancestors are never listed — not even a marker-named
@@ -523,9 +543,10 @@ fi
 # leaves a WATCHER process (`timeout 60 bash …strays.sh …` in its command line,
 # a marker) beside it — a live non-ancestor the listing rightly shows; the
 # shape is GNU/BSD timeout's (launch L2.1)
-kt045_bbtmo=0; [[ "$(timeout --help 2>&1)" == *BusyBox* ]] && kt045_bbtmo=1
+kt045_bbtmo=0; kt_need_timeout && [[ "$("$KT_TIMEOUT" --help 2>&1)" == *BusyBox* ]] && kt045_bbtmo=1
 for shape in while group timeout; do
     kt_test_start "list --all from a marker caller piping its output ($shape) shows no row for the caller's own fork"
+    if [[ "$shape" == timeout ]] && ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
     if [[ "$shape" == timeout ]] && (( kt045_bbtmo )); then
         kt_test_pass "skipped: busybox timeout (a watcher beside the command, not its parent)"
         continue
@@ -534,7 +555,7 @@ for shape in while group timeout; do
     case "$shape" in
         while)   c="bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
         group)   c="bash '$ST' list --all --match '$N-pipe' 2>&1 | { cat; } > '$TMP/pipe.out'" ;;
-        timeout) c="timeout 60 bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
+        timeout) c="$KT_TIMEOUT 60 bash '$ST' list --all --match '$N-pipe' 2>&1 | while IFS= read -r l; do echo \"\$l\"; done > '$TMP/pipe.out'" ;;
     esac
     bash -c "cd '$ROOT' && $c" </dev/null >/dev/null 2>&1
     op="$(cat "$TMP/pipe.out" 2>/dev/null)"
@@ -677,17 +698,24 @@ kt045_cleanup
 # shell has exited: unfiltered it is `young` until --older-than).
 CMDX="$(cygpath -u "${SYSTEMROOT:-C:\Windows}" 2>/dev/null)/System32/cmd.exe"
 WB="$(cygpath -w "$BASH" 2>/dev/null)"
-if [[ -x "$CMDX" && -n "$WB" ]]; then
+if [[ -x "$CMDX" && -n "$WB" ]] && ! kt_need_timeout; then
+    # the five cases below start their trees under timeout: skipped together
+    for i in 1 2 3 4 5; do
+        kt_test_start "unfiltered list/stop and the session leader ($i of 5)"
+        kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+    done
+elif [[ -x "$CMDX" && -n "$WB" ]]; then
+    # $2 of each script: the timeout name (KT_TIMEOUT)
     printf '%s\n' \
-        'bash -c '\''( timeout 60 bash -c "exec -a \"kt_iso-$1-bgrun\" bash -c \"\$KT045_LOOP\"" ) </dev/null >/dev/null 2>&1 & exit'\'' _ "$1"' \
+        'bash -c '\''( "$2" 60 bash -c "exec -a \"kt_iso-$1-bgrun\" bash -c \"\$KT045_LOOP\"" ) </dev/null >/dev/null 2>&1 & exit'\'' _ "$1" "$2"' \
         'exec -a "kt_iso-$1-sleader" bash -c "$KT045_LOOP"' > "$TMP/leader_live.sh"
     printf '%s\n' \
         '(exec -a "kt_iso-$1-abandoned" bash -c "$KT045_LOOP") </dev/null >/dev/null 2>&1 &' \
-        '(exec timeout -s TERM 8 bash -c '\''trap "" TERM; exec -a "kt_iso-$0-tmochild" bash -c "$KT045_LOOP"'\'' "$1") </dev/null >/dev/null 2>&1 &' \
+        '(exec "$2" -s TERM 8 bash -c '\''trap "" TERM; exec -a "kt_iso-$0-tmochild" bash -c "$KT045_LOOP"'\'' "$1") </dev/null >/dev/null 2>&1 &' \
         'exit 0' > "$TMP/leader_gone.sh"
-    MSYS2_ARG_CONV_EXCL='*' "$CMDX" /c "$WB" "$(cygpath -w "$TMP/leader_live.sh")" "$N" </dev/null >/dev/null 2>&1 &
+    MSYS2_ARG_CONV_EXCL='*' "$CMDX" /c "$WB" "$(cygpath -w "$TMP/leader_live.sh")" "$N" "$KT_TIMEOUT" </dev/null >/dev/null 2>&1 &
     P_CMD=$!
-    MSYS2_ARG_CONV_EXCL='*' "$CMDX" /c "$WB" "$(cygpath -w "$TMP/leader_gone.sh")" "$N" </dev/null >/dev/null 2>&1
+    MSYS2_ARG_CONV_EXCL='*' "$CMDX" /c "$WB" "$(cygpath -w "$TMP/leader_gone.sh")" "$N" "$KT_TIMEOUT" </dev/null >/dev/null 2>&1
     T_GONE=$SECONDS
     P_BG="" P_LEAD="" P_ABAN="" P_TMO="" P_TC="" P_TR=""
     for (( i = 0; i < 100; i++ )); do

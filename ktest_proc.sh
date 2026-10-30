@@ -494,7 +494,7 @@ kt_proc_adopted() {
     kt_proc_sid "$pp"
     [[ -n "$s" && -n "$REPLY" && "$s" != "$REPLY" ]] && return 0
     kt_proc_cmd "$pp"
-    [[ "$REPLY" == "timeout "* || "$REPLY" == */"timeout "* ]] || return 1
+    [[ "$REPLY" == "timeout "* || "$REPLY" == */"timeout "* || "$REPLY" == "gtimeout "* || "$REPLY" == */"gtimeout "* ]] || return 1
     a="$BASHPID"
     while [[ -n "$a" && "$a" != 0 && "$a" != 1 ]] && (( n++ < 200 )); do
         [[ "$a" == "$pp" ]] && return 0

@@ -37,7 +37,7 @@ GC=( -c user.name=gate-test -c user.email=gate@test -c init.defaultBranch=main -
 kt054_pids() { kt_proc_pids_gone "$1"; }   # what is LEFT (/proc or ps; a busybox timeout watcher waited out — launch L2.1)
 kt054_gate() {
     local of="$1"; shift
-    timeout -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
+    "$KT_TIMEOUT" -k 10 150 bash "$G" "$@" > "$of" 2>&1 < /dev/null
     RC=$?
 }
 kt054_kv() {
@@ -111,6 +111,8 @@ fi
 kt_test_start "--changed, nothing changed: '[WARN] nothing changed', rc 0, no cell, no OUT dir, no machine line"
 if (( ! HAVEGIT )); then
     kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
+elif ! kt_need_timeout; then
+    kt_test_pass "N/A: $KT_TIMEOUT_WHY"
 else
     kt054_gate "$TMP/c0.out" --root "$R" --out "$TMP/c0out" --changed
     o="$(cat "$TMP/c0.out")"
@@ -139,6 +141,8 @@ fi
 kt_test_start "--changed with a named suite: the union; the selection and its reasons printed before the first cell; summary.json 'changed'"
 if (( ! HAVEGIT )); then
     kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
+elif ! kt_need_timeout; then
+    kt_test_pass "N/A: $KT_TIMEOUT_WHY"
 else
     kt054_gate "$TMP/c1.out" --root "$R" --out "$TMP/c1out" --changed kk
     o="$(cat "$TMP/c1.out")"
@@ -176,6 +180,8 @@ fi
 kt_test_start "a deleted unit file: its suite, kcl and the dependents of its unit (the file stem); a docs-only change outside kcl: no suite, rc 0"
 if (( ! HAVEGIT )); then
     kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
+elif ! kt_need_timeout; then
+    kt_test_pass "N/A: $KT_TIMEOUT_WHY"
 else
     rm -f "$R/kcl/ud/ud.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ud/ud.sh
     printf 'more\n' >> "$R/docs/x.md"
@@ -264,6 +270,8 @@ fi
 kt_test_start "--changed on a dir that is not the top of a git work tree: usage error rc 2"
 if (( ! HAVEGIT )); then
     kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
+elif ! kt_need_timeout; then
+    kt_test_pass "N/A: $KT_TIMEOUT_WHY"
 else
     kt054_gate "$TMP/c3.out" --root "$R/kcl/ua" --changed
     o3="$(cat "$TMP/c3.out")"
@@ -278,6 +286,7 @@ else
 fi
 
 # ---- --rerun-failed / FLAKY ---------------------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases are N/A without it)
 RF="$TMP/rootF"; bash "$MK" "$RF" flaky pass
 kt054_gate "$TMP/f.out" --root "$RF" --out "$TMP/outF" --rerun-failed 2 all
 of="$(cat "$TMP/f.out")"
@@ -285,7 +294,10 @@ kt054_line "$of" 1; l1="$REPLY"
 kt054_kv "$TMP/outF/cells/001/result" reruns; rr="$REPLY"; kt054_kv "$TMP/outF/cells/001/result" rerun_pass; rp="$REPLY"
 kt054_kv "$TMP/outF/cells/001/result" flaky; fl="$REPLY"
 s1=""; { read -r s1 < "$TMP/outF/cells/001/rerun-1/summary"; } 2>/dev/null
+fi   # kt_need_timeout (setup)
 kt_test_start "--rerun-failed 2: a file failing once is re-run alone (-n 2, a sandbox of its own) and passes -> FLAKY, exit 4, __GATE__:FLAKY"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 if [[ "$RC" == 4 && "$l1" =~ \ flaky\ +FLAKY\ +3/4\  && "$l1" == *"(rerun 1 passed: 002_flaky.sh)"* \
       && "$of" == *"        [FAIL] gfx flaky: the first run fails (002_flaky.sh)"* && "$rr" == 1 && "$rp" == 1 && "$fl" == 002_flaky.sh \
       && "$s1" == "1 1 0 0" && -d "$TMP/outF/cells/001/rerun-1/home" \
@@ -294,7 +306,10 @@ if [[ "$RC" == 4 && "$l1" =~ \ flaky\ +FLAKY\ +3/4\  && "$l1" == *"(rerun 1 pass
 else
     kt_test_fail "rc=$RC reruns=$rr pass=$rp flaky=$fl rerun-1 summary=[$s1] | ${of//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 kt_test_start "without --rerun-failed the same first failure is a FAIL (rc 1); a file that fails every time stays FAIL after N reruns"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 RF2="$TMP/rootF2"; bash "$MK" "$RF2" flaky fail
 kt054_gate "$TMP/f2.out" --root "$RF2" --out "$TMP/outF2" flaky; r1=$RC
 kt054_gate "$TMP/f3.out" --root "$RF2" --out "$TMP/outF3" --rerun-failed 2 fail; r2=$RC
@@ -306,8 +321,10 @@ if [[ "$r1" == 1 && "$(tail -1 "$TMP/f2.out")" == "__GATE__:FAIL:1:0:1:0:0:0:0:3
 else
     kt_test_fail "r1=$r1 r2=$r2 verdict=$vv reruns=$rr | $(tail -1 "$TMP/f2.out") | ${o3//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- the matrix: --repeat, --mode both, --cwd both -------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases are N/A without it)
 RM="$TMP/rootM"; bash "$MK" "$RM" pass=a pass=b
 kt054_gate "$TMP/m.out" --root "$RM" --out "$TMP/outM" --mode both --cwd both --repeat 2 a
 om="$(cat "$TMP/m.out")"
@@ -317,7 +334,10 @@ for (( i = 1; i <= 8; i++ )); do
     kt054_kv "$f" repeat; r="$REPLY"; kt054_kv "$f" mode; m="$REPLY"; kt054_kv "$f" cwd; c="$REPLY"
     order+="$r${m:0:1}${c:0:1} "
 done
+fi   # kt_need_timeout (setup)
 kt_test_start "--mode both --cwd both --repeat 2: 8 cells, order repeat > suite > mode > cwd, the repeat in the line (a#2), rc 0"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 kt054_line "$om" 5; l5="$REPLY"
 if [[ "$RC" == 0 && "$order" == "1tn 1ts 1sn 1ss 2tn 2ts 2sn 2ss " && "$l5" =~ \ threaded\ +neutral\ +a#2\ +PASS\ +3/3 \
       && "$om" == *"gate cells: 8 = 1 bash x 1 suite(s) x 2 modes x 2 cwds x 2 repeats (a)"* \
@@ -326,15 +346,20 @@ if [[ "$RC" == 0 && "$order" == "1tn 1ts 1sn 1ss 2tn 2ts 2sn 2ss " && "$l5" =~ \
 else
     kt_test_fail "rc=$RC order=[$order] | ${om//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 # ---- --fail-fast ----------------------------------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases are N/A without it)
 RX="$TMP/rootX"; bash "$MK" "$RX" fail=a1 pass=b2 pass=c3
 bl=( --bash "$BASH" ); [[ -n "$OTHER" ]] && bl+=( --bash "$OTHER" )
 kt054_gate "$TMP/x.out" --root "$RX" --out "$TMP/outX" "${bl[@]}" --fail-fast all
 ox="$(cat "$TMP/x.out")"
 nsk=0; for f in "$TMP"/outX/cells/*/result; do kt054_kv "$f" verdict; [[ "$REPLY" == SKIPPED ]] && nsk=$(( nsk + 1 )); done
 want=2; [[ -n "$OTHER" ]] && want=5
+fi   # kt_need_timeout (setup)
 kt_test_start "--fail-fast: after the first hard failure the remaining cells (both runtimes) are SKIPPED, exit 1"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 ff=""; { read -r ff < "$TMP/outX/FAILFAST"; } 2>/dev/null
 if [[ "$RC" == 1 && "$nsk" == "$want" && "$ff" == "cell 1 FAIL ($V a1)" && "$ox" == *"gate fail-fast: $V: 2 cell(s) skipped (after cell 1 FAIL ($V a1))"* \
       && "$ox" == *"  2 skipped"* && "$ox" == *$'\n'"__GATE__:FAIL:$(( want + 1 )):0:1:0:0:0:0:2:5" ]]; then
@@ -342,6 +367,7 @@ if [[ "$RC" == 1 && "$nsk" == "$want" && "$ff" == "cell 1 FAIL ($V a1)" && "$ox"
 else
     kt_test_fail "rc=$RC skipped=$nsk/$want FAILFAST=[$ff] | ${ox//$'\n'/ | }"
 fi
+fi   # kt_need_timeout
 
 kt_test_start "--fail-fast: FAILFAST has ONE writer — the first; a later failure, or one racing a writer that holds the lock, never overwrites it (G4 review R8)"
 mkdir -p "$TMP/ffl1" "$TMP/ffl2"
@@ -357,6 +383,7 @@ ffo="$( source "$G" || exit 9
 if [[ "$ffo" == "cell 1 FAIL ($V s0)|none" ]]; then kt_test_pass "$ffo"; else kt_test_fail "$ffo"; fi
 
 # ---- --warm -----------------------------------------------------------------------------------
+if kt_need_timeout; then   # setup: needs timeout (its cases are N/A without it)
 RW="$TMP/rootW"; bash "$MK" "$RW" ckk
 kt054_gate "$TMP/w1.out" --root "$RW" --out "$TMP/outW1" --warm --keep --repeat 2 all; rw1=$RC
 kt054_gate "$TMP/w2.out" --root "$RW" --out "$TMP/outW2" --keep --repeat 2 all; rw2=$RC
@@ -365,17 +392,22 @@ kt054_kv "$TMP/outW1/cells/001/result" ckk; k1="$REPLY"; kt054_kv "$TMP/outW1/ce
 kt054_kv "$TMP/outW2/cells/001/result" ckk; k3="$REPLY"; kt054_kv "$TMP/outW2/cells/002/result" ckk; k4="$REPLY"
 n1=$(( $(wc -l < "$TMP/outW1/seg-1.ckk/cells.log" 2>/dev/null) + 0 ))   # BSD wc pads the count (launch L2.1)
 n3=$(( $(cat "$TMP/outW2/cells/001/ckk/cells.log" "$TMP/outW2/cells/002/ckk/cells.log" 2>/dev/null | wc -l) ))
+fi   # kt_need_timeout (setup)
 kt_test_start "--warm: the cells of a segment share one .ckk dir (seg-N.ckk: both cells wrote into it); without it each cell has its own; removed without --keep"
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+else
 if [[ "$rw1$rw2$rw3" == 000 && "$k1" == seg-1.ckk && "$k2" == seg-1.ckk && "$n1" == 2 && "$k3" == cells/001/ckk \
       && "$k4" == cells/002/ckk && "$n3" == 2 && ! -e "$TMP/outW3/seg-1.ckk" && "$(cat "$TMP/w1.out")" == *"--warm (one .ckk dir per runtime)"* ]]; then
     kt_test_pass "warm: $k1 $k2 ($n1 lines); cold: $k3 $k4"
 else
     kt_test_fail "rc=$rw1$rw2$rw3 warm=[$k1 $k2] lines=$n1 cold=[$k3 $k4] lines=$n3 w3 ckk: $(ls "$TMP/outW3" | tr '\n' ' ')"
 fi
+fi   # kt_need_timeout
 
 # ---- --parallel ------------------------------------------------------------------------------
 kt_test_start "--parallel: both runtimes at once, the launcher relays lines as they come (a cell of runtime 2 before the last of runtime 1)"
-if [[ -n "$OTHER" ]]; then
+if ! kt_need_timeout; then kt_test_pass "N/A: $KT_TIMEOUT_WHY"
+elif [[ -n "$OTHER" ]]; then
     RP="$TMP/rootP"; bash "$MK" "$RP" pass
     kt054_gate "$TMP/p.out" --root "$RP" --out "$TMP/outP" --bash "$BASH" --bash "$OTHER" --parallel --repeat 3 all
     op="$(cat "$TMP/p.out")"

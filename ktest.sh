@@ -6,6 +6,19 @@
 #   source "$(dirname "$SCRIPT_DIR")/../ktests/lib/ktest.sh"
 #
 # This will automatically source all framework components in the correct order.
+#
+# timeout(1) for tests (launch L5.4-9, owner OG11 = c): set at source time —
+#   KT_TIMEOUT       the NAME to call: `timeout` where PATH has it, else
+#                    `gtimeout` (macOS brew coreutils, no gnubin on PATH), else
+#                    "". A name, not a path: argv stays `timeout …` wherever
+#                    `timeout` exists (harness rules match that argv). Always
+#                    recomputed; an inherited value is ignored.
+#   KT_TIMEOUT_WHY   the SKIP reason when KT_TIMEOUT is "" (else "")
+#   kt_need_timeout  rc 0 when KT_TIMEOUT is set, else rc 1 (no output). In a
+#                    case: `if ! kt_need_timeout; then kt_test_pass "SKIP:
+#                    $KT_TIMEOUT_WHY"; else … "$KT_TIMEOUT" -k 10 150 …; fi`
+#   KT_TIMEOUT_NAMES (a test seam) the names tried, in order (default
+#                    `timeout gtimeout`); `none`, or only absent names -> ""
 
 # Prevent multiple sourcing
 if [[ -n "${_KTEST_SOURCED:-}" ]]; then
@@ -28,6 +41,19 @@ declare -g _KTEST_SOURCED=1
 # for its own subshell / child process.
 export LC_ALL="C.UTF-8"
 export LANG="C.UTF-8"
+
+# ============================================================================
+# timeout(1) by name (launch L5.4-9, owner OG11 = c; see the header)
+# ============================================================================
+# `type -P` is a PATH lookup, no fork. An inherited KT_TIMEOUT is overwritten.
+KT_TIMEOUT="" KT_TIMEOUT_WHY=""
+for _kt_tmo_n in ${KT_TIMEOUT_NAMES:-timeout gtimeout}; do
+    [[ "$_kt_tmo_n" == none ]] && continue
+    if type -P -- "$_kt_tmo_n" >/dev/null 2>&1; then KT_TIMEOUT="$_kt_tmo_n"; break; fi
+done
+unset _kt_tmo_n
+[[ -n "$KT_TIMEOUT" ]] || KT_TIMEOUT_WHY="needs timeout(1) or gtimeout (macOS: brew install coreutils)"
+kt_need_timeout() { [[ -n "$KT_TIMEOUT" ]]; }
 
 # Get the directory where this file is located
 # Use KTESTS_LIB_DIR if already set (from test runner), otherwise compute from BASH_SOURCE

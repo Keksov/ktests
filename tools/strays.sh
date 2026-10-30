@@ -200,11 +200,13 @@ _kt_strays_dur_ms() {
 
 # _kt_strays_timeout_ms CMD — when CMD runs GNU `timeout [OPTS] DURATION …`:
 # REPLY = DURATION + its --kill-after in ms, rc 0; else rc 1. The command line
-# is split on spaces (no glob); only a command line that starts with timeout.
+# is split on spaces (no glob); only a command line that starts with timeout
+# (or gtimeout: macOS brew coreutils, launch L5.4-9).
 _kt_strays_timeout_ms() {
     local c="$1" i=1 ka=0 d=""
     local -a w
-    [[ "$c" == "timeout "* || "$c" == *"/timeout "* || "$c" == "timeout.exe "* || "$c" == *"/timeout.exe "* ]] || return 1
+    [[ "$c" == "timeout "* || "$c" == *"/timeout "* || "$c" == "timeout.exe "* || "$c" == *"/timeout.exe "* \
+       || "$c" == "gtimeout "* || "$c" == *"/gtimeout "* || "$c" == "gtimeout.exe "* || "$c" == *"/gtimeout.exe "* ]] || return 1
     read -r -a w <<< "$c"
     while (( i < ${#w[@]} )); do
         case "${w[i]}" in
@@ -432,7 +434,8 @@ kt_strays_scan() {
             # the caller's chain; any other child of it was adopted (also safe
             # for GNU timeout, which has only that one child)
             if (( sscope )) && [[ -z "$r" && -n "${ex[$pp]+x}" && -z "${ex[$q]+x}" ]] \
-               && [[ "${_KTS_CMD[$pp]}" == timeout\ * || "${_KTS_CMD[$pp]}" == */timeout\ * ]]; then r="$q"; fi
+               && [[ "${_KTS_CMD[$pp]}" == timeout\ * || "${_KTS_CMD[$pp]}" == */timeout\ * \
+                     || "${_KTS_CMD[$pp]}" == gtimeout\ * || "${_KTS_CMD[$pp]}" == */gtimeout\ * ]]; then r="$q"; fi
             q="$pp"
             (( ++n > 500 )) && break
         done

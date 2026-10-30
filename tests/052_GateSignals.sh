@@ -56,10 +56,10 @@ bash "$MK" "$R" pass=a_pass hang=b_hang
 # samples under load (launch L2.1)
 KT052_MINSAMP=30; kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin ]] && KT052_MINSAMP=10
 
-# the driver: DRV SCEN SEGBASH OUT ROOT GATE TK SAMPLER — runs in the LAUNCHER's
+# the driver: DRV SCEN SEGBASH OUT ROOT GATE TK SAMPLER TMO TIMEOUT_NAME — runs in the LAUNCHER's
 # runtime; writes KEY=VALUE lines to OUT.drv
 cat > "$TMP/drv.sh" <<'EOF'
-SC=$1 SB=$2 OUT=$3 ROOT=$4 G=$5 TK=$6 SAMPLER=$7 TMO=${8:-120}
+SC=$1 SB=$2 OUT=$3 ROOT=$4 G=$5 TK=$6 SAMPLER=$7 TMO=${8:-120} TMOCMD=$9
 P="" LP=""
 # kill the segment's watchdog (in the segment's runtime: a child of its bash)
 wdkill() {
@@ -84,7 +84,7 @@ elif [[ $SC == tparent ]]; then
     # the same through `timeout` (launch L2.1: a killed tool left
     # `timeout` + the gate running): the launcher's parent is the timeout,
     # which outlives the intermediate shell — the launcher watches that too
-    bash -c 'timeout -k 10 300 bash "$1" --root "$2" --out "$3" --timeout "$5" --bash "$4" all > "$3.stdout" 2>&1; echo "rc=$?" > "$3.lrc"' _ "$G" "$ROOT" "$OUT" "$SB" "$TMO" </dev/null &
+    bash -c '"$6" -k 10 300 bash "$1" --root "$2" --out "$3" --timeout "$5" --bash "$4" all > "$3.stdout" 2>&1; echo "rc=$?" > "$3.lrc"' _ "$G" "$ROOT" "$OUT" "$SB" "$TMO" "$TMOCMD" </dev/null &
 else
     # segtree with --warm: the watchdog's segment-killed path removes seg-1.ckk too (G4 review R10)
     WARM=(); [[ $SC == segtree ]] && WARM=( --warm )
@@ -237,7 +237,7 @@ kt052_case() {
     [[ "${5:-}" == sample ]] && smp="$TMP/sample.sh"
     [[ "$sc" == wdtimeout ]] && tmo=6
     env -i PATH="${lb%/*}:$PATH" SYSTEMROOT="${SYSTEMROOT:-}" WINDIR="${WINDIR:-}" \
-        timeout -k 10 150 "$lb" "$TMP/drv.sh" "$sc" "$sb" "$o" "$R" "$G" "$TK" "$smp" "$tmo" </dev/null >/dev/null 2>&1
+        "$KT_TIMEOUT" -k 10 150 "$lb" "$TMP/drv.sh" "$sc" "$sb" "$o" "$R" "$G" "$TK" "$smp" "$tmo" "$KT_TIMEOUT" </dev/null >/dev/null 2>&1
     while IFS='=' read -r k v; do D["$k"]="$v"; done < "$o.drv" 2>/dev/null
     l1=""; { while IFS='=' read -r k v; do [[ "$k" == verdict ]] && l1="$v"; done < "$o/cells/001/result"; } 2>/dev/null
     l2=""; lr=""; { while IFS='=' read -r k v; do [[ "$k" == verdict ]] && l2="$v"; [[ "$k" == reason ]] && lr="$v"; done < "$o/cells/002/result"; } 2>/dev/null
@@ -327,6 +327,7 @@ for dir in "${DIRS[@]}"; do
             wdterm) what="the watchdog KILLed, then TERM to the launcher: a rescue watchdog stops the cell, the segment's result is written, nothing left" ;;
         esac
         kt_test_start "[$label] $what"
+        if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"; continue; fi
         # parent / segtree have a POSIX form (SIGKILL); taskkill / tree have none
         if [[ ! -x "$TK" && ( "$sc" == taskkill || "$sc" == tree ) ]]; then
             kt_test_pass "skipped: no taskkill ($TK)"
