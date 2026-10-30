@@ -19,7 +19,8 @@
 #   H5    gate.sh rewrites a cell result without `sed -i`
 #   H4    every segment start mode of gate.sh (GNU env, perl, `set -m`) keeps
 #         INT/QUIT trappable in a cell and gives the segment a session of
-#         its own where it can
+#         its own where it can; started from a caller that ignores SIGPIPE
+#         (a CI runner), PIPE is trappable in a cell too (L5.4-10)
 # Every process made on purpose carries the nonce $N and is owner-tied (it
 # ends by itself once this file's shell is gone); the EXIT trap KILLs what
 # carries the nonce.
@@ -400,6 +401,36 @@ if [[ -z "$bad" ]]; then
     kt_test_pass "unforced: $(grep -a '^gate: segment start' <<< "$o") | failing env: $(grep -a 'segment start\|does not work' <<< "$o2" | head -1)"
 else
     kt_test_fail "$bad | ${o//$'\n'/ | } || ${o2//$'\n'/ | }"
+fi
+
+# ---- L5.4-10 (OG12 a): the gate's caller ignores SIGPIPE (a CI runner) ------------
+# a signal ignored when a non-interactive bash starts can never be trapped by it
+# or its children: the gate resets PIPE for its cells as it does INT/QUIT
+kt_test_start "gate.sh started from a parent with SIGPIPE ignored: a cell's trap on PIPE (and INT, QUIT) takes; where neither a GNU env nor perl can reset it, a [WARN] names SIGPIPE [L5.4-10]"
+want=jobctl
+for e in env genv; do command -v "$e" >/dev/null 2>&1 && "$e" --default-signal=INT,QUIT,PIPE -i "PATH=$PATH" true </dev/null >/dev/null 2>&1 && { want=env; break; }; done
+[[ "$want" == jobctl ]] && command -v perl >/dev/null 2>&1 && perl -MPOSIX -e 1 </dev/null >/dev/null 2>&1 && want=perl
+if [[ "$want" == jobctl ]] && ! command -v setsid >/dev/null 2>&1; then
+    kt_test_pass "skipped: start mode jobctl without setsid (no session of its own, see H4)"
+else
+    RP="$TMP/rootP"; bash "$MK" "$RP" sigs
+    printf '%s\n' 'source "$KTEST_SOURCE_PATH"' 'kt_test_init "GfxPipe" "$KT_TESTS_DIR" "$@"' \
+        'kt_test_start "PIPE is trappable in a cell"' "trap ': x' PIPE" 't="$(trap -p PIPE)"' \
+        'if [[ "$t" == *": x"* ]]; then kt_test_pass "$t"; else kt_test_fail "trap -p PIPE = [$t] (ignored on entry?)"; fi' \
+        'trap - PIPE' > "$RP/sigs/tests/002_pipe.sh"
+    o="$(timeout -k 10 150 bash -c 'trap "" PIPE; exec bash "$@"' _ "$G" --root "$RP" --out "$TMP/outP" --bash "$BASH" all 2>&1 < /dev/null)"; rc=$?
+    bad=""
+    if [[ "$want" == jobctl ]]; then
+        [[ "$o" == *"[WARN] "*SIGPIPE*" ignored when the gate started"* ]] || bad+="[jobctl: no [WARN] naming SIGPIPE] "
+    else
+        [[ "$rc" == 0 && "$o" == *$'\n'"__GATE__:PASS:1:1:0:0:0:0:0:3:3" ]] || bad+="[rc=$rc, not PASS 3/3] "
+        [[ "$o" != *"[WARN] "*SIGPIPE* ]] || bad+="[a SIGPIPE WARN in mode $want] "
+    fi
+    if [[ -z "$bad" ]]; then
+        kt_test_pass "mode $want: $(grep -a '^gate: segment start\|SIGPIPE' <<< "$o" | head -2 | tr '\n' ' ')${o##*$'\n'}"
+    else
+        kt_test_fail "$bad | ${o//$'\n'/ | } || fails: $(cat "$TMP/outP/cells/001/fails.txt" 2>/dev/null)"
+    fi
 fi
 
 kt056_cleanup

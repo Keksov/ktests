@@ -17,6 +17,9 @@
 #     (a vanished results dir is never a silent green); the dead-pid sweep
 #     leaves the kt_iso.* of ANOTHER bash install (an owner marker; another
 #     MSYS runtime cannot see this one's pids) until it is a day old.
+#   - L5.4-8: a kt_nap.<pid>.* FIFO (kt_proc_napfd without /dev/ptmx) of a
+#     process the stop KILLed inside its mkfifo..unlink window is removed by
+#     the run's EXIT cleanup (forced with KT_PROC_NAPFD=fifo).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KTESTS_LIB_DIR="$SCRIPT_DIR/.."
@@ -174,6 +177,38 @@ for mode in threaded single; do
     # never leave an orphan behind, whatever the verdict
     [[ -f "$TMP/pids" ]] && for p in $(<"$TMP/pids"); do kill -KILL "$p" 2>/dev/null; done
 done
+
+# ---- L5.4-8: a kt_nap FIFO of a process of the run that the stop KILLs -------
+# Where there is no /dev/ptmx (FreeBSD) kt_proc_napfd makes a FIFO in TMPDIR,
+# opens it and unlinks it; a process of the run killed between the two left it
+# (kb-freebsd: `left=[kt_nap.84431.387116910]` in the first case above). The
+# FIFO path forced (KT_PROC_NAPFD=fifo) on every platform; a test file that
+# ignores TERM freezes inside that window (its `rm` waits) until the stop
+# KILLs it — the run's EXIT cleanup removes kt_nap.<pid>.* of every process it
+# stopped.
+mkdir -p "$TMP/napw" "$TMP/t8"; rm -f "$TMP/napw.pid"
+printf '%s\n' '#!/bin/bash' 'D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+    "\"$LIB/ktests.sh\" \"\$D\" \"Kill\" '/[0-9][0-9][0-9]_' \"\$@\"" > "$TMP/napw/tests.sh"
+printf '%s\n' "source \"$LIB/ktest.sh\"" 'kt_test_init "K001" "$(dirname "$0")"' 'kt_test_start "k001"' \
+    "trap '' TERM" \
+    "rm() { [[ \"\$*\" == *kt_nap.* ]] && { echo \"\$BASHPID\" >> '$TMP/napw.pid'; sleep 30; }; command rm \"\$@\"; }" \
+    'kt_proc_napfd' 'kt_test_pass "k001"' > "$TMP/napw/001_k.sh"
+kt_test_start "a threaded run TERMed while a process of it sits in kt_proc_napfd's FIFO window (KT_PROC_NAPFD=fifo): no kt_nap.* is left in TMPDIR [L5.4-8]"
+TMPDIR="$TMP/t8" KT_PROC_NAPFD=fifo bash "$LIB/ktests.sh" "$TMP/napw" Kill '/[0-9][0-9][0-9]_' -m threaded -w 1 >/dev/null 2>&1 &
+rpid=$!
+kt042_poll 60 kt042_npids "$TMP/napw.pid" 1; ready=$?
+inwin="$(kt042_left "$TMP/t8")"
+kill -TERM "$rpid" 2>/dev/null
+kt042_poll 20 kt042_dead "$rpid"
+rc=0; wait "$rpid" || rc=$?
+wp="$(<"$TMP/napw.pid")" 2>/dev/null
+left="$(kt042_left "$TMP/t8")"
+if [[ "$ready" == 0 && "$inwin" == *"kt_nap.$wp."* && "$rc" == 143 && -z "$left" ]]; then
+    kt_test_pass "in the window [$inwin]; after the TERM rc $rc, TMPDIR empty"
+else
+    kt_test_fail "ready=$ready in the window [$inwin] (pid $wp) rc=$rc left=[$left]"
+fi
+for p in $wp; do kill -KILL "$p" 2>/dev/null; done
 
 # ---- R6a: a missing result file is a FAILED file, never a silent green ------
 mkdir -p "$TMP/gone"

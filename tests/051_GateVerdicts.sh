@@ -293,6 +293,19 @@ if [[ -n "$OTHER" ]]; then
 else
     kt_test_pass "skipped: no second bash runtime on this machine"
 fi
+kt_test_start "hermetic: an fd the caller left open (7) never reaches a cell — the launcher closes every fd > 2 it inherited (CI runners leave pipes open) [L5.4-3]"
+RE4="$TMP/rootE4"
+bash "$MK" "$RE4" probe
+( exec 7</dev/null; timeout -k 10 150 bash "$G" --root "$RE4" --out "$TMP/outE4" all > "$TMP/e4.out" 2>&1 < /dev/null; echo $? > "$TMP/e4.rc" )
+rc4="$(cat "$TMP/e4.rc" 2>/dev/null)"; e4="$(cat "$TMP/e4.out")"
+kt051_line "$e4" 1; p4="$REPLY"
+kt051_probe_env "$RE4"; d4="$REPLY"
+fd4=""; while IFS= read -r l; do [[ "$l" == FDS=* ]] && fd4="$l"; done <<< "$d4"
+if [[ "$rc4" == 0 && "$p4" =~ \ probe\ +PASS\ +9/9\  ]] && kt051_has "$d4" "FDS=0 1 2( 255)?"; then
+    kt_test_pass "[$p4] cell: $fd4"
+else
+    kt_test_fail "rc4=$rc4 cell: [$fd4] | ${e4//$'\n'/ | }"
+fi
 
 # ---- F: review round 1 (R1, R4, R5, R9, R10) ----------------------------------------
 kt_test_start "a FAIL whose message talks about a fork failure stays FAIL (rc 1, not ENV); multi-line messages shown; a failed file with a space in its name is no message"

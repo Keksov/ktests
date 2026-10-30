@@ -182,7 +182,8 @@
 #   launcher  this script as started: parses, resolves, claims OUT, writes
 #             one spec per runtime (OUT/seg-N.spec, mixed C:/... paths, the
 #             caller's locale etc.), starts the segment with `env
-#             --default-signal=INT,QUIT -i` (INT/QUIT trappable in the cells;
+#             --default-signal=INT,QUIT,PIPE -i` (INT/QUIT/PIPE trappable in
+#             the cells, also under a caller that ignores them;
 #             plus setsid/perl for a new session in its own runtime; its nap
 #             fd closed; without a GNU env: perl, else `set -m` — see
 #             _kt_gate_spawn_detect), never signals it — except, in its own runtime, once
@@ -219,8 +220,12 @@
 #             ProgramData, __KK_CFG_ETC, KKLASS_CKK_DIR of its own
 #             (OUT/cells/NNN/{home,tmp,etc,ckk}), KT_SUMMARY_FILE, cwd
 #             OUT/cells/NNN/cwd (or the suite dir), stdin /dev/null, fds 0-2
-#             only. The environment is deny-by-default: the segment starts
-#             from `env -i` and keeps only PATH and the caller's whitelisted
+#             only (+ bash's own 255): the launcher closes every fd > 2 it
+#             inherited as its first step (_kt_gate_inherited_close; a CI
+#             runner leaves pipes open — launch L5.4-3), before it starts a
+#             segment or a rescue watchdog. The environment is
+#             deny-by-default: the segment starts from `env -i` and keeps
+#             only PATH and the caller's whitelisted
 #             variables (locale, TZ, COMSPEC, SYSTEMROOT, ...; see
 #             _KT_GATE_ENV_KEEP). The launcher resets its own shell state
 #             first: an exported SHELLOPTS/BASHOPTS/CDPATH changes nothing.
@@ -1162,29 +1167,34 @@ _kt_gate_skip_put() {
 }
 
 # _kt_gate_spawn_detect — HOW a segment (and a rescue watchdog) is started
-# with SIGINT/SIGQUIT at their defaults, decided once per launcher (launch
-# L2.1, PORTING H4/H9). Why: an `&` child of a shell without job control
-# starts with INT and QUIT IGNORED, and a signal ignored at entry can never
-# be trapped again by that bash or its children (review R1: kcl/thttpserver
-# 006 lost its INT trap). _KT_GATE_SPAWN:
+# with SIGINT/SIGQUIT (and SIGPIPE) at their defaults, decided once per
+# launcher (launch L2.1, PORTING H4/H9). Why: an `&` child of a shell without
+# job control starts with INT and QUIT IGNORED, and a signal ignored at entry
+# can never be trapped again by that bash or its children (review R1:
+# kcl/thttpserver 006 lost its INT trap). PIPE (launch L5.4-10, owner OG12 a):
+# a caller that ignores SIGPIPE — a CI runner — hands it on to every cell
+# (thttpserver 002/005/006, tutil 005 failed there); reset the same way.
+# _KT_GATE_SPAWN:
 #   env     a GNU env with --default-signal (`env`, else `genv`: FreeBSD's
 #           coreutils) resets them right before the exec of the target bash:
-#           `env --default-signal=INT,QUIT -i …`; a session of its own through
-#           setsid(1), else perl, in front of it — as before L2.1 (Windows,
-#           GNU Linux, Alpine with coreutils)
+#           `env --default-signal=INT,QUIT,PIPE -i …` (_KT_GATE_ENVSIG; an env
+#           that refuses PIPE keeps INT,QUIT: GNU coreutils >= 8.31 and uutils
+#           take it); a session of its own through setsid(1), else perl, in
+#           front of it — as before L2.1 (Windows, GNU Linux, Alpine with
+#           coreutils)
 #   perl    no GNU env, a perl with POSIX: `env -i … perl -MPOSIX -e '$SIG{INT}
-#           = $SIG{QUIT} = "DEFAULT"; POSIX::setsid(); exec @ARGV'` — perl
-#           resets them (unlike bash it may) and makes the session (FreeBSD,
-#           macOS)
+#           = $SIG{QUIT} = $SIG{PIPE} = "DEFAULT"; POSIX::setsid(); exec
+#           @ARGV'` — perl resets them (unlike bash it may) and makes the
+#           session (FreeBSD, macOS)
 #   jobctl  neither (Alpine/busybox clean): the segment is started under
 #           `set -m` — bash ignores nothing in an async child when job control
 #           is on — so it leads a process group of its own; for a session of
 #           its own `setsid` runs as a plain child of a subshell that leads
 #           that group (no group leader: setsid() needs no fork, busybox's
 #           setsid neither waits nor has -w), and the subshell, which waits for
-#           it, is the stub. No setsid(1): the caller's session ([WARN]). INT
-#           and QUIT ignored when THIS launcher started cannot be undone then
-#           ([WARN]).
+#           it, is the stub. No setsid(1): the caller's session ([WARN]). INT,
+#           QUIT or PIPE ignored when THIS launcher started cannot be undone
+#           then ([WARN]; PIPE also with an env that refuses it).
 # _KT_GATE_SESS = how a same-runtime segment gets its own session (setsid,
 # perl, jobctl-setsid, or "" = it shares the caller's).
 _kt_gate_spawn_detect() {
@@ -1193,10 +1203,14 @@ _kt_gate_spawn_detect() {
     # works here; else the next one down — jobctl always does)
     case "$want" in env|perl|jobctl) ;; *) want="" ;; esac
     _KT_GATE_SPAWN=jobctl _KT_GATE_ENVX="" _KT_GATE_PERLX="" _KT_GATE_SESS="" _KT_GATE_SPAWN_FORCED="$want"
+    _KT_GATE_ENVSIG=INT,QUIT,PIPE
     [[ -z "$want" || "$want" == env ]] && for e in env genv; do
         type -P "$e" >/dev/null 2>&1 || continue
-        if "$e" --default-signal=INT,QUIT -i "PATH=$PATH" true </dev/null >/dev/null 2>&1; then
-            _KT_GATE_SPAWN=env _KT_GATE_ENVX="$e"
+        if "$e" --default-signal=INT,QUIT,PIPE -i "PATH=$PATH" true </dev/null >/dev/null 2>&1; then
+            _KT_GATE_SPAWN=env _KT_GATE_ENVX="$e" _KT_GATE_ENVSIG=INT,QUIT,PIPE
+            break
+        elif "$e" --default-signal=INT,QUIT -i "PATH=$PATH" true </dev/null >/dev/null 2>&1; then
+            _KT_GATE_SPAWN=env _KT_GATE_ENVX="$e" _KT_GATE_ENVSIG=INT,QUIT
             break
         fi
     done
@@ -1220,13 +1234,13 @@ _kt_gate_spawn_detect() {
 }
 
 # _kt_gate_env_cmd K [SESSION] -> the array _KT_GATE_CMD: the start of runtime
-# K's bash with a clean environment (env -i), INT/QUIT default (see
+# K's bash with a clean environment (env -i), INT/QUIT/PIPE default (see
 # _kt_gate_spawn_detect); SESSION 1 (perl only: the others add the session in
 # _kt_gate_seg_start/_kt_gate_spawn): setsid() too
 _kt_gate_env_cmd() {
     local b="${_KT_GATE_B_PATH[$1]}"
     if [[ "${_KT_GATE_SPAWN:-env}" == env ]]; then
-        _KT_GATE_CMD=( "${_KT_GATE_ENVX:-env}" --default-signal=INT,QUIT -i "PATH=${b%/*}:$PATH" )
+        _KT_GATE_CMD=( "${_KT_GATE_ENVX:-env}" "--default-signal=${_KT_GATE_ENVSIG:-INT,QUIT,PIPE}" -i "PATH=${b%/*}:$PATH" )
     else
         _KT_GATE_CMD=( env -i "PATH=${b%/*}:$PATH" )
     fi
@@ -1234,9 +1248,9 @@ _kt_gate_env_cmd() {
     [[ -n "${WINDIR:-}" ]] && _KT_GATE_CMD+=( "WINDIR=$WINDIR" )
     if [[ "${_KT_GATE_SPAWN:-env}" == perl ]]; then
         if (( ${2:-0} )); then
-            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; POSIX::setsid(); exec @ARGV or exit 127' )
+            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = $SIG{PIPE} = "DEFAULT"; POSIX::setsid(); exec @ARGV or exit 127' )
         else
-            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; exec @ARGV or exit 127' )
+            _KT_GATE_CMD+=( "$_KT_GATE_PERLX" -MPOSIX -e '$SIG{INT} = $SIG{QUIT} = $SIG{PIPE} = "DEFAULT"; exec @ARGV or exit 127' )
         fi
     fi
     _KT_GATE_CMD+=( "$b" )
@@ -1942,8 +1956,35 @@ kt_gate_json() {
     } > "$t" && mv -f -- "$t" "$_KT_GATE_OUT/summary.json"
 }
 
+# _kt_gate_inherited_close — the launcher's FIRST step (launch L5.4-3): close
+# every fd > 2 it inherited, before it opens one of its own, so no segment,
+# rescue watchdog or cell gets it (a CI runner leaves pipes open: Ubuntu 142
+# 145, macOS 131 142 143 146 — the probe cell saw them). Listed from
+# /proc/$$/fd, else /dev/fd (FreeBSD fdescfs, macOS); kept: 255 and any fd on
+# this script (bash reads the script through it) and BASH_XTRACEFD (a
+# caller's `bash -x` trace). The glob's own directory fd is closed by the time
+# each entry is looked at. No fork. _KT_GATE_INHFD = the fds closed.
+_kt_gate_inherited_close() {
+    local d="/proc/$$/fd" f n
+    local -a l=()
+    _KT_GATE_INHFD=()
+    [[ -d "$d" ]] || d=/dev/fd
+    for f in "$d"/*; do
+        n="${f##*/}"
+        [[ "$n" =~ ^[0-9]+$ ]] && (( n > 2 && n != 255 )) && l+=( "$n" )
+    done
+    for n in "${l[@]}"; do
+        [[ -e "$d/$n" ]] || continue
+        [[ "$n" == "${BASH_XTRACEFD:-}" || "$d/$n" -ef "$_KT_GATE_SELF" ]] && continue
+        # (braces: a `2>` on a bare exec would stay on the launcher for good)
+        { exec {n}<&-; } 2>/dev/null && _KT_GATE_INHFD+=( "$n" )
+    done
+    return 0
+}
+
 kt_gate_main() {
     local k id l s
+    _kt_gate_inherited_close
     _KT_GATE_ARGV=( "$@" )
     kt_gate_parse "$@"
     _KT_GATE_CYGPATH=""; command -v cygpath >/dev/null 2>&1 && _KT_GATE_CYGPATH=1
@@ -2012,9 +2053,12 @@ kt_gate_main() {
         fi
     fi
     _kt_gate_spawn_detect
-    # INT/QUIT ignored when this launcher started: only env/perl undo that
-    _KT_GATE_INTIGN=0
+    # INT/QUIT ignored when this launcher started: only env/perl undo that;
+    # PIPE (a CI runner ignores it; L5.4-10): env with PIPE in _KT_GATE_ENVSIG,
+    # or perl — read before the launcher's own PIPE trap below
+    _KT_GATE_INTIGN=0 _KT_GATE_PIPEIGN=0
     [[ "$(trap -p INT QUIT)" == *"''"* ]] && _KT_GATE_INTIGN=1
+    [[ "$(trap -p PIPE)" == *"''"* ]] && _KT_GATE_PIPEIGN=1
 
     _KT_GATE_B_SAME=()
     for (( k = 0; k < ${#_KT_GATE_B_PATH[@]}; k++ )); do
@@ -2077,8 +2121,18 @@ kt_gate_main() {
             [[ "${_KT_GATE_B_RT[k]}" == "$_KT_GATE_RT" ]] && { _kt_gate_say "[WARN] no setsid/perl: a same-runtime segment shares the caller's session (its stray checks see the caller's processes)"; break; }
         done
     fi
-    if [[ "$_KT_GATE_SPAWN" == jobctl ]] && (( _KT_GATE_INTIGN )); then
-        _kt_gate_say "[WARN] SIGINT/SIGQUIT were ignored when the gate started and neither a GNU env nor perl can reset them: the cells cannot trap INT/QUIT"
+    # signals ignored when the gate started that this start mode cannot reset
+    l="" s=""
+    if [[ "$_KT_GATE_SPAWN" == jobctl ]]; then
+        (( _KT_GATE_INTIGN )) && l+="/SIGINT/SIGQUIT" s+="/INT/QUIT"
+        (( _KT_GATE_PIPEIGN )) && l+="/SIGPIPE" s+="/PIPE"
+        if [[ "$l" == /SIGPIPE ]]; then
+            _kt_gate_say "[WARN] SIGPIPE was ignored when the gate started and neither a GNU env nor perl can reset it: the cells cannot trap PIPE"
+        elif [[ -n "$l" ]]; then
+            _kt_gate_say "[WARN] ${l#/} were ignored when the gate started and neither a GNU env nor perl can reset them: the cells cannot trap ${s#/}"
+        fi
+    elif [[ "$_KT_GATE_SPAWN" == env && "$_KT_GATE_ENVSIG" != *PIPE* ]] && (( _KT_GATE_PIPEIGN )); then
+        _kt_gate_say "[WARN] SIGPIPE was ignored when the gate started and this env takes --default-signal=$_KT_GATE_ENVSIG only: the cells cannot trap PIPE"
     fi
     if ! kt_proc_init; then
         _kt_gate_say "[WARN] no process table ($KT_PROC_WHY): the stray checks are n/a - a STRAY cannot be seen"

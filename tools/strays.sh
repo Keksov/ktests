@@ -245,7 +245,9 @@ _kt_strays_nap() {
     return 0
 }
 _kt_strays_nap_close() {
-    [[ -n "$_KTS_NAP_FD" ]] && exec {_KTS_NAP_FD}>&- 2>/dev/null
+    # (braces: a `2>` on a bare exec would stay on the caller for good — the
+    # gate launcher lost its stderr after its first spawn, launch L5.4-K1)
+    [[ -n "$_KTS_NAP_FD" ]] && { exec {_KTS_NAP_FD}>&-; } 2>/dev/null
     _KTS_NAP_FD=""
     return 0
 }

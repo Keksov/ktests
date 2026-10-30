@@ -41,6 +41,8 @@
 #           "no strays" then (strays.sh prints `strays: UNKNOWN (...)`).
 # KT_PROC_BACKEND set in the environment (cygwin|linux|ps|none) forces a
 # backend — the tests use it to run the ps backend on Linux and the none path.
+# KT_PROC_NAPFD=fifo (a test knob, launch L5.4-8) forces kt_proc_napfd's FIFO
+# path (FreeBSD's: no /dev/ptmx) on every platform.
 #
 # API
 #   kt_proc_init          KT_PROC_BACKEND, KT_PROC_WHY, KT_PROC_HAS_SID (0/1:
@@ -132,7 +134,7 @@ declare -gA KT_PROC_PP=() KT_PROC_PG=() KT_PROC_SID=() KT_PROC_STATE=() KT_PROC_
 kt_proc_napfd() {
     local __ktp_fd __ktp_ff
     REPLY=""
-    if [[ -c /dev/ptmx ]] && { exec {__ktp_fd}<>/dev/ptmx; } 2>/dev/null; then
+    if [[ "${KT_PROC_NAPFD:-}" != fifo && -c /dev/ptmx ]] && { exec {__ktp_fd}<>/dev/ptmx; } 2>/dev/null; then
         REPLY="$__ktp_fd"; return 0
     fi
     __ktp_ff="${TMPDIR:-/tmp}/kt_nap.$BASHPID.$RANDOM$RANDOM"

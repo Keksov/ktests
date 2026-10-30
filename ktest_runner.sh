@@ -597,7 +597,9 @@ kt_runner_group_stop() {
 # process that descends from it outside it; SELF (a pid in the group: the
 # watchdog) is spared and never signalled by pid. Never waits for a child;
 # rc 0. KT_GROUP_END_STATS = "rounds=… scan_ms=… kill_rounds=… members=[…]
-# outside=…" (diagnostics).
+# outside=…" (diagnostics). Every member and descendant it saw is recorded in
+# _KT_RUNNER_STOPPED (pid -> 1, for the life of this shell): kt_runner_nap_sweep
+# removes their kt_nap FIFOs (launch L5.4-8).
 #   1. Snapshot (/proc, no fork): the group's members and their DESCENDANTS
 #      OUTSIDE the group by the ppid chain — a test file's `timeout N cmd`
 #      (GNU timeout makes its own process group), a `set -m` subgroup (critic
@@ -638,6 +640,7 @@ kt_runner_group_end() {
     kt_runner_group_scan "$P" "$self"
     __kt_st=$(( ${EPOCHREALTIME/[.,]/} - __kt_t0 ))
     __kt_out=${#__kt_ds[@]} __kt_mem="$__kt_gm"
+    for __kt_q in $__kt_gm "${!__kt_ds[@]}"; do _KT_RUNNER_STOPPED[$__kt_q]=1; done
     if ! kill -TERM -- "-$P" 2>/dev/null; then
         [[ "$P" != "$self" ]] && kill -TERM "$P" 2>/dev/null
     fi
@@ -650,6 +653,7 @@ kt_runner_group_end() {
         __kt_t0="${EPOCHREALTIME/[.,]/}"
         kt_runner_group_scan "$P" "$self"
         __kt_st=$(( __kt_st + ${EPOCHREALTIME/[.,]/} - __kt_t0 ))
+        for __kt_q in $__kt_gm "${!__kt_ds[@]}"; do _KT_RUNNER_STOPPED[$__kt_q]=1; done
         for __kt_q in "${!__kt_ds[@]}"; do
             kill -0 "$__kt_q" 2>/dev/null || unset "__kt_ds[$__kt_q]"
         done
@@ -717,6 +721,7 @@ kt_runner_group_end() {
 # (_kt_runner_group_scan_tbl: Linux /proc/PID/stat, no fork; else one `ps`);
 # with no process table at all both stay empty and the caller relies on
 # kill -0 alone.
+declare -gA _KT_RUNNER_STOPPED=()
 declare -gA _KT_RUNNER_PT_PP=() _KT_RUNNER_PT_PG=() _KT_RUNNER_PT_SID=() _KT_RUNNER_PT_STATE=() \
     _KT_RUNNER_PT_RAW=() _KT_RUNNER_PT_ST=() _KT_RUNNER_PT_CMD=()
 kt_runner_group_scan() {
@@ -973,9 +978,31 @@ kt_runner_group_close() {
 
 # kt_runner_iso_end — remove the run's isolation folder (the EXIT trap). Only
 # THIS process's kt_iso.<pid> (round 5, DT9): ktests.sh traps signals before
-# kt_runner_iso_begin, and an inherited KT_ISO_ROOT is never removed.
+# kt_runner_iso_begin, and an inherited KT_ISO_ROOT is never removed. Then
+# kt_runner_nap_sweep.
 kt_runner_iso_end() {
     [[ -n "${KT_ISO_ROOT:-}" && "${KT_ISO_ROOT##*/}" == "kt_iso.$$" ]] && rm -rf -- "$KT_ISO_ROOT"
+    kt_runner_nap_sweep
+    return 0
+}
+# kt_runner_nap_sweep — remove the kt_nap.<pid>.* FIFOs in TMPDIR of THIS
+# process and of every process a group stop of it recorded (_KT_RUNNER_STOPPED):
+# kt_proc_napfd makes its FIFO, opens it and unlinks it, and a process of the
+# run TERMed or KILLed between the two left it (kb-freebsd 042, launch
+# L5.4-8); the name carries the creating $BASHPID. Only where naps are FIFOs
+# (no /dev/ptmx: FreeBSD; or KT_PROC_NAPFD=fifo): ONE glob, `rm` only for a
+# match. rc 0.
+kt_runner_nap_sweep() {
+    local __kt_f __kt_p
+    local -a __kt_l=()
+    [[ "${KT_PROC_NAPFD:-}" == fifo || ! -c /dev/ptmx ]] || return 0
+    for __kt_f in "${TMPDIR:-/tmp}"/kt_nap.*; do
+        [[ -p "$__kt_f" ]] || continue
+        __kt_p="${__kt_f##*/kt_nap.}"; __kt_p="${__kt_p%%.*}"
+        [[ "$__kt_p" =~ ^[0-9]+$ ]] || continue
+        [[ "$__kt_p" == "$$" || "$__kt_p" == "$BASHPID" || -n "${_KT_RUNNER_STOPPED[$__kt_p]+x}" ]] && __kt_l+=( "$__kt_f" )
+    done
+    (( ${#__kt_l[@]} )) && rm -f -- "${__kt_l[@]}"
     return 0
 }
 

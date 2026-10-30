@@ -82,8 +82,10 @@ again (`no-watchdog`) → [WARN], exit 1.
 **Processes** (two cygwin runtimes cannot signal or see each other): the
 *launcher* (as started) writes a spec per runtime (`OUT/seg-N.spec`, mixed
 `C:/…` paths, the caller's locale/TZ/COMSPEC…), starts one *segment* per
-runtime (`env --default-signal=INT,QUIT -i`: INT/QUIT stay trappable in every
-cell; a session of its own; no inherited fd) — without a GNU env: perl or
+runtime (`env --default-signal=INT,QUIT,PIPE -i`: INT/QUIT stay trappable in every
+cell; PIPE too, also under a caller that ignores it — a CI runner; else a `[WARN]`;
+a session of its own; no inherited fd: the launcher first closes every fd > 2
+its caller left open — a CI runner's pipes) — without a GNU env: perl or
 `set -m`, see [Platforms](#platforms--windows-linux-freebsd-busybox-launch-l21), never signals it —
 `OUT/seg-N.result` is its verdict — relays its lines, rewrites `OUT/hb` every
 5 s, watches its own parent (parent gone = TERM; a parent that is `timeout`
