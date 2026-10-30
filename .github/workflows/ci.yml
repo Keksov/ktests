@@ -1,0 +1,25 @@
+# ktests CI (kbool launch L5.6). The matrix (13 rows: linux, macos, freebsd, windows) lives
+# in Keksov/kbool .github/workflows/ci.yml, called here through workflow_call: it runs
+# kbool main with every submodule at kbool's pointers except ktests, which is replaced by
+# the commit under test (push: main's tip; pull_request: the PR's merge ref).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kbool:
+    uses: Keksov/kbool/.github/workflows/ci.yml@main
+    with:
+      component: ktests
+      component_ref: ${{ github.ref }}
