@@ -25,10 +25,13 @@ if [[ -r /proc/$BASHPID/winpid ]]; then
     if [[ "$__gfx_w" =~ ^[0-9]+$ ]]; then
         __gfx_ps="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}" 2>/dev/null)/System32/WindowsPowerShell/v1.0/powershell.exe"
         [[ -x "$__gfx_ps" ]] || __gfx_ps=powershell.exe
-        # Add-Type compiles into %TEMP%: a Windows TEMP/TMP of its own (a bash
-        # started from the other runtime may have none: then C:\Windows, denied)
+        # The compile writes into %TEMP%: a Windows TEMP/TMP of its own (a bash
+        # started from the other runtime may have none: then C:\Windows, denied).
+        # .NET calls only, no cmdlet: a cmdlet's module autoload took 22-30 s
+        # on windows-latest without the image's PSModuleAnalysisCachePath
+        # (which a gate cell does not pass) — past this cell's 5 s (057)
         __gfx_tw="$(cygpath -w "${TMPDIR:-/tmp}" 2>/dev/null)"
-        MSYS2_ARG_CONV_EXCL='*' TEMP="$__gfx_tw" TMP="$__gfx_tw" "$__gfx_ps" -NoProfile -NonInteractive -Command "Add-Type -Name N -Namespace W -MemberDefinition '[DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(IntPtr h);'; \$p=Get-Process -Id $__gfx_w; \$t=\$p.StartTime.Ticks; [void][W.N]::NtSuspendProcess(\$p.Handle); Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command',('\$q=Get-Process -Id $__gfx_w -EA 0; if(\$q -and \$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')" </dev/null >/dev/null 2>&1
+        MSYS2_ARG_CONV_EXCL='*' TEMP="$__gfx_tw" TMP="$__gfx_tw" "$__gfx_ps" -NoProfile -NonInteractive -Command "\$o=[System.CodeDom.Compiler.CompilerParameters]::new(); \$o.GenerateInMemory=\$true; \$k=[Microsoft.CSharp.CSharpCodeProvider]::new().CompileAssemblyFromSource(\$o,'public static class KtW { [System.Runtime.InteropServices.DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(System.IntPtr h); }').CompiledAssembly.GetType('KtW'); \$p=[Diagnostics.Process]::GetProcessById($__gfx_w); \$t=\$p.StartTime.Ticks; [void]\$k::NtSuspendProcess(\$p.Handle); \$s=[Diagnostics.ProcessStartInfo]::new('powershell.exe',('-NoProfile -NonInteractive -Command try{\$q=[Diagnostics.Process]::GetProcessById($__gfx_w)}catch{exit}; if(\$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')); \$s.WindowStyle='Hidden'; [void][Diagnostics.Process]::Start(\$s)" </dev/null >/dev/null 2>&1
         printf '%s %s\n' "$__gfx_p" "$__gfx_w" > "$__gfx_t/gfx-deaf.pid"
     fi
 fi

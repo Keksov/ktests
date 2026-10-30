@@ -439,6 +439,11 @@ fi   # kt_need_timeout
 # trap exits bash at once and the marker never appears. In threaded mode the
 # outer stop (ktests.sh) TERMed the worker group's processes as its own
 # descendants AND the run's shell TERMed them again as its group.
+# A failure names the files whose EXIT trap began (cs.NNN, written first in
+# the trap) and the runner's exit time after the TERM: a cleanup that began
+# and has no marker was cut short (a second TERM, or the KILL after a grace);
+# one that never began never got its TERM (windows-latest git-bash, run
+# 41016489197: `cleanups done 1 of 2`, nothing more known).
 for mode in threaded single; do
     want=2; [[ "$mode" == single ]] && want=1
     kt_test_start "$mode: TERM to the runner pid — every running test file's 0.8 s EXIT cleanup completes, nothing is left [P3b rs]"
@@ -447,7 +452,7 @@ for mode in threaded single; do
         printf '%s\n' "source \"$LIB/ktest.sh\"" \
             "kt_test_init \"C$k\" \"\$(dirname \"\$0\")\"" \
             'kt_test_start "c"' \
-            "trap 'if [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; then read -t 0.8 -u \$w _; else sleep 0.8; fi; echo done > \"$x/clean.$k\"' EXIT; trap 'exit 143' TERM" \
+            "trap 'echo began > \"$x/cs.$k\"; if [[ -c /dev/ptmx ]] && exec {w}<>/dev/ptmx; then read -t 0.8 -u \$w _; else sleep 0.8; fi; echo done > \"$x/clean.$k\"' EXIT; trap 'exit 143' TERM" \
             "echo \$BASHPID > '$x/up.$k'; sleep 20 & wait" \
             'kt_test_pass "c"' > "$d/${k}_c.sh"
     done
@@ -456,8 +461,10 @@ for mode in threaded single; do
     for (( i = 0; i < 300; i++ )); do n=0; for f in "$x"/up.*; do [[ -e "$f" ]] && n=$(( n + 1 )); done; (( n >= want )) && break; sleep 0.1; done
     up=$n
     sleep 0.5
+    t0="${EPOCHREALTIME/[.,]/}"
     kill -TERM "$rp" 2>/dev/null
     for (( i = 0; i < 150; i++ )); do kill -0 "$rp" 2>/dev/null || break; sleep 0.1; done
+    tx=$(( (${EPOCHREALTIME/[.,]/} - t0) / 1000 ))
     rc=0; kill -0 "$rp" 2>/dev/null && rc=hung
     if [[ "$rc" == hung ]]; then kill -KILL "$rp" 2>/dev/null; else wait "$rp" 2>/dev/null; rc=$?; fi
     nc=0; for f in "$x"/clean.*; do [[ -e "$f" ]] && nc=$(( nc + 1 )); done
@@ -467,7 +474,9 @@ for mode in threaded single; do
     if [[ "$up" == "$want" && "$nc" == "$want" && "$rc" == 143 && -z "$left" && -z "$tmpl" ]]; then
         kt_test_pass "$mode: $nc of $up cleanups done, rc 143, nothing left, TMPDIR empty"
     else
-        kt_test_fail "$mode: cleanups done $nc of $up (want $want), rc=$rc left=[$left] TMPDIR=[$tmpl]"
+        began=""; for f in "$x"/cs.*; do [[ -e "$f" ]] && began+="${f##*.} "; done
+        done_=""; for f in "$x"/clean.*; do [[ -e "$f" ]] && done_+="${f##*.} "; done
+        kt_test_fail "$mode: cleanups done $nc of $up (want $want), rc=$rc left=[$left] TMPDIR=[$tmpl] began=[${began% }] done=[${done_% }] exit ${tx}ms after TERM"
     fi
 done
 

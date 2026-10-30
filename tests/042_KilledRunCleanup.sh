@@ -101,12 +101,19 @@ rc=0
 # busybox's timeout has no --preserve-status — and needs none: it execs the
 # command, whose own status is the exit status (launch L2.1)
 kt042_ps=( --preserve-status ); [[ "$("$KT_TIMEOUT" --help 2>&1)" == *BusyBox* ]] && kt042_ps=()
-TMPDIR="$TMP/t1" "$KT_TIMEOUT" -s TERM "${kt042_ps[@]}" 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 >/dev/null 2>&1 || rc=$?
+# the run's output and duration go into the failure text only: a run that
+# ends rc 0 (windows-latest msys2, run 41026963516) either never got the TERM
+# (then it ran its 20 s files to the end) or its files' `sleep 20` failed
+# (a fork failure: the files pass at once) — dt and the output tell which
+t0=$SECONDS
+TMPDIR="$TMP/t1" "$KT_TIMEOUT" -s TERM "${kt042_ps[@]}" 4 bash "$LIB/ktests.sh" "$TMP/slow" Kill '/[0-9][0-9][0-9]_' -m threaded -w 4 > "$TMP/t1.out" 2>&1 || rc=$?
+dt=$(( SECONDS - t0 ))
 left="$(kt042_left "$TMP/t1")"
 if [[ -z "$left" && "$rc" == 143 ]]; then
     kt_test_pass "rc=$rc, TMPDIR empty"
 else
-    kt_test_fail "rc=$rc left=[$left]"
+    o="$(tail -n 12 "$TMP/t1.out" 2>/dev/null)"
+    kt_test_fail "rc=$rc left=[$left] dt=${dt}s | ${o//$'\n'/ | }"
 fi
 fi   # kt_need_timeout
 

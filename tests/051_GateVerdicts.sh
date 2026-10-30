@@ -189,14 +189,22 @@ fi   # kt_need_timeout
 # ---- S: a host suspend is not the cell's time (launch L2.1) --------------------------
 # A host that slept during a cell (a laptop on battery: Kernel-Power 42) made
 # a 3-minute cell a TIMEOUT at wake-up. Here the watchdog is SIGSTOPped past
-# the cell's deadline (--timeout 6, KT_GATE_SUSPEND_GAP=2) while the cell naps
+# the cell's deadline (--timeout 10, KT_GATE_SUSPEND_GAP=2) while the cell naps
 # (gate fixture nap: TMPDIR/gfx-nap.ready, then it waits for gfx-nap.go):
 # once CONTinued, the watchdog's tick gap moves the deadline — the cell ends
 # PASS when told, its row and result say `host suspended Ns`.
+# The budget: the deadline moves by the gap - 1, so after the CONT the cell
+# has what was left of --timeout at the STOP, minus 1 s; this case spends 3 s
+# of it (the ticks the old watchdog killed in) before `go`. The STOP comes when
+# the cell naps: on a slow host (windows-latest, run 41016489197) that took
+# ~3 s of the cell's time, so --timeout 6 left 4 - 1 = 3 s for 3 s plus the
+# cell's exit (susp `1 5`, TIMEOUT); --timeout 10 leaves 10 - 1 - 3 = 6 s minus
+# the time to the nap (>= 3 s of slack there). The `>= 6` check below holds
+# for a nap reached within ~5 s.
 if kt_need_timeout; then   # setup: needs timeout (its cases SKIP without it)
 RSU="$TMP/rootSU"; OSU="$TMP/outSU"
 bash "$MK" "$RSU" nap
-( export KT_GATE_SUSPEND_GAP=2; exec "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RSU" --out "$OSU" --timeout 6 all ) > "$TMP/su.out" 2>&1 < /dev/null &
+( export KT_GATE_SUSPEND_GAP=2; exec "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RSU" --out "$OSU" --timeout 10 all ) > "$TMP/su.out" 2>&1 < /dev/null &
 gpS=$!
 wdS="" okS="" dlS="" curS=""
 for (( i = 0; i < 600; i++ )); do   # the cell at its nap, the watchdog known: <= 60 s
@@ -220,7 +228,7 @@ kt051_kv "$OSU/cells/001/result" verdict; vS="$REPLY"
 kt051_kv "$OSU/cells/001/result" reason; rS="$REPLY"
 suspS=""; { read -r suspS < "$OSU/seg-1.susp"; } 2>/dev/null
 fi   # kt_need_timeout (setup)
-kt_test_start "host suspend: the watchdog stopped past --timeout 6 -> the deadline moves, PASS, 'host suspended Ns' in the row"
+kt_test_start "host suspend: the watchdog stopped past --timeout 10 -> the deadline moves, PASS, 'host suspended Ns' in the row"
 if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
 else
 if [[ -n "$okS" && -n "$dlS" && "$RC" == 0 && "$vS" == PASS && "$lS" =~ \ nap\ +PASS\ +1/1\  \

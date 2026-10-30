@@ -182,10 +182,16 @@ drv_deaf() {
     printf '%s %s\n' "$p" "$w" > "$2"
     ps="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32/WindowsPowerShell/v1.0/powershell.exe"
     [[ -x "$ps" ]] || ps=powershell.exe
-    # Add-Type compiles into %TEMP%: a Windows TEMP/TMP of its own (a bash
-    # started from the other runtime may have none: then C:\Windows, denied)
+    # The compile writes into %TEMP%: a Windows TEMP/TMP of its own (a bash
+    # started from the other runtime may have none: then C:\Windows, denied).
+    # .NET calls only, no cmdlet: the first cmdlet of a session (Get-Process,
+    # Add-Type, Start-Process) autoloads its module, and without the image's
+    # module analysis cache (windows-latest sets PSModuleAnalysisCachePath; a
+    # gate cell, or a bash of another runtime, does not pass it) that took
+    # 22-30 s on windows-latest (diag runs 41032204154, 41033717127) — past
+    # this call's budget and the 5 s cells of the fixtures (deaf=no)
     c="$(cygpath -w "${2%/*}")"
-    MSYS2_ARG_CONV_EXCL='*' TEMP="$c" TMP="$c" "$TMOCMD" -k 5 60 "$ps" -NoProfile -NonInteractive -Command "Add-Type -Name N -Namespace W -MemberDefinition '[DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(IntPtr h);'; \$p=Get-Process -Id $w; \$t=\$p.StartTime.Ticks; [void][W.N]::NtSuspendProcess(\$p.Handle); Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command',('\$q=Get-Process -Id $w -EA 0; if(\$q -and \$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')" </dev/null >/dev/null 2>&1
+    MSYS2_ARG_CONV_EXCL='*' TEMP="$c" TMP="$c" "$TMOCMD" -k 5 60 "$ps" -NoProfile -NonInteractive -Command "\$o=[System.CodeDom.Compiler.CompilerParameters]::new(); \$o.GenerateInMemory=\$true; \$k=[Microsoft.CSharp.CSharpCodeProvider]::new().CompileAssemblyFromSource(\$o,'public static class KtW { [System.Runtime.InteropServices.DllImport(\"ntdll.dll\")] public static extern int NtSuspendProcess(System.IntPtr h); }').CompiledAssembly.GetType('KtW'); \$p=[Diagnostics.Process]::GetProcessById($w); \$t=\$p.StartTime.Ticks; [void]\$k::NtSuspendProcess(\$p.Handle); \$s=[Diagnostics.ProcessStartInfo]::new('powershell.exe',('-NoProfile -NonInteractive -Command try{\$q=[Diagnostics.Process]::GetProcessById($w)}catch{exit}; if(\$q.StartTime.Ticks -eq ' + \$t + ' -and -not \$q.WaitForExit(120000)){ \$q.Kill() }')); \$s.WindowStyle='Hidden'; [void][Diagnostics.Process]::Start(\$s)" </dev/null >/dev/null 2>&1
     kill -KILL "$p" 2>/dev/null; sleep 1
     kill -0 "$p" 2>/dev/null && echo "deaf=yes" || echo "deaf=no"
     DRV_P="$p"
