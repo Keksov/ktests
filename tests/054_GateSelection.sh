@@ -75,10 +75,16 @@ printf '#!/bin/bash\n' > "$R/kbool.sh"
 mkdir -p "$R/docs"; printf 'docs\n' > "$R/docs/x.md"
 printf 'readme\n' > "$R/README.md"
 printf '[submodule "kcl"]\n\tpath = kcl\n\turl = ./kcl\n' > "$R/.gitmodules"
+# HAVEGIT: no git on PATH (the CI msys2 row had none) -> the cases that need the fixture repo pass as N/A
+HAVEGIT=0; command -v git >/dev/null 2>&1 && HAVEGIT=1
 gok=1
-{ git "${GC[@]}" -C "$R/kcl" init -q && git "${GC[@]}" -C "$R/kcl" add -A && git "${GC[@]}" -C "$R/kcl" commit -qm kcl \
-  && git "${GC[@]}" -C "$R" init -q && git "${GC[@]}" -C "$R" add -A && git "${GC[@]}" -C "$R" commit -qm root; } > "$TMP/git.out" 2>&1 || gok=0
-[[ -d "$R/.git" && -d "$R/kcl/.git" ]] || gok=0
+if (( HAVEGIT )); then
+    { git "${GC[@]}" -C "$R/kcl" init -q && git "${GC[@]}" -C "$R/kcl" add -A && git "${GC[@]}" -C "$R/kcl" commit -qm kcl \
+      && git "${GC[@]}" -C "$R" init -q && git "${GC[@]}" -C "$R" add -A && git "${GC[@]}" -C "$R" commit -qm root; } > "$TMP/git.out" 2>&1 || gok=0
+    [[ -d "$R/.git" && -d "$R/kcl/.git" ]] || gok=0
+else
+    gok=0; : > "$TMP/git.out"
+fi
 # kt054_g ARGS... — git in the fixture only (never without its .git)
 kt054_g() { [[ -d "$R/.git" ]] && git "${GC[@]}" "$@" >> "$TMP/git.out" 2>&1; }
 # kt054_sel ARGS... — the selection alone (gate.sh sourced: nothing runs)
@@ -92,135 +98,183 @@ kt054_sel() {
 }
 
 kt_test_start "the scratch git fixture: a root repo, kcl/ as a nested repo recorded as a gitlink (.gitmodules)"
-if (( gok )) && [[ "$(git -C "$R" ls-files -s kcl 2>/dev/null)" == 160000\ * ]]; then
-    kt_test_pass "$(git -C "$R" ls-files -s kcl)"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "$(tr '\n' ' ' < "$TMP/git.out")"
+    if (( gok )) && [[ "$(git -C "$R" ls-files -s kcl 2>/dev/null)" == 160000\ * ]]; then
+        kt_test_pass "$(git -C "$R" ls-files -s kcl)"
+    else
+        kt_test_fail "$(tr '\n' ' ' < "$TMP/git.out")"
+    fi
 fi
 
 kt_test_start "--changed, nothing changed: '[WARN] nothing changed', rc 0, no cell, no OUT dir, no machine line"
-kt054_gate "$TMP/c0.out" --root "$R" --out "$TMP/c0out" --changed
-o="$(cat "$TMP/c0.out")"
-if [[ "$RC" == 0 && "$o" == *"gate changed: nothing changed"* && "$o" == *"[WARN] nothing changed: no suite selected, no cell runs (exit 0)"* \
-      && ! -e "$TMP/c0out" && "$o" != *__GATE__* && "$o" != *"[1/"* ]]; then
-    kt_test_pass "${o//$'\n'/ | }"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "rc=$RC | ${o//$'\n'/ | }"
+    kt054_gate "$TMP/c0.out" --root "$R" --out "$TMP/c0out" --changed
+    o="$(cat "$TMP/c0.out")"
+    if [[ "$RC" == 0 && "$o" == *"gate changed: nothing changed"* && "$o" == *"[WARN] nothing changed: no suite selected, no cell runs (exit 0)"* \
+          && ! -e "$TMP/c0out" && "$o" != *__GATE__* && "$o" != *"[1/"* ]]; then
+        kt_test_pass "${o//$'\n'/ | }"
+    else
+        kt_test_fail "rc=$RC | ${o//$'\n'/ | }"
+    fi
 fi
 
 kt_test_start "a unit file change: its suite + the dependents (unit file uses it, test files use it or a dependent) + kcl; not the unrelated ue"
-printf '# changed\n' >> "$R/kcl/ua/ua.sh"
-s="$(kt054_sel)"
-if [[ "${s%%|*}" == "kcl kcl/ua kcl/ub kcl/uc kcl/ud " && "$s" == *"kcl  <- unit file changed: kcl/ua/ua.sh"* \
-      && "$s" == *"kcl/ub  <- unit ub uses ua (kcl/ub/ub.sh)"* && "$s" == *"kcl/uc  <- test uses ub (kcl/uc/tests/uc_helper.sh)"* \
-      && "$s" == *"kcl/ud  <- test uses ua (kcl/ud/tests/ud_helper.sh)"* ]]; then
-    kt_test_pass "${s%%|*}"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "$s"
+    printf '# changed\n' >> "$R/kcl/ua/ua.sh"
+    s="$(kt054_sel)"
+    if [[ "${s%%|*}" == "kcl kcl/ua kcl/ub kcl/uc kcl/ud " && "$s" == *"kcl  <- unit file changed: kcl/ua/ua.sh"* \
+          && "$s" == *"kcl/ub  <- unit ub uses ua (kcl/ub/ub.sh)"* && "$s" == *"kcl/uc  <- test uses ub (kcl/uc/tests/uc_helper.sh)"* \
+          && "$s" == *"kcl/ud  <- test uses ua (kcl/ud/tests/ud_helper.sh)"* ]]; then
+        kt_test_pass "${s%%|*}"
+    else
+        kt_test_fail "$s"
+    fi
 fi
 kt_test_start "--changed with a named suite: the union; the selection and its reasons printed before the first cell; summary.json 'changed'"
-kt054_gate "$TMP/c1.out" --root "$R" --out "$TMP/c1out" --changed kk
-o="$(cat "$TMP/c1.out")"
-pre="${o%%$'\n'\[1/*}"
-cj=""
-NODE="$(type -P node 2>/dev/null)"
-if [[ -n "$NODE" ]]; then
-    cj="$("$NODE" -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(JSON.stringify(j.changed.paths)+" "+Object.keys(j.changed.suites).join(",")+" "+j.changed.all+" "+j.gate.options.changed)' \
-        "$(cygpath -m "$TMP/c1out/summary.json" 2>/dev/null || echo "$TMP/c1out/summary.json")" 2>&1)"
-fi
-if [[ "$RC" == 0 && "$o" == *"gate cells: 6 = 1 bash x 6 suite(s) (kcl kcl/ua kcl/ub kcl/uc kcl/ud kk)"* \
-      && "$pre" == *"gate changed: 1 path(s) select 5 suite(s)"* && "$pre" == *"gate changed:   kk  <- named on the command line"* \
-      && "$o" == *$'\n'"__GATE__:PASS:6:6:0:0:0:0:0:18:18" \
-      && ( -z "$NODE" || "$cj" == '["kcl/ua/ua.sh"] kcl,kcl/ua,kcl/ub,kcl/uc,kcl/ud null true' ) ]]; then
-    kt_test_pass "6 cells, json [$cj]"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "rc=$RC json=[$cj] | ${o//$'\n'/ | }"
+    kt054_gate "$TMP/c1.out" --root "$R" --out "$TMP/c1out" --changed kk
+    o="$(cat "$TMP/c1.out")"
+    pre="${o%%$'\n'\[1/*}"
+    cj=""
+    NODE="$(type -P node 2>/dev/null)"
+    if [[ -n "$NODE" ]]; then
+        cj="$("$NODE" -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(JSON.stringify(j.changed.paths)+" "+Object.keys(j.changed.suites).join(",")+" "+j.changed.all+" "+j.gate.options.changed)' \
+            "$(cygpath -m "$TMP/c1out/summary.json" 2>/dev/null || echo "$TMP/c1out/summary.json")" 2>&1)"
+    fi
+    if [[ "$RC" == 0 && "$o" == *"gate cells: 6 = 1 bash x 6 suite(s) (kcl kcl/ua kcl/ub kcl/uc kcl/ud kk)"* \
+          && "$pre" == *"gate changed: 1 path(s) select 5 suite(s)"* && "$pre" == *"gate changed:   kk  <- named on the command line"* \
+          && "$o" == *$'\n'"__GATE__:PASS:6:6:0:0:0:0:0:18:18" \
+          && ( -z "$NODE" || "$cj" == '["kcl/ua/ua.sh"] kcl,kcl/ua,kcl/ub,kcl/uc,kcl/ud null true' ) ]]; then
+        kt_test_pass "6 cells, json [$cj]"
+    else
+        kt_test_fail "rc=$RC json=[$cj] | ${o//$'\n'/ | }"
+    fi
 fi
 kt054_g -C "$R/kcl" checkout -q -- ua/ua.sh
 
 kt_test_start "test-only change -> only its suite; a *.md in a unit dir -> its suite (doc tests); an untracked file counts"
-printf '#\n' >> "$R/kcl/ub/tests/001_a.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ub/tests/001_a.sh
-printf 'doc\n' > "$R/kcl/ua/README.md"; s2="$(kt054_sel)"; rm -f "$R/kcl/ua/README.md"
-printf 'n\n' > "$R/kcl/ue/notes.txt"; s3="$(kt054_sel)"; rm -f "$R/kcl/ue/notes.txt"
-if [[ "${s1%%|*}" == "kcl/ub " && "${s2%%|*}" == "kcl/ua " && "${s3%%|*}" == "kcl/ue " && "$s3" == *"kcl/ue  <- changed: kcl/ue/notes.txt"* ]]; then
-    kt_test_pass "[${s1%%|*}] [${s2%%|*}] [${s3%%|*}]"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1] [$s2] [$s3]"
+    printf '#\n' >> "$R/kcl/ub/tests/001_a.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ub/tests/001_a.sh
+    printf 'doc\n' > "$R/kcl/ua/README.md"; s2="$(kt054_sel)"; rm -f "$R/kcl/ua/README.md"
+    printf 'n\n' > "$R/kcl/ue/notes.txt"; s3="$(kt054_sel)"; rm -f "$R/kcl/ue/notes.txt"
+    if [[ "${s1%%|*}" == "kcl/ub " && "${s2%%|*}" == "kcl/ua " && "${s3%%|*}" == "kcl/ue " && "$s3" == *"kcl/ue  <- changed: kcl/ue/notes.txt"* ]]; then
+        kt_test_pass "[${s1%%|*}] [${s2%%|*}] [${s3%%|*}]"
+    else
+        kt_test_fail "[$s1] [$s2] [$s3]"
+    fi
 fi
 kt_test_start "a deleted unit file: its suite, kcl and the dependents of its unit (the file stem); a docs-only change outside kcl: no suite, rc 0"
-rm -f "$R/kcl/ud/ud.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ud/ud.sh
-printf 'more\n' >> "$R/docs/x.md"
-kt054_gate "$TMP/c2.out" --root "$R" --out "$TMP/c2out" --changed
-o2="$(cat "$TMP/c2.out")"; rc2=$RC
-kt054_g -C "$R" checkout -q -- docs/x.md
-if [[ "${s1%%|*}" == "kcl kcl/ud kcl/ue kcl/ug " && "$rc2" == 0 && "$o2" == *"(no suite) <- docs/x.md"* \
-      && "$o2" == *"[WARN] the changes select no suite: no cell runs (exit 0)"* && ! -e "$TMP/c2out" ]]; then
-    kt_test_pass "[${s1%%|*}] docs: rc 0"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1] rc2=$rc2 | ${o2//$'\n'/ | }"
+    rm -f "$R/kcl/ud/ud.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ud/ud.sh
+    printf 'more\n' >> "$R/docs/x.md"
+    kt054_gate "$TMP/c2.out" --root "$R" --out "$TMP/c2out" --changed
+    o2="$(cat "$TMP/c2.out")"; rc2=$RC
+    kt054_g -C "$R" checkout -q -- docs/x.md
+    if [[ "${s1%%|*}" == "kcl kcl/ud kcl/ue kcl/ug " && "$rc2" == 0 && "$o2" == *"(no suite) <- docs/x.md"* \
+          && "$o2" == *"[WARN] the changes select no suite: no cell runs (exit 0)"* && ! -e "$TMP/c2out" ]]; then
+        kt_test_pass "[${s1%%|*}] docs: rc 0"
+    else
+        kt_test_fail "[$s1] rc2=$rc2 | ${o2//$'\n'/ | }"
+    fi
 fi
 kt_test_start "a core change (kbool.sh; an untracked file under ktests/) selects all"
-printf '# x\n' >> "$R/kbool.sh"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- kbool.sh
-printf 'x\n' > "$R/ktests/new.txt"; s2="$(kt054_sel)"; rm -f "$R/ktests/new.txt"
-all="kcl kcl/ua kcl/ub kcl/uc kcl/ud kcl/ue kcl/ug kk kkore "
-if [[ "${s1%%|*}" == "$all" && "$s1" == *"all 9 suites, for kbool.sh"* && "${s2%%|*}" == "$all" && "$s2" == *"for ktests/new.txt"* ]]; then
-    kt_test_pass "all 9, twice"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1] [$s2]"
+    printf '# x\n' >> "$R/kbool.sh"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- kbool.sh
+    printf 'x\n' > "$R/ktests/new.txt"; s2="$(kt054_sel)"; rm -f "$R/ktests/new.txt"
+    all="kcl kcl/ua kcl/ub kcl/uc kcl/ud kcl/ue kcl/ug kk kkore "
+    if [[ "${s1%%|*}" == "$all" && "$s1" == *"all 9 suites, for kbool.sh"* && "${s2%%|*}" == "$all" && "$s2" == *"for ktests/new.txt"* ]]; then
+        kt_test_pass "all 9, twice"
+    else
+        kt_test_fail "[$s1] [$s2]"
+    fi
 fi
 kt_test_start "the submodule's commit moved (committed in kcl, not in the root): the files of that diff select"
-printf '# y\n' >> "$R/kcl/ud/ud.sh"
-kt054_g -C "$R/kcl" commit -qam ud
-s1="$(kt054_sel)"
-st="$(git -C "$R" status --porcelain 2>/dev/null)"
-kt054_g -C "$R/kcl" reset -q --hard HEAD~1
-s2="$(kt054_sel)"
-if [[ "${s1%%|*}" == "kcl kcl/ud kcl/ue kcl/ug " && "$s1" == *"kcl/ug  <- bench.sh uses ud (kcl/ug/bench.sh)"* && "$s1" == *"kcl/ue  <- test uses ud (kcl/ue/tests/ue_helper.sh)"* && "$st" == *kcl* \
-      && "$s2" == *"nothing changed"* ]]; then
-    kt_test_pass "[${s1%%|*}] then clean"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1] status=[$st] after reset [$s2]"
+    printf '# y\n' >> "$R/kcl/ud/ud.sh"
+    kt054_g -C "$R/kcl" commit -qam ud
+    s1="$(kt054_sel)"
+    st="$(git -C "$R" status --porcelain 2>/dev/null)"
+    kt054_g -C "$R/kcl" reset -q --hard HEAD~1
+    s2="$(kt054_sel)"
+    if [[ "${s1%%|*}" == "kcl kcl/ud kcl/ue kcl/ug " && "$s1" == *"kcl/ug  <- bench.sh uses ud (kcl/ug/bench.sh)"* && "$s1" == *"kcl/ue  <- test uses ud (kcl/ue/tests/ue_helper.sh)"* && "$st" == *kcl* \
+          && "$s2" == *"nothing changed"* ]]; then
+        kt_test_pass "[${s1%%|*}] then clean"
+    else
+        kt_test_fail "[$s1] status=[$st] after reset [$s2]"
+    fi
 fi
 kt_test_start "a worktree rename (porcelain ' R new old'): both paths kept whole — kcl/ue only, no mangled old path (G4 review R4)"
-mv "$R/kcl/ue/tests/ue_helper.sh" "$R/kcl/ue/tests/ue_helper2.sh"
-kt054_g -C "$R/kcl" add -N ue/tests/ue_helper2.sh
-st="$(git -C "$R/kcl" status --porcelain 2>/dev/null)"
-s1="$(kt054_sel)"
-kt054_g -C "$R/kcl" rm -q --cached ue/tests/ue_helper2.sh
-mv "$R/kcl/ue/tests/ue_helper2.sh" "$R/kcl/ue/tests/ue_helper.sh"
-s2="$(kt054_sel)"
-if [[ "$st" == " R "* && "${s1%%|*}" == "kcl/ue " && "$s1" == *"kcl/ue  <- changed: kcl/ue/tests/ue_helper2.sh"* && "$s1" != *"(no suite)"* \
-      && "$s2" == *"nothing changed"* ]]; then
-    kt_test_pass "[$st] -> [${s1%%|*}]"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "status=[$st] [$s1] after [$s2]"
+    mv "$R/kcl/ue/tests/ue_helper.sh" "$R/kcl/ue/tests/ue_helper2.sh"
+    kt054_g -C "$R/kcl" add -N ue/tests/ue_helper2.sh
+    st="$(git -C "$R/kcl" status --porcelain 2>/dev/null)"
+    s1="$(kt054_sel)"
+    kt054_g -C "$R/kcl" rm -q --cached ue/tests/ue_helper2.sh
+    mv "$R/kcl/ue/tests/ue_helper2.sh" "$R/kcl/ue/tests/ue_helper.sh"
+    s2="$(kt054_sel)"
+    if [[ "$st" == " R "* && "${s1%%|*}" == "kcl/ue " && "$s1" == *"kcl/ue  <- changed: kcl/ue/tests/ue_helper2.sh"* && "$s1" != *"(no suite)"* \
+          && "$s2" == *"nothing changed"* ]]; then
+        kt_test_pass "[$st] -> [${s1%%|*}]"
+    else
+        kt_test_fail "status=[$st] [$s1] after [$s2]"
+    fi
 fi
 kt_test_start "the root README.md -> kkore (its doc examples, the doc map); .gitmodules -> all (G4 review R5)"
-printf 'more\n' >> "$R/README.md"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- README.md
-printf '# x\n' >> "$R/.gitmodules"; s2="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- .gitmodules
-if [[ "${s1%%|*}" == "kkore " && "$s1" == *"kkore  <- doc examples (kkore 015 runs its doctest blocks): README.md"* \
-      && "${s2%%|*}" == "$all" && "$s2" == *"for .gitmodules"* ]]; then
-    kt_test_pass "[${s1%%|*}] [all for .gitmodules]"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1] [$s2]"
+    printf 'more\n' >> "$R/README.md"; s1="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- README.md
+    printf '# x\n' >> "$R/.gitmodules"; s2="$(kt054_sel)"; kt054_g -C "$R" checkout -q -- .gitmodules
+    if [[ "${s1%%|*}" == "kkore " && "$s1" == *"kkore  <- doc examples (kkore 015 runs its doctest blocks): README.md"* \
+          && "${s2%%|*}" == "$all" && "$s2" == *"for .gitmodules"* ]]; then
+        kt_test_pass "[${s1%%|*}] [all for .gitmodules]"
+    else
+        kt_test_fail "[$s1] [$s2]"
+    fi
 fi
 kt_test_start "a deleted top-level script that is no unit file (HEAD has no kk.unit): 'deleted script', its suite only (G4 review R9)"
-rm -f "$R/kcl/ug/bench.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ug/bench.sh
-if [[ "${s1%%|*}" == "kcl/ug " && "$s1" == *"kcl/ug  <- deleted script: kcl/ug/bench.sh"* ]]; then
-    kt_test_pass "${s1%%|*}"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "[$s1]"
+    rm -f "$R/kcl/ug/bench.sh"; s1="$(kt054_sel)"; kt054_g -C "$R/kcl" checkout -q -- ug/bench.sh
+    if [[ "${s1%%|*}" == "kcl/ug " && "$s1" == *"kcl/ug  <- deleted script: kcl/ug/bench.sh"* ]]; then
+        kt_test_pass "${s1%%|*}"
+    else
+        kt_test_fail "[$s1]"
+    fi
 fi
 kt_test_start "--changed on a dir that is not the top of a git work tree: usage error rc 2"
-kt054_gate "$TMP/c3.out" --root "$R/kcl/ua" --changed
-o3="$(cat "$TMP/c3.out")"
-mkdir -p "$TMP/nogit/x/tests"; cp "$LIB/tests/gate_fixtures/pass/suite/"* "$TMP/nogit/x/tests/"; cp -r "$R/ktests" "$TMP/nogit/"
-kt054_gate "$TMP/c4.out" --root "$TMP/nogit" --changed
-o4="$(cat "$TMP/c4.out")"; rc4=$RC
-if [[ "$rc4" == 2 && "$o4" == *"is not the top of a git work tree"* ]]; then
-    kt_test_pass "rc 2"
+if (( ! HAVEGIT )); then
+    kt_test_pass "N/A: no git on PATH (gate --changed needs git)"
 else
-    kt_test_fail "rc4=$rc4 | ${o4//$'\n'/ | } | ${o3//$'\n'/ | }"
+    kt054_gate "$TMP/c3.out" --root "$R/kcl/ua" --changed
+    o3="$(cat "$TMP/c3.out")"
+    mkdir -p "$TMP/nogit/x/tests"; cp "$LIB/tests/gate_fixtures/pass/suite/"* "$TMP/nogit/x/tests/"; cp -r "$R/ktests" "$TMP/nogit/"
+    kt054_gate "$TMP/c4.out" --root "$TMP/nogit" --changed
+    o4="$(cat "$TMP/c4.out")"; rc4=$RC
+    if [[ "$rc4" == 2 && "$o4" == *"is not the top of a git work tree"* ]]; then
+        kt_test_pass "rc 2"
+    else
+        kt_test_fail "rc4=$rc4 | ${o4//$'\n'/ | } | ${o3//$'\n'/ | }"
+    fi
 fi
 
 # ---- --rerun-failed / FLAKY ---------------------------------------------------------------
