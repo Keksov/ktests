@@ -1,5 +1,7 @@
 # KK Testing Framework
 
+> Part of [kbool](https://github.com/Keksov/kbool): installation, quick start and the other components are there.
+
 A unified shell testing framework that eliminates code duplication across all test suites.
 
 ## Overview
@@ -369,13 +371,10 @@ Takes **15-20 minutes per test suite**:
 2. Update module name
 3. Run your tests - they work unchanged!
 
-See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for details.
-
 ## Documentation
 
 - **[START_HERE.md](START_HERE.md)** - New user entry point
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - One-page cheat sheet
-- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - How to migrate existing suites
+- **[GATE_FOR_AGENTS.md](GATE_FOR_AGENTS.md)** - The gate: one command, one verdict
 
 ## Command Reference
 
@@ -531,10 +530,4 @@ test_001.sh              ✗ Bad (number at end)
 ## Getting Help
 
 1. **Quick overview**: See [START_HERE.md](START_HERE.md)
-2. **Fast lookup**: Check [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-3. **Migrating**: Read [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-4. **Full docs**: You're reading it!
-
----
-
-Ready to migrate? See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md).
+2. **Full docs**: You're reading it!

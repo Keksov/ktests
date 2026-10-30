@@ -48,7 +48,7 @@ restores the snapshot, syncs the working tree, prints the gate's `__GATE__`
 line, fetches its OUT into `$SCRATCH/vm51` and powers the VM off (only
 kb-debian, one VM at a time). For a unit-only phase, the CI row
 `bash 5.1 alpine` after the push is enough. Constructs that break on 5.1
-are listed in [`../../docs/dev/launch/L4_cost.md`](../../docs/dev/launch/L4_cost.md) §1, and each repo's
+are listed in [`../../docs/dev/launch/L4_cost.md`](https://github.com/Keksov/kbool/blob/main/docs/dev/launch/L4_cost.md) §1, and each repo's
 `*_Bash51Hazards.sh` test rejects them.
 
 ## Run it

@@ -291,7 +291,7 @@ pid `KT_STRAYS_PPID/_AGE/_FLAG/_CMD/_START`), `kt_strays_stop`,
   cygwin signal for over an hour (wedged in the Git runtime, one spinning a
   core). A survivor even of that is named with its winpid
   (`could NOT be stopped (winpid PID=WINPID)`).
-* **Runtimes** — Git-bash 5.2 and MSYS2 5.3 are separate cygwin runtimes:
+* **Runtimes** — Git-bash and MSYS2 are separate cygwin runtimes:
   `strays.sh` sees (and stops) only the processes of the bash that runs it.
   Run it once under each.
 * Fork-light: one pass over `/proc` with builtins (`read`, `mapfile`); start
@@ -420,7 +420,7 @@ same folder. The header then says `(re-executed from bash V)`.
 
 ## Platforms — Windows, Linux, FreeBSD, busybox (launch L2.1)
 
-The harness was built on cygwin (Git-bash 5.2, MSYS2 5.3); since L2.1 the same
+The harness was built on cygwin (Git-bash, MSYS2); since L2.1 the same
 scripts run on Linux (GNU and busybox userland) and FreeBSD (BSD userland,
 with or without the g-prefixed GNU tools). On Windows every path is the one
 it always was. `tests/056_PlatformHarness.sh` pins what follows.
