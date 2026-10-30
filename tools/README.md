@@ -455,7 +455,7 @@ adopted it). A REAPER among the caller's own ancestors cuts the walk too:
 FreeBSD's `timeout` (without `--foreground`) adopts everything below it, in
 the caller's session — a child of an ancestor `timeout` that is not on the
 caller's chain was adopted (GNU timeout has that one child only). Without a
-session column (macOS ps) a group leader counts as a leader and the strict
+session column (macOS ps without a usable python3) a group leader counts as a leader and the strict
 rule needs a marker. Kernel threads (session 0) are never listed. The
 pipe-fork exclusion (`strays.sh … | while`) compares `/proc/PID/fd` links, on
 FreeBSD the pipe addresses of `fstat -p`; the `tests.sh`-cwd marker reads
@@ -510,6 +510,7 @@ the gate's watchdog). Test fixtures wait on a FIFO of their test file there.
   descendant (`timeout 60 forkstorm.sh start` would hold 60 s, then kill the
   worker): `"${KT_TMO_BOUND[@]}"` (= `--foreground` there) for a command that
   leaves a process on purpose.
+* macOS `ps` has no `sid` keyword (`sess`/`tsess` print 0): the `ps` backend takes the session ids from `python3` `os.getsid` (ONE `python3 -I -S` per snapshot for all its pids, `KT_PROC_SIDSRC=python3`; on Darwin `/usr/bin/python3` only with the Xcode Command Line Tools), so the session rules work as on Linux/FreeBSD; no usable python3 → no session column, as before (L5.4-11).
 * macOS has no `timeout`(1) (brew coreutils names it `gtimeout`): tests call `"$KT_TIMEOUT"` (`timeout`, else `gtimeout`) and SKIP without either (`kt_need_timeout`, ktest.sh; L5.4-9); the harness's `timeout` argv rules accept `gtimeout` too.
 * FreeBSD ssh sessions start with SIGTSTP/TTIN/TTOU **ignored**: the Ctrl-Z
   tests (044 N6, 050) skip with that reason.

@@ -5,7 +5,9 @@
 #         have, this shell and a child in it (ppid, pgid, session, command
 #         line, a start time that is never earlier than the real start and
 #         never in the future — Linux counts clock ticks, not ms), a comm with
-#         ") (" in it (Linux); the ps backend forced on Linux agrees with /proc
+#         ") (" in it (Linux); the ps backend forced on Linux agrees with /proc;
+#         a ps without `sid` (macOS) gets the session ids from python3
+#         os.getsid (L5.4-11)
 #   H1    a DELIBERATE stray — an orphan with a marker — is listed by
 #         strays.sh (ORPHAN=yes) and stopped, also from under a `timeout`
 #         (FreeBSD's is the reaper of all below it, in the caller's session);
@@ -168,6 +170,69 @@ if [[ "$be" == linux ]] && ps -o sid= -p $$ >/dev/null 2>&1; then
     fi
 else
     kt_test_pass "skipped: backend $be$( [[ "$be" == linux ]] && printf ' (ps has no sid)')"
+fi
+
+kt_test_start "a ps without the sid keyword (macOS): the session ids come from python3 os.getsid, ONE python3 per snapshot — this shell, a child in a session of its own (sid = its pid), the snapshot and kt_proc_sid agree; a failing python3 leaves no session column [L5.4-11]"
+rps="$(type -P ps 2>/dev/null)"; rpy="$(type -P python3 2>/dev/null)"
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    kt_test_pass "SKIP: cygwin ps has no -o (the ps backend cannot be forced here)"
+elif [[ -z "$rpy" ]]; then
+    kt_test_pass "SKIP: no python3 on PATH"
+elif [[ "$OSTYPE" == darwin* && "$rpy" == /usr/bin/python3 ]] && ! xcode-select -p >/dev/null 2>&1; then
+    kt_test_pass "SKIP: /usr/bin/python3 is the Xcode stub (no Command Line Tools)"
+elif [[ -z "$rps" ]]; then
+    kt_test_pass "SKIP: no ps on PATH"
+elif ! command -v setsid >/dev/null 2>&1 && ! perl -MPOSIX -e 1 </dev/null >/dev/null 2>&1; then
+    kt_test_pass "SKIP: neither setsid(1) nor perl POSIX for a child in a session of its own"
+else
+    # PATH shims (no env seam): a ps that refuses `sid` (the macOS answer), a
+    # python3 that counts its starts, and one that fails
+    mkdir -p "$TMP/sidshim" "$TMP/sidshim0"
+    CNT="$TMP/sidshim.count"; : > "$CNT"
+    for d in sidshim sidshim0; do
+        printf '%s\n' '#!/bin/sh' 'for a in "$@"; do' \
+            '    case "$a" in sid|sid=|*,sid*|sid,*) echo "ps: sid: keyword not found" >&2; exit 1;; esac' \
+            'done' "exec '$rps' \"\$@\"" > "$TMP/$d/ps"
+    done
+    printf '%s\n' '#!/bin/sh' "echo x >> '$CNT'" "exec '$rpy' \"\$@\"" > "$TMP/sidshim/python3"
+    printf '%s\n' '#!/bin/sh' 'exit 1' > "$TMP/sidshim0/python3"
+    chmod +x "$TMP/sidshim/ps" "$TMP/sidshim/python3" "$TMP/sidshim0/ps" "$TMP/sidshim0/python3"
+    # this shell's session from the platform itself
+    ref=""
+    if [[ "$OSTYPE" == linux* && -r /proc/$$/stat ]]; then
+        l=""; { IFS= read -r l < "/proc/$$/stat"; } 2>/dev/null; a=( ${l##*) } ); ref="${a[3]:-}"
+    elif ref="$(LC_ALL=C "$rps" -o sid= -p "$$" 2>/dev/null)"; then
+        ref="${ref//[!0-9]/}"
+    else
+        ref="$("$rpy" -I -c 'import os, sys; print(os.getsid(int(sys.argv[1])))' "$$" 2>/dev/null)"
+    fi
+    # a child in a session of its own
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$BASH" -c 'exec -a "kt056-$1-sess" "$BASH" -c "$KT056_LOOP"' _ "$N" </dev/null >/dev/null 2>&1 &
+    else
+        perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' "$BASH" -c 'exec -a "kt056-$1-sess" "$BASH" -c "$KT056_LOOP"' _ "$N" </dev/null >/dev/null 2>&1 &
+    fi
+    SJ=$!
+    kt056_wait0 "kt056-$N-sess"; SP="$REPLY"
+    PROBE='source "$1"
+        kt_proc_init || { echo "init failed: $KT_PROC_WHY"; exit 1; }
+        c=(); mapfile -t c < "$4"; n0=${#c[@]}
+        kt_proc_snapshot
+        c=(); mapfile -t c < "$4"; n1=${#c[@]}
+        kt_proc_sid "$2"; s1="$REPLY"; kt_proc_sid "$3"; s2="$REPLY"
+        printf "%s\n" "$KT_PROC_BACKEND $KT_PROC_HAS_SID ${KT_PROC_SIDSRC:--} $(( n1 - n0 )) ${KT_PROC_SID[$2]:--} ${KT_PROC_SID[$3]:--} ${s1:--} ${s2:--} ${KT_PROC_SID[$$]:--}"'
+    o1="$(PATH="$TMP/sidshim:$PATH" KT_PROC_BACKEND=ps "$BASH" -c "$PROBE" _ "$LIB/ktest_proc.sh" "$$" "${SP:-0}" "$CNT" 2>&1)"
+    o0="$(PATH="$TMP/sidshim0:$PATH" KT_PROC_BACKEND=ps "$BASH" -c "$PROBE" _ "$LIB/ktest_proc.sh" "$$" "${SP:-0}" "$CNT" 2>&1)"
+    bad=""
+    [[ -n "$ref" && -n "$SP" ]] || bad+="[no reference: session '$ref', child '$SP'] "
+    [[ "$o1" == "ps 1 python3 1 $ref $SP $ref $SP $ref" ]] || bad+="[python3: '$o1', want 'ps 1 python3 1 $ref $SP $ref $SP $ref'] "
+    [[ "$o0" == "ps 0 - 0 - - - - -" ]] || bad+="[failing python3: '$o0', want 'ps 0 - 0 - - - - -'] "
+    if [[ -z "$bad" ]]; then
+        kt_test_pass "backend sidsrc forks sid(me) sid(child) kt_proc_sid x2 sid(probe): $o1 | failing python3: $o0"
+    else
+        kt_test_fail "$bad"
+    fi
+    { [[ -n "$SP" ]] && kill -KILL "$SP"; kill -KILL "$SJ"; wait "$SJ"; } 2>/dev/null
 fi
 
 # ---- H1: a deliberate stray ------------------------------------------------------
@@ -399,13 +464,18 @@ o="$("$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.default" --
 renv="$(type -P env)"; mkdir -p "$TMP/fakeenv"
 printf '%s\n' '#!/bin/sh' 'case "$1" in --default-signal*) exit 125 ;; esac' "exec '$renv' \"\$@\"" > "$TMP/fakeenv/env"
 chmod +x "$TMP/fakeenv/env"
+# genv (brew coreutils on macOS, FreeBSD's coreutils) would still win: hidden too
+if rgenv="$(type -P genv 2>/dev/null)" && [[ -n "$rgenv" ]]; then
+    printf '%s\n' '#!/bin/sh' 'case "$1" in --default-signal*) exit 125 ;; esac' "exec '$rgenv' \"\$@\"" > "$TMP/fakeenv/genv"
+    chmod +x "$TMP/fakeenv/genv"
+fi
 o2="$(PATH="$TMP/fakeenv:$PATH" "$KT_TIMEOUT" -k 10 150 bash "$G" --root "$RS" --out "$TMP/outS.fake" --bash "$BASH" all 2>&1 < /dev/null)"; rc2=$?
 bad=""
 [[ "$rc" == 0 && "$o" == *$'\n'"gate: segment start = $want"$'\n'* ]] || bad+="[unforced: rc=$rc, want 'segment start = $want'] "
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
     [[ "$rc2" == 2 && "$o2" == *"env --default-signal=INT,QUIT does not work in this cygwin runtime"* && ! -e "$TMP/outS.fake/.kt_gate" ]] || bad+="[cygwin, failing env: rc=$rc2, want the error] "
 else
-    # off cygwin the fake hides `env` only; genv (FreeBSD coreutils) may still win
+    # off cygwin the fakes hide `env` and `genv`: perl or jobctl starts the segment
     [[ "$rc2" == 0 && "$o2" == *$'\n'"gate: segment start = "* ]] || bad+="[failing env: rc=$rc2] "
 fi
 if [[ -z "$bad" ]]; then

@@ -37,6 +37,14 @@
 #           (KT_PROC_START_RES_MS=1000; a --since window is that coarse). The
 #           start IDENTITY of a pid (reused pids) is that second. The ps
 #           process itself is left out (`exec ps` in the $( ): no subshell).
+#           A ps without `sid` (macOS: `ps -o sid` = keyword not found, its
+#           `sess`/`tsess` print 0 for every process — launch L5.4-11): the
+#           session ids come from python3 `os.getsid`, ONE `python3 -I [-S]`
+#           fork per snapshot for all of its pids (and one per kt_proc_sid);
+#           python3 is probed once at init (`os.getsid(os.getpid())` must
+#           answer a number; on Darwin /usr/bin/python3 only with the Xcode
+#           Command Line Tools — without them it is a stub that opens an
+#           install dialog). No usable python3: no session column, as before.
 #   none    nothing works: KT_PROC_WHY says why. Callers must not report
 #           "no strays" then (strays.sh prints `strays: UNKNOWN (...)`).
 # KT_PROC_BACKEND set in the environment (cygwin|linux|ps|none) forces a
@@ -46,7 +54,10 @@
 #
 # API
 #   kt_proc_init          KT_PROC_BACKEND, KT_PROC_WHY, KT_PROC_HAS_SID (0/1:
-#                         a session column exists), KT_PROC_HAS_STATE;
+#                         a session column exists), KT_PROC_SIDSRC (the ps
+#                         backend's session ids: ps = its sid column, python3
+#                         = os.getsid, "" = none or another backend),
+#                         KT_PROC_HAS_STATE;
 #                         KT_PROC_START_RES_MS (how coarse start times are:
 #                         cygwin 1, Linux 10 = a clock tick, ps 1000);
 #                         KT_PROC_START_EARLY_MS (how much EARLIER than the
@@ -111,10 +122,21 @@ if [[ -n "${_KT_PROC_SOURCED:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 _KT_PROC_SOURCED=1
 
-declare -g  KT_PROC_BACKEND="${KT_PROC_BACKEND:-}" KT_PROC_WHY="" KT_PROC_HAS_SID=0 KT_PROC_HAS_STATE=0
+declare -g  KT_PROC_BACKEND="${KT_PROC_BACKEND:-}" KT_PROC_WHY="" KT_PROC_HAS_SID=0 KT_PROC_HAS_STATE=0 KT_PROC_SIDSRC=""
 declare -g  KT_PROC_START_RES_MS=1 KT_PROC_START_EARLY_MS=0
 declare -g  KT_PROC_NOW_MS=0 _KTP_READY="" _KTP_HZ=100 _KTP_PSLS=0 _KTP_PSET=etimes _KTP_PSSTK=state
-declare -ga _KTP_PSARGS=() _KTP_PSVARS=()
+declare -ga _KTP_PSARGS=() _KTP_PSVARS=() _KTP_PY=()
+# the session ids where ps has no `sid` (see BACKENDS): argv = pids, one
+# `PID SID` line each; a pid gone (ESRCH) or not ours to ask (EPERM): no line;
+# pid 0 is skipped (getsid(0) is the CALLER's session)
+declare -g  _KTP_PYSID='import os, sys
+for a in sys.argv[1:]:
+    try:
+        p = int(a)
+        if p > 0:
+            print(a, os.getsid(p))
+    except OSError:
+        pass'
 # KT_TMO_BOUND — the `timeout` options that keep it a plain time bound for a
 # command that leaves a background process on purpose: FreeBSD's timeout
 # without --foreground becomes the REAPER of everything below it and WAITS
@@ -180,6 +202,30 @@ _kt_proc_ps_try() {
     return 0
 }
 
+# _kt_proc_py_probe — _KTP_PY = the python3 command line that answers
+# os.getsid (`-I -S`, else `-I`); rc 1 (_KTP_PY empty) when there is none
+_kt_proc_py_probe() {
+    local py o pr='import os; print(os.getsid(os.getpid()))'
+    _KTP_PY=()
+    py="$(type -P python3 2>/dev/null)" || return 1
+    [[ -n "$py" ]] || return 1
+    # Darwin: /usr/bin/python3 without the Command Line Tools is a stub that
+    # opens a GUI install dialog — never run it then
+    if [[ "$OSTYPE" == darwin* && "$py" == /usr/bin/python3 ]]; then
+        xcode-select -p >/dev/null 2>&1 || return 1
+    fi
+    o="$(exec "$py" -I -S -c "$pr" </dev/null 2>/dev/null)" && [[ "$o" =~ ^[0-9]+$ ]] && { _KTP_PY=( "$py" -I -S ); return 0; }
+    o="$(exec "$py" -I -c "$pr" </dev/null 2>/dev/null)" && [[ "$o" =~ ^[0-9]+$ ]] && { _KTP_PY=( "$py" -I ); return 0; }
+    return 1
+}
+
+# _kt_proc_pysid PID... — REPLY = python3's `PID SID` lines for those pids
+# (ONE fork; a pid gone or foreign has no line)
+_kt_proc_pysid() {
+    REPLY="$(exec "${_KTP_PY[@]}" -c "$_KTP_PYSID" "$@" </dev/null 2>/dev/null)"
+    return 0
+}
+
 # _kt_proc_ps_probe — the ps keyword set (see BACKENDS); rc 1 without a usable ps
 _kt_proc_ps_probe() {
     local -a kw=() opt=()
@@ -201,20 +247,24 @@ _kt_proc_ps_probe() {
     # -ww (no width limit) where ps takes it (BSD, procps, macOS)
     LC_ALL=C ps -ww -o pid= -p "$BASHPID" >/dev/null 2>&1 && ww=( -ww )
     _KTP_PSARGS=( -A "${ww[@]}" )
-    KT_PROC_HAS_SID=0 KT_PROC_HAS_STATE=0 _KTP_PSLS=0 _KTP_PSET=etimes
+    KT_PROC_HAS_SID=0 KT_PROC_SIDSRC="" KT_PROC_HAS_STATE=0 _KTP_PSLS=0 _KTP_PSET=etimes
     # the snapshot splits each row with ONE `read` into these names (the last
     # one takes the command line); a regex per row was ~4 ms on FreeBSD
     _KTP_PSVARS=()
     for k in "${kw[@]}"; do
         _KTP_PSARGS+=( -o "$k=" )
         case "$k" in
-            sid) KT_PROC_HAS_SID=1; _KTP_PSVARS+=( __ktp_xsid ) ;;
+            sid) KT_PROC_HAS_SID=1 KT_PROC_SIDSRC=ps; _KTP_PSVARS+=( __ktp_xsid ) ;;
             state|stat) KT_PROC_HAS_STATE=1; _KTP_PSSTK="$k"; _KTP_PSVARS+=( __ktp_xst ) ;;
             etimes|etime) _KTP_PSET="$k"; _KTP_PSVARS+=( __ktp_xet ) ;;
             lstart) _KTP_PSLS=1; _KTP_PSVARS+=( __ktp_xl1 __ktp_xl2 __ktp_xl3 __ktp_xl4 __ktp_xl5 ) ;;
             pid|ppid|pgid|args) _KTP_PSVARS+=( "__ktp_x$k" ) ;;
         esac
     done
+    # no sid keyword (macOS): the session ids from python3 os.getsid
+    if (( ! KT_PROC_HAS_SID )) && _kt_proc_py_probe; then
+        KT_PROC_HAS_SID=1 KT_PROC_SIDSRC=python3
+    fi
     return 0
 }
 
@@ -228,7 +278,7 @@ kt_proc_init() {
     # REPLY is the caller's: the Linux branch uses kt_proc_ms (restored below;
     # L2.1 review — kt_runner_proc_start returned the uptime for a gone pid)
     local -a a
-    KT_PROC_BACKEND=""
+    KT_PROC_BACKEND="" KT_PROC_SIDSRC=""
     case "$f" in
         cygwin|linux|ps|none|"") ;;
         *) f="" ;;
@@ -380,7 +430,15 @@ kt_proc_snapshot() {
                 (( __ktp_ST[$__ktp_p] > KT_PROC_NOW_MS )) && __ktp_ST[$__ktp_p]=$KT_PROC_NOW_MS
                 __ktp_RAW[$__ktp_p]="$__ktp_s"
                 if (( __ktp_cmd )); then __ktp_CMD[$__ktp_p]="$__ktp_xargs"; else __ktp_CMD[$__ktp_p]=""; fi
-            done <<< "$__ktp_out" ;;
+            done <<< "$__ktp_out"
+            # no sid column: ONE python3 for every pid of the table (a pid gone
+            # since keeps its empty session)
+            if [[ "$KT_PROC_SIDSRC" == python3 ]] && (( ${#__ktp_PP[@]} )); then
+                _kt_proc_pysid "${!__ktp_PP[@]}"
+                while read -r __ktp_xpid __ktp_xsid; do
+                    [[ -n "${__ktp_PP[$__ktp_xpid]+x}" && "$__ktp_xsid" =~ ^[0-9]+$ ]] && __ktp_SID[$__ktp_xpid]="$__ktp_xsid"
+                done <<< "$REPLY"
+            fi ;;
     esac
     return 0
 }
@@ -429,7 +487,18 @@ kt_proc_sid() {
     case "$KT_PROC_BACKEND" in
         cygwin) REPLY=""; { read -r REPLY < "/proc/$1/sid"; } 2>/dev/null ;;
         linux) _kt_proc_stat_field "$1" 3 ;;
-        ps) REPLY=""; (( KT_PROC_HAS_SID )) && _kt_proc_one "$1" sid ;;
+        ps)
+            REPLY=""
+            if [[ "$KT_PROC_SIDSRC" == python3 ]]; then
+                _kt_proc_pysid "$1"; REPLY="${REPLY%%$'\n'*}"
+                if [[ "$REPLY" =~ ^[0-9]+\ ([0-9]+)$ && "${REPLY%% *}" == "$1" ]]; then
+                    REPLY="${BASH_REMATCH[1]}"
+                else
+                    REPLY=""
+                fi
+            elif (( KT_PROC_HAS_SID )); then
+                _kt_proc_one "$1" sid
+            fi ;;
         *) REPLY="" ;;
     esac
 }
