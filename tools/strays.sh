@@ -451,7 +451,7 @@ kt_strays_scan() {
         # line but not that stdin, so it is still listed (review F4).
         [[ -n "${ex[$pp]+x}" && -n "${_KTS_CMD[$p]:-}" && "${_KTS_CMD[$p]}" == "${_KTS_CMD[$pp]:-}" \
            && -p "/proc/$p/fd/0" && "/proc/$p/fd/0" -ef "/proc/$BASHPID/fd/1" ]] && ex[$p]=1
-        # off cygwin the same check through kt_proc_samepipe (no /proc: fstat)
+        # off cygwin the same check through kt_proc_samepipe (no /proc: fstat, else lsof)
         [[ "$KT_PROC_BACKEND" != cygwin && -z "${ex[$p]+x}" && -n "${ex[$pp]+x}" && -n "${_KTS_CMD[$p]:-}" \
            && "${_KTS_CMD[$p]}" == "${_KTS_CMD[$pp]:-}" ]] && kt_proc_samepipe "$p" 0 "$BASHPID" 1 && ex[$p]=1
         [[ -n "${_KTS_PP[$pp]+x}" ]] && kids[$pp]+=" $p"

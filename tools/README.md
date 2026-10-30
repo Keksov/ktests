@@ -458,8 +458,9 @@ caller's chain was adopted (GNU timeout has that one child only). Without a
 session column (macOS ps without a usable python3) a group leader counts as a leader and the strict
 rule needs a marker. Kernel threads (session 0) are never listed. The
 pipe-fork exclusion (`strays.sh … | while`) compares `/proc/PID/fd` links, on
-FreeBSD the pipe addresses of `fstat -p`; the `tests.sh`-cwd marker reads
-`/proc/PID/cwd`, on FreeBSD `procstat -f`.
+FreeBSD the pipe addresses of `fstat -p`, on macOS (no /proc, no fstat) those
+of `lsof -F` (an end's own address and its peer's); the `tests.sh`-cwd marker
+reads `/proc/PID/cwd`, on FreeBSD `procstat -f`, on macOS `lsof -d cwd`.
 
 **Segment start (H4)** — an `&` child of a shell without job control starts
 with SIGINT/SIGQUIT ignored, and no bash can trap an ignored-at-entry signal

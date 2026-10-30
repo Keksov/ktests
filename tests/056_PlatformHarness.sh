@@ -7,7 +7,8 @@
 #         never in the future — Linux counts clock ticks, not ms), a comm with
 #         ") (" in it (Linux); the ps backend forced on Linux agrees with /proc;
 #         a ps without `sid` (macOS) gets the session ids from python3
-#         os.getsid (L5.4-11)
+#         os.getsid (L5.4-11); the macOS lsof parsers of kt_proc_samepipe and
+#         kt_proc_cwd on output recorded from macos-latest (L5.4-13)
 #   H1    a DELIBERATE stray — an orphan with a marker — is listed by
 #         strays.sh (ORPHAN=yes) and stopped, also from under a `timeout`
 #         (FreeBSD's is the reaper of all below it, in the caller's session);
@@ -233,6 +234,36 @@ else
         kt_test_fail "$bad"
     fi
     { [[ -n "$SP" ]] && kill -KILL "$SP"; kill -KILL "$SJ"; wait "$SJ"; } 2>/dev/null
+fi
+
+kt_test_start "the macOS lsof parsers (kt_proc_samepipe, kt_proc_cwd without /proc, fstat, procstat) on lsof 4.91 output recorded from macos-latest: the two ends of one pipe give one address pair, another pipe or fd does not, a peerless pipe, a non-pipe, an absent fd and a gone pid give none; the cwd entry, also with a space in it [L5.4-13]"
+# diag run 41041963465 (D7b): `bash -c … | bash -c …`, writer 7629 (fd 1) and
+# reader 7630 (fd 0); `lsof -a -p PID -d FD -F ftdn` per process, then all fds
+# of the writer; `lsof -a -p PID -d cwd -Fn`
+LW1=$'p7629\nf1\ntPIPE\nd0xafbd576826bcc536\nn->0x800fe8adb066dc1e'
+LR0=$'p7630\nf0\ntPIPE\nd0x800fe8adb066dc1e\nn->0xafbd576826bcc536'
+LWALL=$'p7629\nfcwd\ntDIR\nn/Users/runner/work/kbool/kbool\nftxt\ntREG\nn/bin/sleep\nftxt\ntREG\nn/usr/lib/dyld\nf0\ntPIPE\nd0xe6d5f37515551702\nn\nf1\ntPIPE\nd0xafbd576826bcc536\nn->0x800fe8adb066dc1e\nf2\ntPIPE\nd0xdef4e69730d95126\nn->0x6c107be2f1de8996\nf131\ntsystm\nd0x7f1085c91424694c\nn[ctl com.apple.netsrc id 7 unit 50]\nf143\ntPIPE\nd0xd5e224836bae9c89\nn->0xe9fc990fff1a89f'
+LR1=$'p7630\nf1\ntPIPE\nd0xc1bf58262080bd07\nn->0xa683f597d6c4478d'
+LCWD=$'p7646\nfcwd\nn/Users/runner/work/_temp/d7/a b'
+o=""
+for a in "1|$LW1" "0|$LR0" "1|$LWALL" "1|$LR1" "0|$LWALL" "2|$LWALL" "131|$LWALL" "cwd|$LWALL" "5|$LWALL" "0|"; do
+    _kt_proc_lsof_pipe "${a%%|*}" "${a#*|}"; o+="[${REPLY}]"
+done
+_kt_proc_lsof_cwd "$LCWD"; o+=" cwd=[$REPLY]"
+_kt_proc_lsof_cwd "$LWALL"; o+="[$REPLY]"
+_kt_proc_lsof_cwd "$LW1"; o+="[$REPLY]"
+_kt_proc_lsof_cwd ""; o+="[$REPLY]"
+P1="0x800fe8adb066dc1e 0xafbd576826bcc536"
+[[ "0xafbd576826bcc536" < "0x800fe8adb066dc1e" ]] && P1="0xafbd576826bcc536 0x800fe8adb066dc1e"
+P2="0xa683f597d6c4478d 0xc1bf58262080bd07"
+[[ "0xc1bf58262080bd07" < "0xa683f597d6c4478d" ]] && P2="0xc1bf58262080bd07 0xa683f597d6c4478d"
+P3="0x6c107be2f1de8996 0xdef4e69730d95126"
+[[ "0xdef4e69730d95126" < "0x6c107be2f1de8996" ]] && P3="0xdef4e69730d95126 0x6c107be2f1de8996"
+want="[$P1][$P1][$P1][$P2][][$P3][][][][] cwd=[/Users/runner/work/_temp/d7/a b][/Users/runner/work/kbool/kbool][][]"
+if [[ "$o" == "$want" ]]; then
+    kt_test_pass "$o"
+else
+    kt_test_fail "got [$o] want [$want]"
 fi
 
 # ---- H1: a deliberate stray ------------------------------------------------------

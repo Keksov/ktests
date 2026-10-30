@@ -80,12 +80,14 @@
 #   kt_proc_cmd PID       REPLY = PID's command line now ("" when gone)
 #   kt_proc_samepipe P1 F1 P2 F2  rc 0 when fd F1 of P1 and fd F2 of P2 are the
 #                         ends of ONE pipe: /proc/PID/fd (cygwin, Linux), else
-#                         `fstat -p` (FreeBSD); rc 1 when unknown
+#                         `fstat -p` (FreeBSD), else (no /proc, no fstat)
+#                         `lsof -F` (macOS); rc 1 when unknown
 #   kt_proc_adopted PID   rc 0 when PID's parent is 1 (cygwin: only that), of
 #                         another session, or a `timeout` (a reaper) on this
 #                         shell's ancestor chain: its own parent is gone
 #   kt_proc_cwd PID       REPLY = PID's working directory ("" unknown):
-#                         /proc/PID/cwd; ps: `procstat -f` where it exists
+#                         /proc/PID/cwd; ps: `procstat -f` where it exists,
+#                         else (no /proc) `lsof -d cwd -Fn` (macOS)
 #   kt_proc_pids TEXT     REPLY = the pids (not this shell) whose command line
 #                         contains TEXT, space-separated (the /proc
 #                         listing order; ps: ascending)
@@ -526,11 +528,53 @@ kt_proc_samepipe() {
         [[ -p "/proc/$1/fd/$2" && "/proc/$1/fd/$2" -ef "/proc/$3/fd/$4" ]]
         return $?
     fi
-    command -v fstat >/dev/null 2>&1 || return 1
-    _kt_proc_pipeid "$1" "$2"; a="$REPLY"
-    _kt_proc_pipeid "$3" "$4"
+    if command -v fstat >/dev/null 2>&1; then
+        _kt_proc_pipeid "$1" "$2"; a="$REPLY"
+        _kt_proc_pipeid "$3" "$4"
+    elif [[ ! -e /proc/$BASHPID ]] && command -v lsof >/dev/null 2>&1; then
+        # macOS: no /proc, no fstat — ONE lsof per process asked, its fd only
+        _kt_proc_lsof_pipe "$2" "$(LC_ALL=C exec lsof -w -a -p "$1" -d "$2" -F ftdn 2>/dev/null)"; a="$REPLY"
+        _kt_proc_lsof_pipe "$4" "$(LC_ALL=C exec lsof -w -a -p "$3" -d "$4" -F ftdn 2>/dev/null)"
+    else
+        return 1
+    fi
     [[ -n "$a" && "$a" == "$REPLY" ]]
     return $?
+}
+# _kt_proc_lsof_pipe FD TEXT — REPLY = "LO HI", the two kernel addresses of the
+# pipe that fd FD is an end of, from TEXT = `lsof -F ftdn` of one process
+# (macOS: `fFD`, `tPIPE`, `d<this end>`, `n-><the peer end>` — the two ends of
+# one pipe give the same pair); "" when FD is no pipe, has no peer or is absent
+_kt_proc_lsof_pipe() {
+    local l f="" t="" d="" n="" hit=0
+    REPLY=""
+    while IFS= read -r l; do
+        case "$l" in
+            f*) (( hit )) && break
+                f="${l#f}" t="" d="" n=""
+                [[ "$f" == "$1" ]] && hit=1 ;;
+            t*) t="${l#t}" ;;
+            d*) d="${l#d}" ;;
+            n*) n="${l#n}" ;;
+        esac
+    done <<< "$2"
+    (( hit )) && [[ "$t" == PIPE && "$d" == 0x* && "$n" == '->0x'* ]] || return 0
+    n="${n#->}"
+    if [[ "$d" < "$n" ]]; then REPLY="$d $n"; else REPLY="$n $d"; fi
+    return 0
+}
+# _kt_proc_lsof_cwd TEXT — REPLY = the `n` field of the `fcwd` entry of TEXT =
+# `lsof -d cwd -Fn` of one process ("" when there is none)
+_kt_proc_lsof_cwd() {
+    local l f=""
+    REPLY=""
+    while IFS= read -r l; do
+        case "$l" in
+            f*) f="${l#f}" ;;
+            n*) [[ "$f" == cwd ]] && { REPLY="${l#n}"; return 0; } ;;
+        esac
+    done <<< "$1"
+    return 0
 }
 # _kt_proc_pipeid PID FD — REPLY = "LO HI", the two kernel addresses of the
 # pipe FD of PID is an end of (FreeBSD `fstat -p`: `pipe ADDR <-> PEER`; the
@@ -585,11 +629,15 @@ kt_proc_cwd() {
         ps)
             # FreeBSD: `procstat -f PID`, the row whose FD column is `cwd`
             # (a here-string: FreeBSD bash makes `<( )` a FIFO in TMPDIR)
-            command -v procstat >/dev/null 2>&1 || return 0
-            o="$(LC_ALL=C exec procstat -h -f "$1" 2>/dev/null)"
-            while read -r _ _ l _ _ _ _ _ _ rest; do
-                [[ "$l" == cwd ]] && { REPLY="$rest"; break; }
-            done <<< "$o" ;;
+            if command -v procstat >/dev/null 2>&1; then
+                o="$(LC_ALL=C exec procstat -h -f "$1" 2>/dev/null)"
+                while read -r _ _ l _ _ _ _ _ _ rest; do
+                    [[ "$l" == cwd ]] && { REPLY="$rest"; break; }
+                done <<< "$o"
+            # macOS (no /proc, no procstat): `lsof -d cwd -Fn`, one call
+            elif [[ ! -e /proc/$BASHPID ]] && command -v lsof >/dev/null 2>&1; then
+                _kt_proc_lsof_cwd "$(LC_ALL=C exec lsof -w -a -p "$1" -d cwd -Fn 2>/dev/null)"
+            fi ;;
     esac
     return 0
 }

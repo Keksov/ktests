@@ -52,8 +52,8 @@ TK="$(cygpath -u "${SYSTEMROOT:-C:\Windows}" 2>/dev/null)/System32/taskkill.exe"
 R="$TMP/root"
 bash "$MK" "$R" pass=a_pass hang=b_hang
 # the sampler's pace: cygwin reads one /proc file a process, the table
-# backends a whole snapshot per sample (Linux /proc/PID/stat, ps) — fewer
-# samples under load (launch L2.1)
+# backends a whole table per sample (Linux /proc/PID/stat; ps: one
+# `ps -o pid,ppid`) — fewer samples under load (launch L2.1)
 KT052_MINSAMP=30; kt_proc_init && [[ "$KT_PROC_BACKEND" != cygwin ]] && KT052_MINSAMP=10
 
 # the driver: DRV SCEN SEGBASH OUT ROOT GATE TK SAMPLER TMO TIMEOUT_NAME — runs in the LAUNCHER's
@@ -139,7 +139,11 @@ EOF
 
 # the sampler: SAMPLER OUT SECONDS PROC — in the SEGMENT's runtime: the children of
 # the segment's main and of its watchdog, sampled for SECONDS (cygwin: its
-# /proc/PID/ppid; elsewhere the process table of PROC = ktest_proc.sh, L2.1)
+# /proc/PID/ppid; elsewhere the process table of PROC = ktest_proc.sh, L2.1).
+# A sample reads the ppid column only: on the ps backend one `ps -A -o pid=
+# -o ppid=`, not a full kt_proc_snapshot — that one also parses each row's
+# start and (macOS) asks python3 for the sessions, ~140 ms a sample on
+# macos-latest, 4-9 samples in 3 s inside a gate cell (L5.4-13)
 cat > "$TMP/sample.sh" <<'EOF'
 OUT=$1 S=$2 PROC=${3:-} main="" wd="" known="" extra="" n=0 f="" p="" pp=""
 { read -r main _ < "$OUT/seg-1.pid"; } 2>/dev/null
@@ -174,12 +178,20 @@ for p in "${!KT_PROC_PP[@]}"; do
 done
 end=$(( SECONDS + S ))
 while (( SECONDS < end )); do
+    if [[ "$KT_PROC_BACKEND" == ps ]]; then
+        o="$(LC_ALL=C exec ps -A -o pid= -o ppid= 2>/dev/null)"
+        while read -r p pp; do
+            [[ -n "$pp" && ( "$pp" == "$main" || "$pp" == "$wd" ) ]] || continue
+            [[ " $known " == *" $p "* || " $extra " == *" $p("* ]] || extra+=" $p(ppid $pp)"
+        done <<< "$o"
+    else
     kt_proc_snapshot
     for p in "${!KT_PROC_PP[@]}"; do
         pp="${KT_PROC_PP[$p]}"
         [[ -n "$pp" && ( "$pp" == "$main" || "$pp" == "$wd" ) ]] || continue
         [[ " $known " == *" $p "* || " $extra " == *" $p("* ]] || extra+=" $p(ppid $pp)"
     done
+    fi
     n=$(( n + 1 ))
     read -r -t 0.01 -u 3 _ 2>/dev/null || (( $? > 128 )) || sleep 0.01
 done
