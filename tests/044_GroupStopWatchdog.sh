@@ -182,6 +182,58 @@ else
 fi
 fi   # kt_need_timeout
 
+# launch L5.8: a member that outlives every KILL round — on the Git runtime a
+# nested ktests.sh wedged at its start (spinning, acting on no cygwin signal;
+# diag D10: 048's nested run, TERMed by its `timeout 120`) — became an orphan of
+# its stopped run, the gate's STRAY `/usr/bin/bash`. The group end now gives
+# such a survivor the Windows-side kill. Simulated on every platform: `kill`
+# drops every signal but 0 to that member (a group signal reaches the others
+# by pid); kt_proc_winkill is recorded and KILLs.
+kt_test_start "kt_runner_group_end: a member that outlives every KILL round gets the Windows-side kill (kt_proc_winkill) [L5.8]"
+if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
+elif ! kt_proc_init; then kt_test_pass "SKIP: no process table here ($KT_PROC_WHY): no members to hand over"
+else
+out="$("$KT_TIMEOUT" "${KT044_TFG[@]}" 40 bash -c '
+source "$1/ktest.sh"
+g="" D=""; trap "builtin kill -KILL -- -\$g \$D 2>/dev/null; exit 143" TERM INT HUP
+d="$2/wk"; mkdir -p "$d"; rm -f "$d"/*
+set -m
+( sleep 15 & echo "$!" > "$d/deaf"; sleep 15 & wait ) < /dev/null &
+g=$!
+set +m
+for (( k = 0; k < 100; k++ )); do [[ -s "$d/deaf" ]] && break; sleep 0.1; done
+D=$(<"$d/deaf")
+kill() {
+    local s="$1" t m
+    local -a o=()
+    shift; [[ "${1:-}" == -- ]] && shift
+    [[ "$s" == -0 ]] && { builtin kill -0 -- "$@"; return; }
+    for t in "$@"; do
+        if [[ "$t" == -* ]]; then
+            kt_runner_group_members "${t#-}"
+            for m in $REPLY; do [[ "$m" == "$D" ]] || o+=( "$m" ); done
+        elif [[ "$t" != "$D" ]]; then
+            o+=( "$t" )
+        fi
+    done
+    (( ${#o[@]} )) || return 0
+    builtin kill "$s" -- "${o[@]}"
+}
+kt_proc_winkill() { echo "$*" >> "$d/wk"; builtin kill -KILL -- "$@" 2>/dev/null; REPLY="$*=W"; return 0; }
+kt_runner_group_stop "$g" 10
+for (( k = 0; k < 30; k++ )); do builtin kill -0 -- "$D" 2>/dev/null || break; sleep 0.1; done
+builtin kill -0 -- "$D" 2>/dev/null && da=alive || da=gone
+builtin kill -KILL -- "$D" 2>/dev/null
+echo "deaf=$D winkill=[$(cat "$d/wk" 2>/dev/null)] after=$da stats=[$KT_GROUP_END_STATS]"
+' _ "$LIB" "$TMP" 2>&1)"
+D="${out#deaf=}"; D="${D%% *}"
+if [[ "$D" =~ ^[0-9]+$ && "$out" == *"winkill=[$D] after=gone"* && "$out" == *"winkill=[$D=W]]" ]]; then
+    kt_test_pass "$out"
+else
+    kt_test_fail "$out (want: winkill called for the deaf member only, it is gone, stats name it)"
+fi
+fi   # kt_need_timeout
+
 kt_test_start "a group's shell ignores SIGTTOU and SIGTTIN (a write to a tostop terminal does not stop it) [N1]"
 if ! kt_need_timeout; then kt_test_pass "SKIP: $KT_TIMEOUT_WHY"
 else

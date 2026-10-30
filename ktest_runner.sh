@@ -618,6 +618,14 @@ kt_runner_group_stop() {
 #      descendants that are still the process first seen (same start time, or
 #      still in the process group it had then: an exec on the Git runtime
 #      changes the start time) — at most 10 rounds 0.1 s apart.
+#   5. What outlived every KILL round (members, and tracked descendants that
+#      are still the process first seen) gets the Windows-side kill,
+#      kt_proc_winkill (cygwin only; a no-op elsewhere) — launch L5.8: a
+#      member wedged in the Git runtime (a nested ktests.sh that never
+#      started, spinning a core, acting on no cygwin signal) outlived its
+#      run's stop and became an orphan (the gate's STRAY `/usr/bin/bash` of
+#      the windows-latest Git-bash ktests cell; diag D10: 048's nested run
+#      TERMed by its `timeout 120`). KT_GROUP_END_STATS `winkill=[PID=WINPID …]`.
 # Why "gone" is checked this way (the P3 master-sweep flake, 042/044): on the
 # Git (cygwin) runtime a group signal sent while a member is still in its exec
 # handover (a `sleep` forked moments before) is LOST for that member (probe:
@@ -631,7 +639,8 @@ kt_runner_group_stop() {
 # views are empty twice, 0.1 s apart.
 kt_runner_group_end() {
     local P="${1:-}" g="${2:-30}" self="${3:-}" __kt_gm="" __kt_e=0 __kt_k=0 __kt_n=0 __kt_dt=0
-    local __kt_t __kt_end __kt_fd="" __kt_q __kt_st=0 __kt_t0 __kt_out __kt_mem
+    local __kt_t __kt_end __kt_fd="" __kt_q __kt_st=0 __kt_t0 __kt_out __kt_mem __kt_gu=0 __kt_wk="" __kt_rp
+    local -a __kt_left=()
     local -A __kt_ds=()
     [[ -n "$P" && "$P" != *[!0-9]* ]] || return 0
     [[ -n "$g" && "$g" != *[!0-9]* ]] || g=30
@@ -687,7 +696,7 @@ kt_runner_group_end() {
             __kt_t="${EPOCHREALTIME/[.,]/}"
             if (( __kt_t >= __kt_end )); then
                 # at most 10 KILL rounds, and never more than 3 s past the grace
-                (( __kt_k++ >= 10 || __kt_t >= __kt_end + 3000000 )) && break
+                (( __kt_k++ >= 10 || __kt_t >= __kt_end + 3000000 )) && { __kt_gu=1; break; }
                 [[ -z "$self" ]] && kill -KILL -- "-$P" 2>/dev/null
                 [[ -n "$__kt_gm" ]] && kill -KILL $__kt_gm 2>/dev/null
                 for __kt_q in "${!__kt_ds[@]}"; do
@@ -704,7 +713,18 @@ kt_runner_group_end() {
         fi
     done
     [[ -n "$__kt_fd" ]] && exec {__kt_fd}>&-
-    KT_GROUP_END_STATS="rounds=$__kt_n scan_ms=$(( __kt_st / 1000 )) kill_rounds=$__kt_k members=[$__kt_mem] outside=$__kt_out"
+    # 5. the KILL rounds gave up: the Windows-side kill for what is left
+    if (( __kt_gu )); then
+        __kt_rp="${REPLY-}"
+        kt_runner_group_scan "$P" "$self"
+        __kt_left=( $__kt_gm )
+        for __kt_q in "${!__kt_ds[@]}"; do
+            kt_runner_proc_same "$__kt_q" "${__kt_ds[$__kt_q]}" "$P" && __kt_left+=( "$__kt_q" )
+        done
+        if (( ${#__kt_left[@]} )) && kt_proc_winkill "${__kt_left[@]}"; then __kt_wk="$REPLY"; fi
+        REPLY="$__kt_rp"
+    fi
+    KT_GROUP_END_STATS="rounds=$__kt_n scan_ms=$(( __kt_st / 1000 )) kill_rounds=$__kt_k members=[$__kt_mem] outside=$__kt_out winkill=[$__kt_wk]"
     return 0
 }
 # kt_runner_group_scan PGID SELF — helper of kt_runner_group_end, which owns
