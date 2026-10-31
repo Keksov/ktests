@@ -12,6 +12,19 @@ who want the diff.
 
 ## Unreleased — first public release (draft)
 
+### Windows runners: no FIFO for the group watchdog (2026-10-31, launch L5.8, L5.9)
+
+* **Git-bash and MSYS2 start a run's worker group as a `coproc`**: its watchdog reads
+  the coproc's stdin pipe instead of opening a FIFO. Opening a fresh FIFO read-write
+  on cygwin sometimes never returned (the process spun, deaf even to SIGKILL), about
+  once per 2,000 to 4,500 group starts on CI runners — the intermittent TIMEOUT and
+  STRAY cells of the Windows rows. With the coproc, about 210,000 group starts on
+  the runners showed no wedge, and a group start is about three times cheaper.
+  Linux, macOS and BSD keep the FIFO. `KT_RUNNER_WATCH=fifo|coproc` forces one
+  (test 060).
+* A group member that outlives every KILL round of a group stop gets the
+  Windows-side kill, so a wedged process no longer becomes an orphan (test 044).
+
 ### Launch: CI, macOS and Windows runners, the bash 5.1 floor (2026-10-27 .. 2026-10-30, launch L2.8, L4.5, L5.1-L5.7)
 
 * **Bash 5.1**: the runner's `seen[]` lookup and `group_close` fd write are safe on

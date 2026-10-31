@@ -937,15 +937,26 @@ kt_runner_group_open() {
 #   kt_runner_group_end on its group with itself as SELF (TERM+CONT once,
 #   fork-free wait, KILL after GRACE tenths of a second, default 30), exits.
 #   While it waits in `read` a TERM ends it as any member.
+#   FIFO "-" (the coproc backend, launch L5.9, kt_runner_group_spawn): the
+#   group is a coproc, its stdin is the read end of a pipe whose only writer is
+#   the runner, and FD is the runner's stdout. The read end moves to a new fd,
+#   stdin becomes /dev/null and stdout FD (as `( … ) < /dev/null &` had them);
+#   no open, so nothing to block or spin in.
+# _KT_GROUP_WATCHED=1 in the group's shell once the watchdog is forked.
 kt_runner_group_watchdog() {
     local __kt_fd="${2:-}" __kt_r __kt_g="${3:-30}" __kt_lp="$BASHPID"
     trap '' TTOU TTIN
+    _KT_GROUP_WATCHED=""   # not the enclosing run's (inherited)
     [[ -n "$__kt_fd" && "$__kt_fd" != *[!0-9]* ]] || return 0
-    if ! exec {__kt_r}<"$1"; then
+    if [[ "$1" == - ]]; then
+        # unquoted on purpose: bash 5.1 declare -f prints >&"W" as &> W (launch L4.3)
+        exec {__kt_r}<&0 0</dev/null 1>&$__kt_fd
+    elif ! exec {__kt_r}<"$1"; then
         exec {__kt_fd}>&-
         return 0
     fi 2>/dev/null
     exec {__kt_fd}>&-
+    _KT_GROUP_WATCHED=1
     {
         # Ctrl-Z (TSTP to the group) must not stop the watchdog: a run that is
         # SIGKILLed while paused is then still ended (critic P3b F3)
@@ -956,6 +967,68 @@ kt_runner_group_watchdog() {
         exit 0
     } >/dev/null 2>&1 &
     exec {__kt_r}<&-
+    return 0
+}
+# _KT_GROUP_BE[FD] = coproc for a writer kt_runner_group_spawn made for a
+# coproc group (kt_runner_group_close reads it; a FIFO writer has no entry)
+declare -gA _KT_GROUP_BE=()
+# kt_runner_group_backend — REPLY = how a group's watchdog learns that its
+# runner died (launch L5.9): `fifo` (kt_runner_group_open: the runner holds a
+# FIFO read-write) or `coproc` (the group is a coproc; the runner holds the
+# write end of the coproc's stdin pipe). coproc on cygwin (Git-bash, MSYS2):
+# there a read-write open of a fresh FIFO can spin for ever in the open, deaf to
+# every signal (the main thread loops NtOpenFile + Sleep(0) while the process's
+# own fifo_reader thread idles; ~1 in 2000-4500 group starts on a CI runner,
+# diag D11), and an anonymous pipe has no open at all. fifo elsewhere.
+# KT_RUNNER_WATCH=fifo|coproc forces one (a test seam; any other value: the
+# default). No fork. rc 0.
+kt_runner_group_backend() {
+    case "${KT_RUNNER_WATCH:-}" in
+        fifo|coproc) REPLY="$KT_RUNNER_WATCH"; return 0 ;;
+    esac
+    if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then REPLY=coproc; else REPLY=fifo; fi
+    return 0
+}
+# kt_runner_group_spawn FIFO GRACE FN [ARGS...] — start FN ARGS as a
+# background process group (the caller has `set -m` on) whose first command is
+# kt_runner_group_watchdog: `( watchdog FIFO FD GRACE; FN ARGS ) < /dev/null &`
+# after kt_runner_group_open FIFO (the fifo backend), or `coproc { watchdog -
+# STDOUT GRACE; FN ARGS; }` (coproc). _KT_GROUP_PID = the group's leader,
+# _KT_GROUP_WFD = the runner's writer for kt_runner_group_close ("" = no
+# watchdog). The coproc's pipe fds are bash's: it closes them when it reaps
+# the coproc (the caller's `wait`), so the writer is a dup of the write end —
+# a normal end still writes "done" instead of looking like a dead runner. One
+# coproc per shell at a time: the threaded runner's group is the coproc of the
+# run's group shell, a process of its own (no "still exists" warning, bash
+# 5.1-5.3, launch L5.9 prototype). GRACE "" = the watchdog's default. rc 0.
+kt_runner_group_spawn() {
+    local __kt_f="$1" __kt_g="$2" __kt_so __kt_w=""
+    shift 2
+    _KT_GROUP_PID="" _KT_GROUP_WFD=""
+    kt_runner_group_backend
+    if [[ "$REPLY" == coproc ]]; then
+        # a closed stdout: the group writes to /dev/null (never to a pipe
+        # nobody reads) - the watchdog always gets an fd to move to stdout
+        { exec {__kt_so}>&1; } 2>/dev/null || exec {__kt_so}>/dev/null
+        coproc __KT_GROUP { kt_runner_group_watchdog - "$__kt_so" "$__kt_g"; "$@"; }
+        _KT_GROUP_PID=$!
+        exec {__kt_so}>&-
+        # bash unsets __KT_GROUP when it reaps the coproc: a group that ended
+        # before this line (its watchdog then saw EOF) is a failed spawn - the
+        # caller still `wait`s _KT_GROUP_PID for its status, with no writer
+        if [[ -z "${__KT_GROUP[1]:-}" ]]; then
+            printf '[WARN] kt_runner_group_spawn: group %s ended before its writer was taken (no watchdog release)\n' "$_KT_GROUP_PID" >&2
+            return 1
+        fi
+        # unquoted on purpose: bash 5.1 declare -f prints >&"W" as &> W (launch L4.3)
+        exec {__kt_w}>&${__KT_GROUP[1]}
+        _KT_GROUP_BE[$__kt_w]=coproc
+    else
+        kt_runner_group_open "$__kt_f" && __kt_w="$REPLY"
+        ( kt_runner_group_watchdog "$__kt_f" "$__kt_w" "$__kt_g"; "$@" ) < /dev/null &
+        _KT_GROUP_PID=$!
+    fi
+    _KT_GROUP_WFD="$__kt_w"
     return 0
 }
 # kt_runner_group_suspend PID — the SIGTSTP trap of a shell that waits on the
@@ -990,6 +1063,22 @@ kt_runner_group_suspend() {
 kt_runner_group_close() {
     local __kt_fd="${1:-}"
     [[ -n "$__kt_fd" && "$__kt_fd" != *[!0-9]* ]] || return 0
+    if [[ "${_KT_GROUP_BE[$__kt_fd]-}" == coproc ]]; then
+        # the backend kt_runner_group_spawn recorded for this writer. A pipe
+        # whose reader (the watchdog) is gone - its group was killed from
+        # outside - would SIGPIPE this shell (a FIFO opened read-write never
+        # does: the runner is a reader itself): PIPE ignored for the write,
+        # then the caller's own PIPE trap back exactly (one fork, at a run's
+        # end; a PIPE ignored on entry stays ignored - bash keeps it)
+        local __kt_pt
+        __kt_pt="$(trap -p PIPE)"
+        trap '' PIPE
+        printf 'done\n' >&$__kt_fd 2>/dev/null
+        if [[ -n "$__kt_pt" ]]; then eval "$__kt_pt"; else trap - PIPE; fi
+        unset '_KT_GROUP_BE[$__kt_fd]'
+        exec {__kt_fd}>&-
+        return 0
+    fi
     # unquoted on purpose: bash 5.1 declare -f prints >&"W" as &> W (launch L4.3)
     printf 'done\n' >&$__kt_fd 2>/dev/null
     exec {__kt_fd}>&-
@@ -1270,6 +1359,58 @@ kt_runner_execute_sequential() {
 # Threaded Test Execution
 # ============================================================================
 
+# _kt_runner_threaded_group — the threaded runner's worker group (after its
+# watchdog, kt_runner_group_spawn): the worker function, the exports the workers
+# need and the spawn, in the group's own process (round 3, T3/DT3); it reads
+# kt_runner_execute_threaded's locals (test_files, results_dir, num_workers…).
+_kt_runner_threaded_group() {
+    # Execute a single test and save its results
+    run_test() {
+        local test_file="$1"
+        local result_file="$2"
+
+        # Use common execution function
+        kt_runner_execute_single_test "$test_file"
+
+        # Save results to file (a fork-failure death: a marker beside it)
+        {
+            echo "$counts_line"
+            echo "$output_content"
+        } > "$result_file"
+        (( count_env )) && : > "$result_file.env"
+    }
+
+    export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture kt_fixture_stale_dir kt_fixture_owner_mark
+    # KT_ERROR_COUNTS: a missing file's counts line in a worker (T4)
+    export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE KT_ERROR_COUNTS
+
+    # Run tests in parallel using xargs or manual background processes
+    if command -v xargs &>/dev/null; then
+        # Use xargs for better parallelization if available
+        # BASH_ENV="": a developer's BASH_ENV runs in no worker (U41 R6 of
+        # the kbool `uses` U4 final review; each file's shell drops it too)
+        printf '%s\n' "${test_files[@]}" | BASH_ENV="" xargs -P "$num_workers" -I {} "$BASH" -c '
+            run_test "$1" "$2/$(basename "$1").result"
+        ' _ {} "$results_dir"
+    else
+        # Manual parallel execution using background processes. The
+        # watchdog is a running job too (+1), and a bare `wait` would wait
+        # for it: wait for the workers by pid.
+        local __kt_cap=$num_workers __kt_wp=()
+        [[ -n "${_KT_GROUP_WATCHED:-}" ]] && __kt_cap=$(( num_workers + 1 ))
+        for ((i=0; i<num_files; i++)); do
+            # Limit number of concurrent jobs
+            while [[ $(jobs -r | wc -l) -ge $__kt_cap ]]; do
+                sleep 0.01
+            done
+
+            run_test "${test_files[$i]}" "$results_dir/${i}.result" &
+            __kt_wp+=($!)
+        done
+        wait "${__kt_wp[@]}"
+    fi
+}
+
 # Run tests with worker threads
 # Usage: kt_runner_execute_threaded test_file1 test_file2 ...
 kt_runner_execute_threaded() {
@@ -1324,65 +1465,18 @@ kt_runner_execute_threaded() {
     [[ $num_workers -gt $num_files ]] && num_workers=$num_files
 
     # The worker function, the exports the workers need and the spawn all live
-    # in ONE subshell (round 3, T3/DT3): the caller keeps its values, export
-    # attributes and functions — on 5.2.37 an `export` of a name given as a
-    # prefix assignment (`VERBOSITY=error kt_runner_execute_threaded …`) used
-    # to outlive the call. The collector below reads only the result files.
-    # set -m only around the spawn: the subshell leads its own process group
-    # (kt_runner_group_stop kills it with xargs, the workers and their test
-    # files); stdin is /dev/null as for any background job.
-    kt_runner_group_open "$results_dir/.kt_watch" && __kt_wfd="$REPLY"
+    # in ONE process, the group's (_kt_runner_threaded_group; round 3, T3/DT3):
+    # the caller keeps its values, export attributes and functions — on 5.2.37
+    # an `export` of a name given as a prefix assignment (`VERBOSITY=error
+    # kt_runner_execute_threaded …`) used to outlive the call. The collector
+    # below reads only the result files. set -m only around the spawn: the
+    # group's shell leads its own process group (kt_runner_group_stop kills it
+    # with xargs, the workers and their test files); stdin is /dev/null as for
+    # any background job (kt_runner_group_spawn: a subshell or a coproc).
     [[ $- == *m* ]] && __kt_jc=1
     set -m
-    (
-        kt_runner_group_watchdog "$results_dir/.kt_watch" "$__kt_wfd"
-        # Execute a single test and save its results
-        run_test() {
-            local test_file="$1"
-            local result_file="$2"
-
-            # Use common execution function
-            kt_runner_execute_single_test "$test_file"
-
-            # Save results to file (a fork-failure death: a marker beside it)
-            {
-                echo "$counts_line"
-                echo "$output_content"
-            } > "$result_file"
-            (( count_env )) && : > "$result_file.env"
-        }
-
-        export -f run_test kt_test_debug kt_runner_execute_single_test kt_test_reset_counts kt_runner_clean_filename kt_runner_parse_counts kt_runner_set_error_counts kt_runner_find_last_counts_line kt_runner_scan_capture kt_runner_judge_capture kt_fixture_stale_dir kt_fixture_owner_mark
-        # KT_ERROR_COUNTS: a missing file's counts line in a worker (T4)
-        export results_dir VERBOSITY _KT_ASSERT_QUIET_MODE _KTEST_QUIET_MODE KTESTS_LIB_DIR KT_ENV_FORK_FAILURE_RE KT_BASH_FATAL_DIAG_RE KT_ERROR_COUNTS
-
-        # Run tests in parallel using xargs or manual background processes
-        if command -v xargs &>/dev/null; then
-            # Use xargs for better parallelization if available
-            # BASH_ENV="": a developer's BASH_ENV runs in no worker (U41 R6 of
-            # the kbool `uses` U4 final review; each file's shell drops it too)
-            printf '%s\n' "${test_files[@]}" | BASH_ENV="" xargs -P "$num_workers" -I {} "$BASH" -c '
-                run_test "$1" "$2/$(basename "$1").result"
-            ' _ {} "$results_dir"
-        else
-            # Manual parallel execution using background processes. The
-            # watchdog is a running job too (+1), and a bare `wait` would wait
-            # for it: wait for the workers by pid.
-            local __kt_cap=$num_workers __kt_wp=()
-            [[ -n "$__kt_wfd" ]] && __kt_cap=$(( num_workers + 1 ))
-            for ((i=0; i<num_files; i++)); do
-                # Limit number of concurrent jobs
-                while [[ $(jobs -r | wc -l) -ge $__kt_cap ]]; do
-                    sleep 0.01
-                done
-
-                run_test "${test_files[$i]}" "$results_dir/${i}.result" &
-                __kt_wp+=($!)
-            done
-            wait "${__kt_wp[@]}"
-        fi
-    ) < /dev/null &
-    __kt_wpid=$!
+    kt_runner_group_spawn "$results_dir/.kt_watch" "" _kt_runner_threaded_group
+    __kt_wpid="$_KT_GROUP_PID" __kt_wfd="$_KT_GROUP_WFD"
     (( __kt_jc )) || set +m
     # a TSTP trap interrupts the wait: wait again after the resume (N6)
     while :; do

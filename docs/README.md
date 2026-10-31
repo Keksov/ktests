@@ -330,10 +330,15 @@ looks empty to `kill -0 -- -PGID` (the 042/044 sweep flake). So the members
 are read from `/proc/<pid>/pgid` too and KILLed by pid, and the group counts
 as gone only when every view is empty twice, 0.1 s apart. The leader is reaped
 only once it is gone (a cygwin process blocked in a FIFO open ignores even
-KILL). Each group also has a watchdog on a FIFO whose only writer is the
-runner (its read end is opened by the group's shell before the watchdog
-starts, so it never blocks in open): a SIGKILLed runner runs no trap, the
-watchdog sees EOF, ignores TERM from then on and ends its group the same way;
+KILL). Each group also has a watchdog on a pipe whose only writer is the
+runner: a FIFO (its read end is opened by the group's shell before the
+watchdog starts, so it never blocks in open) — on cygwin (Git-bash, MSYS2)
+the group is a `coproc` instead and the watchdog reads its stdin pipe, since
+there a read-write open of a fresh FIFO can spin for ever, deaf even to KILL
+(launch L5.9; `KT_RUNNER_WATCH=fifo|coproc` forces one, a test seam). On the
+normal end the runner writes `done` and the watchdog leaves; a SIGKILLed
+runner runs no trap, the watchdog sees EOF, ignores TERM from then on and
+ends its group the same way;
 it ignores SIGTSTP, so a paused (Ctrl-Z) run that is then SIGKILLed is ended
 too. Not covered: a process a dying member forks after the snapshot into a
 group of its own (it is reparented at once) — the master sweep's stray check

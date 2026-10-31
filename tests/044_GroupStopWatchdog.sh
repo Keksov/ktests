@@ -419,16 +419,21 @@ done
 # (no CONT, no KILL): a member that ignores TERM (or whose TERM was lost) ran
 # on. Now it ends the group as kt_runner_group_stop does: TERM+CONT once, a
 # fork-free wait, KILL after the grace (5 s for ktests.sh's group).
+# Both watchdog backends (launch L5.9, KT_RUNNER_WATCH): the FIFO and the
+# coproc pipe (the default on cygwin); no FIFO group on cygwin (it can wedge
+# there for ever: the fifo case SKIPs, it is covered on Linux/macOS/BSD).
+for be in fifo coproc; do
 for mode in threaded single; do
-    kt_test_start "$mode: SIGKILL to ktests.sh — the watchdog KILLs a TERM-ignoring test process after its grace [critic P3b F3]"
-    n="40.${$}${#mode}"
-    d="$TMP/f3$mode"; mkdir -p "$d" "$TMP/f3tmp$mode"
+    kt_test_start "$be/$mode: SIGKILL to ktests.sh — the watchdog KILLs a TERM-ignoring test process after its grace [critic P3b F3, L5.9]"
+    if [[ "$be" == fifo && ( "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ) ]]; then kt_test_pass "SKIP: the FIFO backend wedges on cygwin (L5.9); covered on Linux/macOS/BSD"; continue; fi
+    n="40.${$}${#mode}${#be}"
+    d="$TMP/f3$mode$be"; mkdir -p "$d" "$TMP/f3tmp$mode$be"
     printf '%s\n' "source \"$LIB/ktest.sh\"" \
         "kt_test_init \"F3\" \"\$(dirname \"\$0\")\"" \
         'kt_test_start "f3"' \
         "( trap '' TERM; exec sleep $n ) & wait" \
         'kt_test_pass "f3"' > "$d/001_f.sh"
-    TMPDIR="$TMP/f3tmp$mode" bash "$LIB/ktests.sh" "$d" F3 '/[0-9][0-9][0-9]_' -m "$mode" -w 2 > /dev/null 2>&1 &
+    KT_RUNNER_WATCH=$be TMPDIR="$TMP/f3tmp$mode$be" bash "$LIB/ktests.sh" "$d" F3 '/[0-9][0-9][0-9]_' -m "$mode" -w 2 > /dev/null 2>&1 &
     rp=$!
     for (( i = 0; i < 300; i++ )); do kt044_procs "sleep $n"; [[ -n "$REPLY" ]] && break; sleep 0.1; done
     before="$REPLY"
@@ -441,10 +446,11 @@ for mode in threaded single; do
     kt044_procs "$d"; for p in $REPLY; do kill -KILL "${p%%:*}" 2>/dev/null; done
     kt044_procs "$n"; for p in $REPLY; do kill -KILL "${p%%:*}" 2>/dev/null; done
     if [[ -n "$before" && -z "${left// /}" ]]; then
-        kt_test_pass "$mode: [$before] gone ${dt}s after the SIGKILL"
+        kt_test_pass "$be/$mode: [$before] gone ${dt}s after the SIGKILL"
     else
-        kt_test_fail "$mode: before [$before], still alive ${dt}s after the SIGKILL: [$left]"
+        kt_test_fail "$be/$mode: before [$before], still alive ${dt}s after the SIGKILL: [$left]"
     fi
+done
 done
 
 # ---- critic P3b r2 N3: a tracked pid that was reused adopts no children -----

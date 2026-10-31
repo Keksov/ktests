@@ -160,7 +160,8 @@ fi
 # or the whole suite (threaded). `wait` returns at once on a trapped signal;
 # the trap stops the group (the run's shell, its current test file; in
 # threaded mode the run's shell stops its own worker group the same way). A
-# SIGKILLed ktests.sh runs no trap: the group's FIFO watchdog stops it then.
+# SIGKILLed ktests.sh runs no trap: the group's watchdog stops it then (it sees
+# EOF on the runner's FIFO or, on cygwin, its coproc pipe: kt_runner_group_spawn).
 # Grace 5 s (kt_runner_group_stop and the watchdog): longer than the 3 s the run's shell gives
 # its own worker group, so it is not KILLed in the middle of that stop.
 __kt_run_pid="" __kt_run_wfd="" __kt_run_susp=0
@@ -178,11 +179,8 @@ trap 'kt_runner_group_stop "$__kt_run_pid" 50; exit 129' HUP
 trap '__kt_run_susp=1; kt_runner_group_suspend "$__kt_run_pid"' TSTP
 kt_runner_iso_begin "${test_files[@]}"
 
-kt_runner_group_open "$KT_ISO_ROOT/.kt_watch" && __kt_run_wfd="$REPLY"
-set -m
-(
-    kt_runner_group_watchdog "$KT_ISO_ROOT/.kt_watch" "$__kt_run_wfd" 50
-
+# The run's group (after its watchdog): every test, then the results
+_kt_run_group() {
     # Execute all tests (pass TEST_FILTER so execution matches the displayed set)
     kt_runner_execute_tests "$SCRIPT_DIR" "$TEST_FILTER"
 
@@ -192,8 +190,10 @@ set -m
     __kt_src=$?
     [[ -z "$__kt_sum_file" ]] || _kt_summary_part
     exit "$__kt_src"
-) < /dev/null &
-__kt_run_pid=$!
+}
+set -m
+kt_runner_group_spawn "$KT_ISO_ROOT/.kt_watch" 50 _kt_run_group
+__kt_run_pid="$_KT_GROUP_PID" __kt_run_wfd="$_KT_GROUP_WFD"
 set +m
 while :; do
     __kt_run_susp=0

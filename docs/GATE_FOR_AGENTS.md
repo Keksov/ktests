@@ -94,7 +94,8 @@ __GATE__:VERDICT:cells:pass:fail:flaky:env:timeout:stray:passed_tests:total_test
   not: report those pids). Fix the test or the unit; never just re-run.
 * **TIMEOUT `runner did not start (no result, no child within Ns)`** is a
   runtime wedge (Git-bash: a cygwin FIFO open that never returns, launch
-  L2.7-G), not the test: re-run, do not "fix the test". Early output (e.g.
+  L2.7-G; the runner's own group FIFO is gone on cygwin since launch L5.9),
+  not the test: re-run, do not "fix the test". Early output (e.g.
   `-v info`) or a running test file counts as started; the wait is
   `KT_GATE_START_GRACE` (default 120 s) plus ~30 s.
 * The `gate compare` line says `totals unchanged (…)` or lists what changed
