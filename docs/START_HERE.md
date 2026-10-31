@@ -1,72 +1,67 @@
 # KK Testing Framework - START HERE
 
-## Welcome! 👋
-
-You now have a unified testing framework ready to use.
-
 ## What is This?
 
-A centralized testing library that:
-- ✅ Eliminates 89-91% code duplication in test suites
-- ✅ Provides 30+ assertion helpers
-- ✅ Manages temporary files and cleanup automatically
-- ✅ **Parallel execution by default (2.18x faster)** with configurable workers
-- ✅ Sequential execution available for compatibility
-- ✅ Maintains 100% backward compatibility with existing tests
-- ✅ Requires zero modifications to existing tests
+The bash test framework of kbool. It provides:
+- Assertion helpers (`kt_assert_*`)
+- A fixture directory per test file, with temp files and cleanup handlers, removed at exit
+- A suite runner: threaded by default (8 workers, configurable), sequential with `-m single`
+- A verdict for every test file: one that stops part-way is FAILED, not green with a lower total
+- The phase gate (`tools/gate.sh`): suites x bash runtimes, one verdict
 
-## 30-Second Setup
+## Setup
 
-1. **Copy template to your test suite**
+1. **Copy the template to your test suite**
    ```bash
-   cp templates/common.sh.template your_tests/common.sh
+   cp ktests/templates/common.sh.template mymod/tests/common.sh
    ```
 
-2. **Update module name**
+2. **Set the module name** in `mymod/tests/common.sh`
    ```bash
-   # Edit: your_tests/common.sh
-   # Change: MODULE_NAME="<MODULE_NAME>" from default
+   MODULE_NAME="mymod"
    ```
 
-3. **Done!** Your tests now use the framework
+3. **Add the suite runner** `mymod/tests/tests.sh` and write test files named
+   `NNN_Name.sh`: [README.md, Quick Start](README.md#quick-start) shows both.
+
+The template expects `ktests/` next to the module folder
+(`kbool/kkore/tests` → `kbool/ktests`); adjust `KTESTS_DIR` in `common.sh`
+otherwise.
 
 ## Files Overview
 
 ```
 ktests/
-├── lib/
-│   ├── ktest_core.sh          # Logging & counters
-│   ├── ktest_assertions.sh    # Assertion helpers
-│   ├── ktest_fixtures.sh      # Resource management
-│   ├── ktest_runner.sh        # Test execution
-│   └── ktest.sh               # Main entry point
+├── ktest.sh                 # Main entry point: a test file sources this
+├── ktest_core.sh            # Logging & counters
+├── ktest_assertions.sh      # Assertion helpers
+├── ktest_fixtures.sh        # Resource management
+├── ktest_runner.sh          # Test execution
+├── ktests.sh                # The suite runner
+├── ktest_*.sh               # Internal helpers (source, proc, env signatures)
 │
 ├── templates/
-│   ├── common.sh.template       # Copy for new suites
-│   └── test-example.sh          # Working example
+│   ├── common.sh.template   # Copy for new suites
+│   └── test-example.sh      # An example test file
+│
+├── tools/                   # gate.sh, strays.sh and their helpers
 │
 └── docs/
-    ├── README.md                # Framework guide
-    ├── QUICK_REFERENCE.md       # One-page cheat sheet
-    └── MIGRATION_GUIDE.md       # How to migrate
+    ├── README.md            # Framework guide
+    ├── START_HERE.md        # This file
+    └── GATE_FOR_AGENTS.md   # How an agent runs the gate
 ```
 
 ## Choose Your Path
 
-### "I want to learn the framework" (15 min)
+### "I want to learn the framework"
 1. Read [README.md](README.md) - Overview
-2. Skim [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-3. Check [../templates/test-example.sh](../templates/test-example.sh)
+2. Check [../templates/test-example.sh](../templates/test-example.sh)
 
-### "I want to use it in my tests" (30 min)
+### "I want to use it in my tests"
 1. Copy [../templates/common.sh.template](../templates/common.sh.template) → `tests/common.sh`
-2. Update module name in common.sh
-3. Run your existing tests - they just work!
-
-### "I want to migrate my test suite" (1-2 hours)
-1. Follow [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-2. Copy template and customize
-3. Run tests to verify
+2. Update the module name in common.sh
+3. Add `tests/tests.sh` and your `NNN_Name.sh` files ([Quick Start](README.md#quick-start))
 
 ## Quick Examples
 
@@ -75,9 +70,12 @@ ktests/
 #!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-test_start "My first test"
-kt_assert_equals "hello" "hello" "Values match"
-# Done! Cleanup is automatic
+kt_test_start "My first test"
+if kt_assert_equals "hello" "hello" "Values match"; then
+    kt_test_pass "My first test"
+else
+    kt_test_fail "My first test"
+fi
 ```
 
 ### Test with Fixtures
@@ -85,39 +83,42 @@ kt_assert_equals "hello" "hello" "Values match"
 #!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-init_test_tmpdir "001"
-
-test_start "File operations"
-file=$(kt_fixture_tmpfile "data")
+kt_test_start "File operations"
+file="$(kt_fixture_tmpfile "data")"
 echo "test" > "$file"
-kt_assert_file_exists "$file" "File created"
-# Framework cleans up automatically
+if kt_assert_file_exists "$file" "File created"; then
+    kt_test_pass "File operations"
+else
+    kt_test_fail "File operations"
+fi
+# The fixture directory is removed at exit
 ```
+
+An assertion only answers true or false; every test is opened with
+`kt_test_start` and closed with `kt_test_pass` or `kt_test_fail`.
 
 ## Running Tests
 
 ```bash
-# All tests in parallel (fast - 8 workers by default)
-./test_suite.sh
+# A suite, threaded (8 workers by default)
+bash tests/tests.sh
 
 # Verbose output
-./test_suite.sh -v info
+bash tests/tests.sh -v info
 
 # Run tests 1-5
-./test_suite.sh -n 1-5
+bash tests/tests.sh -n 1-5
 
 # Execution modes
-./test_suite.sh -m threaded -w 4    # Parallel with 4 workers
-./test_suite.sh -m single           # Sequential (slower but simpler)
+bash tests/tests.sh -m threaded -w 4    # Parallel with 4 workers
+bash tests/tests.sh -m single           # Sequential
 
 # Custom configuration
-./test_suite.sh -n 1-10 -m threaded -w 8 -v info
+bash tests/tests.sh -n 1-10 -m threaded -w 8 -v info
 
 # See help
-./test_suite.sh -h
+bash tests/tests.sh -h
 ```
-
-**Performance**: Parallel mode (default) is **2.18x faster** than sequential on typical multi-core systems.
 
 ## Common Assertions
 
@@ -138,21 +139,8 @@ kt_assert_success "ls /tmp" "message"
 kt_assert_array_contains "arr" "value" "message"
 ```
 
-## Key Features
-
-✓ 30+ assertion functions
-✓ Automatic temp directory management
-✓ Automatic resource cleanup
-✓ 100% backward compatible
-✓ Zero breaking changes
-✓ Works with existing tests unchanged
-
 ## More Information
 
 - **[README.md](README.md)** - Complete framework documentation
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - One-page cheat sheet  
-- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - Migration instructions
-
-## Version
-
-Framework v1.0.0 - Production Ready
+- **[GATE_FOR_AGENTS.md](GATE_FOR_AGENTS.md)** - The gate: one command, one verdict
+- **[../tools/README.md](../tools/README.md)** - `gate.sh`, `strays.sh` and the other tools

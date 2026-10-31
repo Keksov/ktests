@@ -2,75 +2,124 @@
 
 > Part of [kbool](https://github.com/Keksov/kbool): installation, quick start and the other components are there.
 
-A unified shell testing framework that eliminates code duplication across all test suites.
+The bash test framework every kbool suite uses: assertion helpers, fixtures
+with automatic cleanup, a runner that runs a suite's test files (threaded or
+sequential) and judges each one, and the phase gate on top of it.
 
 ## Overview
 
 ```
 ktests/
-├── lib/
-│   ├── ktest_core.sh          # Core functionality (logging, counters)
-│   ├── ktest_assertions.sh    # 30+ assertion helpers
-│   ├── ktest_fixtures.sh      # Temp files and resource management
-│   ├── ktest_runner.sh        # Test discovery and execution
-│   ├── ktest_env_signatures.sh # cygwin fork-failure signatures (runner + tools)
-│   └── ktest.sh               # Main orchestrator
+├── ktest.sh                 # Main entry point: a test file sources this
+├── ktest_core.sh            # Logging, counters, kt_test_start / kt_test_pass / kt_test_fail
+├── ktest_assertions.sh      # The kt_assert_* helpers
+├── ktest_fixtures.sh        # Temp files and directories, cleanup handlers
+├── ktest_runner.sh          # Test discovery and execution (threaded / single)
+├── ktest_source.sh          # Sources ktest.sh reliably, also in a bash -c context
+├── ktest_proc.sh            # Process listing (/proc or ps) for group stops and strays
+├── ktest_env_signatures.sh  # cygwin fork-failure signatures (runner + tools)
+├── ktests.sh                # The suite runner: ktests.sh SCRIPT_DIR [SUITE_NAME] [OPTIONS]
 │
 ├── templates/
-│   ├── common.sh.template       # Copy this to your tests/
-│   └── test-example.sh          # Working example
+│   ├── common.sh.template   # A suite's shared setup: copy to tests/common.sh
+│   └── test-example.sh      # An example test file
+│
+├── tools/
+│   ├── README.md            # gate.sh, strays.sh, forkstorm.sh, timing_check.sh
+│   ├── gate.sh              # The phase gate: suites x bash runtimes, one verdict
+│   ├── strays.sh            # Finds and stops processes a run left behind
+│   ├── suitejob.sh          # Runs suites as jobs (shared by the master sweep and gate.sh)
+│   ├── forkstorm.sh         # A fork storm: the load that makes timing checks flaky
+│   └── timing_check.sh      # Runs test files repeatedly under a fork storm, reports the pass rate
+│
+├── tests/                   # ktests' own suite (NNN_*.sh, gate_fixtures/)
 │
 └── docs/
-    ├── README.md                # This file
-    ├── START_HERE.md            # Quick start for new users
-    ├── QUICK_REFERENCE.md       # One-page cheat sheet
-    └── MIGRATION_GUIDE.md       # How to migrate existing suites
+    ├── README.md            # This file
+    ├── START_HERE.md        # Quick start for new users
+    ├── GATE_FOR_AGENTS.md   # How an agent runs the gate
+    └── dev/                 # Plans and ledgers of the ktests work
 ```
 
 ## Quick Start
 
-### 1. Copy Template
+A suite is a `tests/` folder with a runner `tests.sh` and test files named
+`NNN_Name.sh`. The template expects `ktests/` next to the module folder
+(`kbool/kkore/tests` → `kbool/ktests`).
+
+### 1. Copy the template
+
 ```bash
-cp templates/common.sh.template your_tests/common.sh
+cp ktests/templates/common.sh.template mymod/tests/common.sh
+# then edit mymod/tests/common.sh:
+MODULE_NAME="mymod"
 ```
 
-### 2. Update Module Name
+### 2. Add the suite runner, `mymod/tests/tests.sh`
+
 ```bash
-# Edit your_tests/common.sh
-MODULE_NAME="your_module"
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/../../ktests/ktests.sh" "$SCRIPT_DIR" "mymod" "$@"
 ```
 
-### 3. Done!
-Your tests now use the framework. **No other changes needed.**
+### 3. Write a test file, `mymod/tests/001_First.sh`
 
-## Key Features
+An assertion only answers true or false; each test is opened with
+`kt_test_start` and closed with `kt_test_pass` or `kt_test_fail`:
 
-✓ **30+ Assertion Functions**
-- Value comparisons (equals, not_equals, true, false)
-- String operations (contains, matches, regex)
-- File checks (exists, readable, writable)
-- Command execution (success, failure)
+```bash
+#!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+
+kt_test_start "two values are equal"
+if kt_assert_equals "hello" "hello" "values match"; then
+    kt_test_pass "two values are equal"
+else
+    kt_test_fail "two values are equal"
+fi
+
+kt_test_start "a fixture file exists"
+file="$(kt_fixture_tmpfile data)"
+echo "content" > "$file"
+if kt_assert_file_exists "$file" "file created"; then
+    kt_test_pass "a fixture file exists"
+else
+    kt_test_fail "a fixture file exists"
+fi
+```
+
+### 4. Run it
+
+```bash
+bash mymod/tests/tests.sh              # the suite: "Total tests: 2  Passed: 2  Failed: 0"
+bash mymod/tests/001_First.sh -v info  # one file, every test shown
+```
+
+The kbool suites themselves do not use `common.sh`: each test file sources
+`ktest.sh` and calls `kt_test_init "Name" "$SCRIPT_DIR" "$@"` itself (see
+`kkore/tests/001_*.sh`).
+
+## Features
+
+**Assertions** (`kt_assert_*`, 24 helpers)
+- Value comparisons (equals, not_equals, true, false, numeric equals / gt / lt)
+- String operations (contains, matches)
+- File checks (exists, readable, writable, directories)
+- Command execution (success, failure) and command output (contains, matches)
 - Array operations (length, contains)
 
-✓ **Automatic Resource Management**
-- Temporary directory creation
-- Automatic cleanup on exit
+**Resource management**
+- A fixture directory per test file and run, removed at exit
+- Temp files and directories inside it
 - File backup and restore
 - Cleanup handler registration
 
-✓ **Flexible Execution**
-- Parallel execution by default (8 workers) for 2.18x speedup
-- Sequential mode available for compatibility
-- Configurable worker threads (adaptive: 2-16 based on system)
+**Execution**
+- Threaded by default (8 workers, `-w N` to change), sequential with `-m single`
 - Test selection by number (1, 1-5, 1,3,5-7)
-- Verbosity control (quiet, info)
-- Smart parallelization: optimal workers determined via benchmark
-
-✓ **100% Backward Compatible**
-- All existing tests work unchanged
-- Original function names still work
-- Zero breaking changes
-- Gradual migration supported
+- Verbosity control (error, info)
+- Every test file judged: a file that stops part-way is FAILED, not green with a lower total
 
 ## Common Assertions
 
@@ -99,12 +148,10 @@ kt_assert_array_contains "arr" "value" "message"
 
 ### Automatic Cleanup
 ```bash
-init_test_tmpdir "001"
-
 # Create temp file
 file=$(kt_fixture_tmpfile "data")
 echo "content" > "$file"
-# Automatically cleaned up when test exits!
+# removed when the test file exits
 ```
 
 ### Register Custom Cleanup
@@ -158,28 +205,24 @@ named `.sh` / `..sh`, nor through a symlink).
 ## Running Tests
 
 ```bash
-# All tests in threaded mode (default, 8 workers)
-./test_suite.sh
+# A suite, threaded (default, 8 workers)
+bash tests/tests.sh
 
 # Verbose output
-./test_suite.sh -v info
+bash tests/tests.sh -v info
 
 # Run specific tests
-./test_suite.sh -n 1-5
+bash tests/tests.sh -n 1-5
 
 # Execution modes
-./test_suite.sh -m threaded -w 4     # Parallel with 4 workers
-./test_suite.sh -m single            # Sequential execution (slower)
-
-# Custom worker count
-./test_suite.sh -m threaded -w 8     # Optimal for most systems
-./test_suite.sh -m threaded -w 2     # Resource-constrained systems
+bash tests/tests.sh -m threaded -w 4     # Parallel with 4 workers
+bash tests/tests.sh -m single            # Sequential execution
 
 # Combined options
-./test_suite.sh -n 1-10 -m threaded -w 4 -v info
+bash tests/tests.sh -n 1-10 -m threaded -w 4 -v info
 
 # Help
-./test_suite.sh -h
+bash tests/tests.sh -h
 
 # One file, standalone
 bash tests/001_X.sh; echo $?   # 1 when any test in it FAILED
@@ -322,74 +365,69 @@ cannot run your registered handlers then).
 
 ```bash
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../ktests/ktest.sh"
 
-init_test_tmpdir "001"
-test_section "My Tests"
+kt_test_init "Example" "$SCRIPT_DIR" "$@"
+kt_test_section "My Tests"
 
 # Test 1: Values
-test_start "Check values"
-kt_assert_equals "5" "5" "Numbers match"
+kt_test_start "Check values"
+if kt_assert_equals "5" "5" "Numbers match"; then
+    kt_test_pass "Check values"
+else
+    kt_test_fail "Check values"
+fi
 
 # Test 2: Files
-test_start "Check file"
-file=$(kt_fixture_tmpfile "test_data")
+kt_test_start "Check file"
+file="$(kt_fixture_tmpfile "test_data")"
 echo "data" > "$file"
-kt_assert_file_exists "$file" "File created"
+if kt_assert_file_exists "$file" "File created"; then
+    kt_test_pass "Check file"
+else
+    kt_test_fail "Check file"
+fi
 
 # Test 3: Commands
-test_start "Check command"
-kt_assert_success "ls /tmp" "Can list directory"
+kt_test_start "Check command"
+if kt_assert_success "ls /tmp" "Can list directory"; then
+    kt_test_pass "Check command"
+else
+    kt_test_fail "Check command"
+fi
 
-# Cleanup is automatic - no trap cleanup needed!
+# The fixture directory is removed at exit: no trap needed
 ```
 
-## Framework Benefits
-
-### Code Reduction
-- Before: 230 lines per test suite × 7 = 1,610 lines
-- After: 1 framework (1,550 lines) + 15-20 lines per suite
-- **Result: 89-91% less duplicated code**
-
-### Maintenance
-- Bug fixes applied once to all suites
-- New features available everywhere
-- Consistent testing practices
-- Single source of truth
-
-### Developer Experience
-- Cleaner, more readable tests
-- Better error messages
-- Rich assertion library
-- Automatic resource cleanup
-
-## Migration
-
-Takes **15-20 minutes per test suite**:
-
-1. Copy template to your tests directory
-2. Update module name
-3. Run your tests - they work unchanged!
+The assertions print nothing when they hold and an `[ASSERTION FAILED]` line
+when they do not; their exit status decides between `kt_test_pass` and
+`kt_test_fail`. A test that is started and never closed makes the file
+FAILED (`test aborted mid-block`).
 
 ## Documentation
 
 - **[START_HERE.md](START_HERE.md)** - New user entry point
 - **[GATE_FOR_AGENTS.md](GATE_FOR_AGENTS.md)** - The gate: one command, one verdict
+- **[../tools/README.md](../tools/README.md)** - `gate.sh`, `strays.sh` and the other tools
+- **[../CONTRIBUTING.md](../CONTRIBUTING.md)** - How to contribute to ktests
 
 ## Command Reference
 
 ### Test Tracking
 ```bash
-test_start "description"      # Mark test start
-test_pass "description"       # Mark passed
-test_fail "description"       # Mark failed
-test_info "message"           # Info logging
-test_section "title"          # Section header
+kt_test_start "description"   # Mark test start
+kt_test_pass "description"    # Mark passed
+kt_test_fail "description"    # Mark failed
+kt_test_log "message"         # Info logging
+kt_test_section "title"       # Section header
 ```
+
+The older names `test_start`, `test_pass`, `test_fail`, `test_info` (=
+`kt_test_log`), `test_section` and `parse_args` remain as aliases.
 
 ### Fixtures
 ```bash
-init_test_tmpdir "001"                    # Create test tmpdir
 file=$(kt_fixture_tmpfile "prefix")       # Create temp file
 dir=$(kt_fixture_tmpdir_create "name")    # Create temp directory
 kt_fixture_cleanup_register "handler"     # Register cleanup
@@ -461,41 +499,9 @@ TESTS_FAILED        # Tests failed
 VERBOSITY           # "info" or "error"
 MODE                # "single" or "threaded"
 WORKERS             # Thread count (default 8)
-TEST_TMP_DIR        # Test temp directory
+_KT_TMPDIR          # The test file's fixture directory (also: kt_fixture_tmpdir)
 KT_TIMEOUT          # timeout(1) by NAME: timeout, else gtimeout (macOS brew), else "" -> guard with kt_need_timeout, SKIP: $KT_TIMEOUT_WHY (ktest.sh header)
 ```
-
-## Backward Compatibility
-
-All existing test code continues to work:
-- `test_start()` ✓
-- `test_pass()` ✓
-- `test_fail()` ✓
-- `test_info()` ✓
-- `test_section()` ✓
-- `parse_args()` ✓
-- `init_test_tmpdir()` ✓
-
-**100% compatible - zero code changes needed.**
-
-## Performance
-
-- **Framework loading**: ~20ms
-- **Per-test overhead**: <1ms
-- **Threaded execution**: 2.18x faster than sequential on 16-core systems
-  - Sequential baseline: 31.3s for 29 test files
-  - Threaded (8 workers): 14.3s for same tests
-  - Equivalent to **17 seconds saved per run**
-- **Windows compatible**: Yes
-- **External dependencies**: None (pure bash)
-
-### Worker Recommendations
-| CPU Cores | Recommended Workers | Speedup |
-|-----------|-------------------|---------|
-| 2-4       | 2-4               | ~1.5x   |
-| 4-8       | 4-6               | ~1.8x   |
-| 8-16      | 8 (default)       | ~2.2x   |
-| 16+       | 8 (optimal)       | ~2.2x   |
 
 ## Troubleshooting
 
@@ -506,28 +512,19 @@ All existing test code continues to work:
 | Cleanup not working / `[WARN] … left behind (own EXIT trap?)` | Remove the test's own `trap … EXIT`; register the cleanup with `kt_fixture_cleanup_register` |
 | `[WARN] SUITE: N process(es) of the run group … left after the run` | A test file started a background process and did not end it; the runner stopped it — kill (and `wait`) your own children before the file ends |
 | `[WARN] N stray process(es) found after …` (master sweep) | A suite left a process running whose parent is gone (a test file's background job, marker or not); it was stopped and the suite FAILS. Leftovers of a killed run: `bash ktests/tools/strays.sh list` / `stop` (unfiltered: orphans older than 120 min; `--older-than 0` for all), under each bash (`tools/README.md`) |
-| Windows issues | Framework handles CRLF automatically |
 
 ## File Naming Convention
 
 Test files must follow this pattern:
 ```
-001_BasicTests.sh        ✓ Good
-002_AdvancedTests.sh     ✓ Good
-001test.sh               ✗ Bad (missing underscore)
-BasicTests.sh            ✗ Bad (no number prefix)
-test_001.sh              ✗ Bad (number at end)
+001_BasicTests.sh        good
+002_AdvancedTests.sh     good
+001test.sh               bad (missing underscore)
+BasicTests.sh            bad (no number prefix)
+test_001.sh              bad (number at end)
 ```
-
-## Version
-
-**KK Testing Framework v1.0.0**
-- Status: Production Ready
-- Backward Compatible: 100%
-- Code Coverage: All 130+ existing tests
-- Breaking Changes: None
 
 ## Getting Help
 
 1. **Quick overview**: See [START_HERE.md](START_HERE.md)
-2. **Full docs**: You're reading it!
+2. **The gate**: See [GATE_FOR_AGENTS.md](GATE_FOR_AGENTS.md) and [../tools/README.md](../tools/README.md)
